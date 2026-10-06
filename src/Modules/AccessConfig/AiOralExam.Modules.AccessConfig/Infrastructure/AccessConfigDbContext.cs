@@ -21,6 +21,7 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
     public DbSet<ExamSession> ExamSessions => Set<ExamSession>();
     public DbSet<Question> Questions => Set<Question>();
     public DbSet<Rubric> Rubrics => Set<Rubric>();
+    public DbSet<Participant> Participants => Set<Participant>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
