@@ -1,6 +1,6 @@
 namespace AiOralExam.SharedKernel.Security;
 
-/// <summary>Cau hinh JWT, doc tu section "Jwt" trong appsettings.</summary>
+/// <summary>JWT settings, read from the "Jwt" section of appsettings.</summary>
 public sealed class JwtOptions
 {
     public const string SectionName = "Jwt";
@@ -8,7 +8,7 @@ public sealed class JwtOptions
     public string Issuer { get; set; } = "aives-api";
     public string Audience { get; set; } = "aives-web";
 
-    /// <summary>Toi thieu 32 ky tu. Moi truong that: dat qua bien moi truong Jwt__SigningKey.</summary>
+    /// <summary>At least 32 characters. Real environments: set it through the Jwt__SigningKey environment variable.</summary>
     public string SigningKey { get; set; } = null!;
     public int ExpiresMinutes { get; set; } = 480;
 }

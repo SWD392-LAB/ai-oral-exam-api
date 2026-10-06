@@ -21,9 +21,9 @@ internal sealed class AuthService(
     IJwtTokenIssuer tokenIssuer,
     ILogger<AuthService> logger) : IAuthService
 {
-    // Cung 1 thong bao cho moi truong hop sai -> khong lo email nao co tai khoan (R-08)
+    // Same message for every failure -> does not reveal which emails have an account (R-08)
     private static UnauthorizedException InvalidCredentials() =>
-        new("invalid_credentials", "Email hoặc mật khẩu không đúng.");
+        new("invalid_credentials", "Incorrect email or password.");
 
     public async Task<LoginResponse> LoginWithPasswordAsync(LoginRequest request, CancellationToken ct = default)
     {
@@ -57,7 +57,7 @@ internal sealed class AuthService(
     public async Task<UserProfileDto> GetProfileAsync(Guid userId, CancellationToken ct = default)
     {
         var user = await db.Users.AsNoTracking().FirstOrDefaultAsync(u => u.Id == userId, ct)
-                   ?? throw new NotFoundException("user_not_found", "Không tìm thấy tài khoản.");
+                   ?? throw new NotFoundException("user_not_found", "Account not found.");
         return ToDto(user);
     }
 

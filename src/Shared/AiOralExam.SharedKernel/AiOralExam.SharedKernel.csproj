@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- Shared Kernel: chi chua thu dung chung, KHONG chua logic nghiep vu cua module nao -->
+  <!-- Shared Kernel: shared building blocks only, NO business logic of any module -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

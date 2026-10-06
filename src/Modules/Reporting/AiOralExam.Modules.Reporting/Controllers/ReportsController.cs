@@ -12,24 +12,24 @@ namespace AiOralExam.Modules.Reporting.Controllers;
 [Authorize]
 public sealed class ReportsController(IReportService reports) : ControllerBase
 {
-    /// <summary>Bao cao 1 luot thi. Sinh vien: chi luot cua minh va chi khi diem da chot.</summary>
+    /// <summary>Report of one attempt. Students: only their own, and only after the score is confirmed.</summary>
     [HttpGet("attempts/{attemptId:guid}")]
     public Task<AttemptReportDto> Attempt(Guid attemptId, CancellationToken ct) =>
         reports.GetAttemptReportAsync(attemptId, ct);
 
-    /// <summary>Ket qua tung sinh vien cua 1 phien thi.</summary>
+    /// <summary>Per-student results of an exam session.</summary>
     [HttpGet("exam-sessions/{examSessionId:guid}/results")]
     [Authorize(Roles = Roles.LecturerOrAdmin)]
     public Task<IReadOnlyList<StudentResultDto>> Results(Guid examSessionId, CancellationToken ct) =>
         reports.GetSessionResultsAsync(examSessionId, ct);
 
-    /// <summary>Thong ke lop: cau kho nhat, ti le tra loi tot, phan bo diem.</summary>
+    /// <summary>Class statistics: hardest questions, good-answer rate, score distribution.</summary>
     [HttpGet("exam-sessions/{examSessionId:guid}/statistics")]
     [Authorize(Roles = Roles.LecturerOrAdmin)]
     public Task<SessionStatisticsDto> Statistics(Guid examSessionId, CancellationToken ct) =>
         reports.GetSessionStatisticsAsync(examSessionId, ct);
 
-    /// <summary>Xuat bang diem (CSV tam thoi, cho mau cua truong).</summary>
+    /// <summary>Grade sheet export (temporary CSV until we have the school's template).</summary>
     [HttpGet("exam-sessions/{examSessionId:guid}/grade-sheet")]
     [Authorize(Roles = Roles.LecturerOrAdmin)]
     public async Task<IActionResult> GradeSheet(Guid examSessionId, CancellationToken ct)

@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- F6 - Feedback & Reporting. KHONG so huu bang nao: chi doc diem da luu qua contract cua Interview. -->
+  <!-- F6 - Feedback & Reporting. Owns NO tables: only reads stored scores through the Interview contract. -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>

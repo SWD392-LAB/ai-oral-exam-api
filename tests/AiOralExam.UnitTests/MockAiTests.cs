@@ -12,7 +12,7 @@ public class MockAiTests
     public async Task Scorer_is_deterministic()
     {
         var scorer = new MockRubricScorer();
-        var answer = string.Join(' ', Enumerable.Repeat("từ", 30));
+        var answer = string.Join(' ', Enumerable.Repeat("word", 30));
 
         var a = await scorer.ScoreAsync(Request(answer));
         var b = await scorer.ScoreAsync(Request(answer));
@@ -31,7 +31,7 @@ public class MockAiTests
     [Fact]
     public async Task Analyzer_asks_follow_up_only_when_enabled_and_quota_left()
     {
-        var req = new AnswerAnalysisRequest("Q", "c", [new DialogueTurn("Q", "ngắn quá", false)], 0, 2, "Vietnamese");
+        var req = new AnswerAnalysisRequest("Q", "c", [new DialogueTurn("Q", "too short", false)], 0, 2, "Vietnamese");
 
         Assert.True((await new MockAnswerAnalyzer(true).AnalyzeAsync(req)).NeedsFollowUp);
         Assert.False((await new MockAnswerAnalyzer(false).AnalyzeAsync(req)).NeedsFollowUp);

@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- F7 - Access Control & Exam Configuration. So huu: users, roles, password_setup_tokens, courses,
+  <!-- F7 - Access Control & Exam Configuration. Owns: users, roles, password_setup_tokens, courses,
        course_lecturers, exam_sessions, questions, rubrics, ai_service_configs, audit_logs -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

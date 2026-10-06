@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Web">
-  <!-- Host duy nhat cua modular monolith: ghep cac module, auth, Swagger, xu ly loi chung -->
+  <!-- The single host of the modular monolith: wires modules, auth, Swagger, shared error handling -->
   <PropertyGroup>
     <UserSecretsId>aives-api-dev</UserSecretsId>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>

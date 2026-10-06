@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AiOralExam.Modules.Interview.Application;
 
-/// <summary>Implement contract doc ket qua da luu cho Reporting. Chi doc, khong goi AI.</summary>
+/// <summary>Implements the stored-results contract for Reporting. Read-only, never calls the AI.</summary>
 internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewResultsApi
 {
     public async Task<AttemptResult?> GetAttemptResultAsync(Guid attemptId, CancellationToken ct = default)

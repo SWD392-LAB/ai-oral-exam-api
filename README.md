@@ -1,238 +1,238 @@
 # ai-oral-exam-api
 
-Backend của **AIVES – AI-powered Viva Exam System** (SWD392): hệ thống thi vấn đáp có AI hỏi, hỏi xoáy và gợi ý điểm theo rubric; giảng viên luôn là người chốt điểm cuối.
+Backend of **AIVES – AI-powered Viva Exam System** (SWD392). An AI examiner asks the questions, asks follow-ups and suggests a score against the rubric. The lecturer always confirms the final score.
 
-- **Kiến trúc:** ASP.NET Core 8 **modular monolith** — 1 API, 3 module nghiệp vụ, 1 database
-- **Database:** PostgreSQL 16, truy cập bằng EF Core 8 (Npgsql). Schema do **SQL script** tạo (`database/`), *không* dùng EF migration
-- **Auth:** email + mật khẩu (ASP.NET Core Identity `PasswordHasher`) → JWT có role `Student` / `Lecturer` / `Administrator`
-- **AI:** STT / TTS / LLM qua interface; M1 dùng bản **mock** (chấm điểm cố định, chạy lại vẫn ra cùng kết quả)
+- **Architecture:** ASP.NET Core 8 **modular monolith** – one API, three business modules, one database
+- **Database:** PostgreSQL 16, accessed with EF Core 8 (Npgsql). The schema is created by **SQL scripts** (`database/`), *not* by EF migrations
+- **Auth:** email + password (ASP.NET Core Identity `PasswordHasher`) → JWT with the role `Student` / `Lecturer` / `Administrator`
+- **AI:** STT / TTS / LLM behind interfaces. M1 uses **mocks** (deterministic scoring: same input, same result)
 
-Repo frontend: `ai-oral-exam-web`.
+Frontend repo: `ai-oral-exam-web`.
 
 ---
 
-## 1. Cài đặt cần có
+## 1. Prerequisites
 
-| Công cụ | Phiên bản | Kiểm tra |
+| Tool | Version | Check |
 |---|---|---|
 | .NET SDK | 8.0.x | `dotnet --version` |
-| Docker Desktop | bản mới | `docker compose version` |
-| (tuỳ chọn) Visual Studio 2022 / Rider / VS Code + C# Dev Kit | | |
+| Docker Desktop | recent | `docker compose version` |
+| (optional) Visual Studio 2022 / Rider / VS Code + C# Dev Kit | | |
 
-> Không cài PostgreSQL trên máy cũng được: Docker sẽ chạy PostgreSQL cho bạn.
+> You do not need PostgreSQL installed locally: Docker runs it for you.
 
-## 2. Chạy nhanh (4 bước)
+## 2. Quick start (4 steps)
 
 ```bash
-# 1) Lấy code
+# 1) Get the code
 git clone https://github.com/SWD392-LAB/ai-oral-exam-api.git
 cd ai-oral-exam-api
 
-# 2) Dựng database (lần đầu tự chạy database/01_schema.sql rồi 02_seed.sql)
+# 2) Start the database (the first start runs database/01_schema.sql, then 02_seed.sql)
 docker compose up -d
-docker compose ps          # đợi postgres báo "healthy"
+docker compose ps          # wait until postgres is "healthy"
 
-# 3) Chạy API
+# 3) Run the API
 dotnet run --project src/AiOralExam.Api --launch-profile http
 
-# 4) Mở Swagger
+# 4) Open Swagger
 #    http://localhost:5080/swagger
 ```
 
-Kiểm tra API đã nối được DB: mở http://localhost:5080/health → phải thấy `Healthy`.
+Check that the API can reach the database: open http://localhost:5080/health. It should say `Healthy`.
 
-Trong Visual Studio: mở `AiOralExam.sln`, chọn `AiOralExam.Api` làm startup project, chọn profile **http**, nhấn F5.
+In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 
-### Thử luồng thi M1 trên Swagger
+### Try the M1 exam flow in Swagger
 
-1. `POST /api/auth/login` với `{ "email": "han.hg@aives.edu.vn", "password": "Password@123" }` → copy `accessToken`.
-2. Bấm nút **Authorize** (góc trên phải), dán token (không cần gõ chữ `Bearer`).
-3. `GET /api/interview/my-sessions` → thấy 3 phiên: 2 phiên đang mở (S1, S4) và 1 phiên chưa mở (S6).
-4. `POST /api/interview-attempts` với `{ "examSessionId": "33333333-0000-0000-0000-000000000001" }` → `201`, nhận `attemptId` và câu hỏi đầu tiên (`currentTurn`).
-5. `POST /api/interview-attempts/{attemptId}/responses` với `{ "answerText": "..." }` → nhận điểm và nhận xét của mock AI, cùng câu hỏi tiếp theo. Lặp lại tới khi `outcome = "Completed"`.
+1. Call `POST /api/auth/login` with `{ "email": "han.hg@aives.edu.vn", "password": "Password@123" }`, then copy the `accessToken`.
+2. Click **Authorize** (top right) and paste the token (no `Bearer` prefix needed).
+3. Call `GET /api/interview/my-sessions`. You should see 3 sessions: two open (S1, S4) and one not open yet (S6).
+4. Call `POST /api/interview-attempts` with `{ "examSessionId": "33333333-0000-0000-0000-000000000001" }`. You get `201`, an `attemptId` and the first question (`currentTurn`).
+5. Call `POST /api/interview-attempts/{attemptId}/responses` with `{ "answerText": "..." }`. You get the mock AI score and feedback, plus the next question. Repeat until `outcome = "Completed"`.
 
-> Mỗi câu chỉ được trả lời trong `timeLimitPerQuestion` giây (S1 là 120s), cộng thêm 15s dự phòng. Nộp muộn hơn thì bị tính là hết giờ (`timedOut: true`), câu trả lời không được lưu.
+> Each question must be answered within `timeLimitPerQuestion` seconds (120 s for S1), plus a 15 s grace period. A later submission counts as timed out (`timedOut: true`) and the answer is not stored.
 
-Các request mẫu cũng có sẵn trong `src/AiOralExam.Api/AiOralExam.Api.http` (dùng với VS Code REST Client / Visual Studio).
+Sample requests are also in `src/AiOralExam.Api/AiOralExam.Api.http` (VS Code REST Client / Visual Studio).
 
-## 3. Dữ liệu mẫu
+## 3. Seed data
 
-**Mật khẩu chung: `Password@123`**
+**Shared password: `Password@123`**
 
-| Email | Role | Dùng để test |
+| Email | Role | Use it to test |
 |---|---|---|
-| `admin@aives.edu.vn`, `tuan.dm@aives.edu.vn` | Administrator | xem mọi môn / phiên thi / báo cáo |
+| `admin@aives.edu.vn`, `tuan.dm@aives.edu.vn` | Administrator | all courses / sessions / reports |
 | `an.nv@aives.edu.vn` | Lecturer | SWD392 (S1, S3) |
 | `mai.bt@aives.edu.vn` | Lecturer | SWD392 + DBI202 |
 | `ha.dt@aives.edu.vn` | Lecturer | DBI202 (S4) |
 | `long.nd@aives.edu.vn` | Lecturer | SWT301 (S5) |
 | `nam.lq@aives.edu.vn` | Lecturer | PRN232 (S2, S6) |
-| `binh.tt@aives.edu.vn` | Lecturer | Google SSO → **không** đăng nhập bằng mật khẩu được |
-| `han.hg@aives.edu.vn` | Student | **chưa thi** – dùng để demo luồng thi |
-| `chau.lm@aives.edu.vn` | Student | S1 đã thi, **điểm đã chốt** → xem được báo cáo |
-| `dung.pq@aives.edu.vn` | Student | S1 đã thi, **chờ giảng viên duyệt** → chưa xem được báo cáo |
-| `khoa.vt@aives.edu.vn` | Student | chưa đặt mật khẩu (token kích hoạt: `demo-setup-token-khoa`) |
-| `duy.hg@aives.edu.vn` | Student | tài khoản **bị khoá** → đăng nhập thất bại |
-| 36 sinh viên khác (`SE180005`…`SE180040`) | Student | xem bảng `users` |
+| `binh.tt@aives.edu.vn` | Lecturer | Google SSO → **cannot** sign in with a password |
+| `han.hg@aives.edu.vn` | Student | **not taken yet** – use it to demo the exam flow |
+| `chau.lm@aives.edu.vn` | Student | S1 finished, **score confirmed** → can view the report |
+| `dung.pq@aives.edu.vn` | Student | S1 finished, **waiting for review** → cannot view the report yet |
+| `khoa.vt@aives.edu.vn` | Student | password not set (activation token: `demo-setup-token-khoa`) |
+| `duy.hg@aives.edu.vn` | Student | **locked** account → sign-in fails |
+| 36 other students (`SE180005`…`SE180040`) | Student | see the `users` table |
 
-| Phiên thi | Môn | Trạng thái | Câu hỏi | Ghi chú |
+| Exam session | Course | Status | Questions | Notes |
 |---|---|---|---|---|
-| S1 `33333333-0000-0000-0000-000000000001` | SWD392 | Published, **đang mở** | 3 | 9 lượt thi (đã chốt / chờ duyệt / đang thi dở) |
-| S2 `…0002` | PRN232 | Draft | 4 | sinh viên không thấy |
-| S3 `…0003` | SWD392 | Closed | 4 | 12 lượt thi – dùng để xem thống kê lớp |
-| S4 `…0004` | DBI202 | Published, **đang mở** | 4 | 5 lượt thi, Hân đã được đăng ký |
-| S5 `…0005` | SWT301 | Closed | 4 | 8 lượt thi |
-| S6 `…0006` | PRN232 | Published, **chưa mở** (mở sau 3 ngày) | 3 | dùng để test lỗi `exam_session_not_open` |
+| S1 `33333333-0000-0000-0000-000000000001` | SWD392 | Published, **open** | 3 | 9 attempts (finalized / pending review / in progress) |
+| S2 `…0002` | PRN232 | Draft | 4 | hidden from students |
+| S3 `…0003` | SWD392 | Closed | 4 | 12 attempts – use it for class statistics |
+| S4 `…0004` | DBI202 | Published, **open** | 4 | 5 attempts; Han is registered |
+| S5 `…0005` | SWT301 | Closed | 4 | 8 attempts |
+| S6 `…0006` | PRN232 | Published, **not open yet** (opens in 3 days) | 3 | use it to test the `exam_session_not_open` error |
 
-Giờ mở của S1/S4/S6 tính theo `now()` lúc chạy seed, nên reset DB lúc nào cũng demo được.
+The opening times of S1/S4/S6 are relative to `now()` when the seed runs, so a fresh database always works for a demo.
 
-**Reset dữ liệu về như ban đầu:**
+**Reset the data:**
 
 ```bash
-docker compose down -v     # -v: xoá luôn volume dữ liệu
-docker compose up -d       # chạy lại 01_schema.sql + 02_seed.sql
+docker compose down -v     # -v also deletes the data volume
+docker compose up -d       # runs 01_schema.sql + 02_seed.sql again
 ```
 
-**Xem DB:** pgAdmin ở http://localhost:5050 (`admin@aives.edu.vn` / `admin123`) → Add server: host `postgres`, port `5432`, user `aives`, password `aives@123`. Hoặc dùng DBeaver / DataGrip với host `localhost:5432`.
+**Browse the database:** pgAdmin at http://localhost:5050 (`admin@aives.edu.vn` / `admin123`). Add a server with host `postgres`, port `5432`, user `aives`, password `aives@123`. DBeaver / DataGrip work too with host `localhost:5432`.
 
-## 4. Cấu trúc project
+## 4. Project structure
 
 ```
 ai-oral-exam-api/
 ├── AiOralExam.sln
 ├── docker-compose.yml               # PostgreSQL 16 + pgAdmin
-├── Directory.Build.props            # cấu hình chung: net8.0, nullable...
-├── Directory.Packages.props         # version NuGet khai báo 1 chỗ (Central Package Management)
+├── Directory.Build.props            # shared settings: net8.0, nullable...
+├── Directory.Packages.props         # NuGet versions declared once (Central Package Management)
 ├── database/
-│   ├── 01_schema.sql                # NGUỒN CHUẨN của schema (16 bảng)
-│   └── 02_seed.sql                  # dữ liệu mẫu
+│   ├── 01_schema.sql                # SOURCE OF TRUTH for the schema (16 tables)
+│   └── 02_seed.sql                  # demo data
 ├── src/
-│   ├── AiOralExam.Api/              # Host: Program.cs, JWT, Swagger, CORS, middleware bắt lỗi
+│   ├── AiOralExam.Api/              # Host: Program.cs, JWT, Swagger, CORS, error middleware
 │   ├── Shared/
-│   │   └── AiOralExam.SharedKernel/ # lỗi dùng chung (AppException, ApiError), Roles, ICurrentUser
+│   │   └── AiOralExam.SharedKernel/ # shared errors (AppException, ApiError), Roles, ICurrentUser
 │   └── Modules/
 │       ├── AccessConfig/            # F7 - Access Control & Exam Configuration
-│       │   ├── AiOralExam.Modules.AccessConfig.Contracts/  # interface + DTO public cho module khác
+│       │   ├── AiOralExam.Modules.AccessConfig.Contracts/  # public interfaces + DTOs for other modules
 │       │   └── AiOralExam.Modules.AccessConfig/            # Domain, Infrastructure (DbContext), Application, Controllers
 │       ├── Interview/               # F3 - AI Viva Interview
 │       │   ├── AiOralExam.Modules.Interview.Contracts/
 │       │   └── AiOralExam.Modules.Interview/
 │       │       ├── Domain/          # Participant, InterviewAttempt (state machine), QuestionResponse, InterviewTurn...
-│       │       ├── Application/     # InterviewService (điều phối luồng thi)
+│       │       ├── Application/     # InterviewService (orchestrates the exam flow)
 │       │       │   └── Ai/          # IAnswerAnalyzer, IRubricScorer, ISpeechToText, ITextToSpeech, ILlmService
-│       │       │       └── Mock/    # bản mock cho M1
+│       │       │       └── Mock/    # mocks for M1
 │       │       ├── Infrastructure/  # InterviewDbContext
 │       │       └── Controllers/
-│       └── Reporting/               # F6 - Feedback & Reporting (không có bảng, chỉ đọc)
+│       └── Reporting/               # F6 - Feedback & Reporting (no tables, read-only)
 └── tests/
     └── AiOralExam.UnitTests/        # xUnit
 ```
 
-### Module và bảng dữ liệu
+### Modules and the data they own
 
-| Module | Làm gì | Sở hữu bảng | Được gọi |
+| Module | Does | Owns tables | Depends on |
 |---|---|---|---|
-| **AccessConfig** (F7) | tài khoản, đăng nhập, phân công giảng viên, phiên thi, câu hỏi, rubric, cấu hình AI, audit log | `users`, `roles`, `password_setup_tokens`, `courses`, `course_lecturers`, `exam_sessions`, `questions`, `rubrics`, `ai_service_configs`, `audit_logs` | — |
-| **Interview** (F3) | chạy buổi thi, hỏi xoáy, AI gợi ý điểm, (M3) giảng viên duyệt | `participants`, `interview_attempts`, `question_responses`, `interview_turns`, `ai_evaluations`, `score_reviews` | `AccessConfig.Contracts` |
-| **Reporting** (F6) | báo cáo sinh viên, kết quả, thống kê lớp, xuất bảng điểm | *(không có)* | `Interview.Contracts`, `AccessConfig.Contracts` |
+| **AccessConfig** (F7) | accounts, sign-in, lecturer assignment, exam sessions, questions, rubrics, AI settings, audit log | `users`, `roles`, `password_setup_tokens`, `courses`, `course_lecturers`, `exam_sessions`, `questions`, `rubrics`, `ai_service_configs`, `audit_logs` | – |
+| **Interview** (F3) | runs the exam, follow-ups, AI score suggestions, (M3) lecturer review | `participants`, `interview_attempts`, `question_responses`, `interview_turns`, `ai_evaluations`, `score_reviews` | `AccessConfig.Contracts` |
+| **Reporting** (F6) | student reports, results, class statistics, grade sheet export | *(none)* | `Interview.Contracts`, `AccessConfig.Contracts` |
 
-**Ba quy tắc giữ ranh giới module:**
+**Three rules that keep the modules apart:**
 
-1. Mỗi module chỉ đọc/ghi **bảng của mình** (mỗi module có DbContext riêng, chỉ map bảng của nó).
-2. Module khác chỉ được reference project `*.Contracts`, **không** reference thẳng project module. Ví dụ Interview muốn lấy câu hỏi thì gọi `IExamConfigurationApi`.
-3. Reporting chỉ đọc điểm đã lưu, **không bao giờ gọi lại AI**.
+1. Each module reads and writes **only its own tables** (each module has its own DbContext that maps only its tables).
+2. Other modules may reference only the `*.Contracts` projects, **never** a module project directly. For example, Interview gets questions through `IExamConfigurationApi`.
+3. Reporting reads stored scores only and **never calls the AI again**.
 
-### API hiện có
+### Available APIs
 
-| Method | Route | Role | Task tracker |
+| Method | Route | Role | Tracker task |
 |---|---|---|---|
 | POST | `/api/auth/login` | – | BE-PLAT-07 |
-| GET | `/api/auth/me` | mọi role | BE-PLAT-07 |
+| GET | `/api/auth/me` | any | BE-PLAT-07 |
 | GET | `/api/courses/mine` | Lecturer, Admin | |
 | GET | `/api/exam-sessions`, `/api/exam-sessions/{id}` | Lecturer, Admin | |
 | GET | `/api/interview/my-sessions` | Student | FE-INT-01 |
 | POST | `/api/interview-attempts` | Student | BE-PLAT-04 |
 | GET | `/api/interview-attempts/{id}` | Student | |
 | POST | `/api/interview-attempts/{id}/responses` | Student | BE-AI-05 |
-| GET | `/api/reports/attempts/{id}` | Student (chỉ khi điểm đã chốt), Lecturer, Admin | M3 |
+| GET | `/api/reports/attempts/{id}` | Student (only once the score is confirmed), Lecturer, Admin | M3 |
 | GET | `/api/reports/exam-sessions/{id}/results` | Lecturer, Admin | M3 |
 | GET | `/api/reports/exam-sessions/{id}/statistics` | Lecturer, Admin | M3 |
-| GET | `/api/reports/exam-sessions/{id}/grade-sheet` | Lecturer, Admin | M3 (CSV tạm, chờ mẫu của trường) |
+| GET | `/api/reports/exam-sessions/{id}/grade-sheet` | Lecturer, Admin | M3 (temporary CSV until we have the school template) |
 | GET | `/health` | – | |
 
-Mọi lỗi đều trả về cùng một format (FOUNDATION-02):
+Every error uses the same format (FOUNDATION-02):
 
 ```json
-{ "code": "exam_session_not_open", "message": "Phiên thi chưa được mở.", "traceId": "0HN...", "details": null }
+{ "code": "exam_session_not_open", "message": "The exam session is not open.", "traceId": "0HN...", "details": null }
 ```
 
-FE nên `switch` theo `code`, còn `message` để hiện cho người dùng.
+The FE should `switch` on `code`; `message` is meant for display.
 
-### Trạng thái lượt thi (BE-AI-01)
+### Attempt states (BE-AI-01)
 
 ```
-InProgress ──(trả lời xong câu cuối)──▶ PendingReview ──(giảng viên chốt điểm)──▶ Finalized
+InProgress ──(last question answered)──▶ PendingReview ──(lecturer confirms the score)──▶ Finalized
 ```
 
-Không có chiều ngược lại. Mỗi lần nộp câu trả lời, API trả `outcome`:
+There is no way back. Each submitted answer returns an `outcome`:
 
-- `FollowUp`: AI hỏi xoáy, `currentTurn.type = "FollowUp"`
-- `NextQuestion`: chuyển sang câu chính tiếp theo
-- `Completed`: hết câu, lượt thi chuyển sang `PendingReview`
+- `FollowUp`: the AI asks a follow-up; `currentTurn.type = "FollowUp"`
+- `NextQuestion`: moves on to the next main question
+- `Completed`: no questions left; the attempt moves to `PendingReview`
 
-## 5. Cấu hình (`appsettings.json`)
+## 5. Configuration (`appsettings.json`)
 
-| Key | Mặc định | Ý nghĩa |
+| Key | Default | Meaning |
 |---|---|---|
-| `ConnectionStrings:Database` | `Host=localhost;Port=5432;Database=aives;Username=aives;Password=aives@123` | khớp `docker-compose.yml` |
-| `Jwt:SigningKey` | đặt sẵn trong `appsettings.Development.json` | ≥ 32 ký tự. Môi trường thật đặt qua biến môi trường `Jwt__SigningKey` |
+| `ConnectionStrings:Database` | `Host=localhost;Port=5432;Database=aives;Username=aives;Password=aives@123` | matches `docker-compose.yml` |
+| `Jwt:SigningKey` | set in `appsettings.Development.json` | ≥ 32 characters. In real environments, set it with the `Jwt__SigningKey` environment variable |
 | `Jwt:ExpiresMinutes` | 480 | |
-| `Interview:ShowAiScoreToStudent` | `true` | M1 cho sinh viên thấy điểm mock ngay. Từ M3 đặt `false` (chỉ thấy khi giảng viên đã chốt) |
-| `Interview:Mock:EnableFollowUps` | `false` | bật lên để thử luồng hỏi xoáy với mock (câu trả lời < 15 từ → hỏi xoáy) |
-| `Interview:AllowRetake` | `false` | cho thi lại hay không (open point) |
-| `Interview:TimeLimitGraceSeconds` | 15 | số giây dự phòng sau khi hết giờ |
-| `Cors:AllowedOrigins` | `http://localhost:5173`, `http://localhost:3000` | địa chỉ chạy FE |
+| `Interview:ShowAiScoreToStudent` | `true` | M1 shows the mock score to the student right away. From M3 on, set `false` (students see scores only after the lecturer confirms them) |
+| `Interview:Mock:EnableFollowUps` | `false` | turn on to try the follow-up flow with the mock (answers under 15 words trigger a follow-up) |
+| `Interview:AllowRetake` | `false` | whether students may retake an exam (open point) |
+| `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |
+| `Cors:AllowedOrigins` | `http://localhost:5173`, `http://localhost:3000` | where the FE runs |
 
-Đổi cấu hình riêng trên máy mình mà không commit: dùng `dotnet user-secrets` (project đã có `UserSecretsId`) hoặc biến môi trường, ví dụ `ConnectionStrings__Database=...`.
+To override settings on your machine without committing them, use `dotnet user-secrets` (the project already has a `UserSecretsId`) or environment variables, e.g. `ConnectionStrings__Database=...`.
 
-## 6. Sửa database
+## 6. Changing the database
 
-Schema lấy **`database/01_schema.sql` làm chuẩn** (team chọn không dùng EF migration). Khi cần thêm hoặc sửa cột / bảng:
+The team chose **`database/01_schema.sql` as the source of truth** (no EF migrations). To add or change a column or table:
 
-1. Sửa `database/01_schema.sql` (và `02_seed.sql` nếu dữ liệu mẫu bị ảnh hưởng).
-2. Sửa entity trong `Domain/` và mapping trong `*DbContext.cs` của **đúng module sở hữu bảng**.
-   - Tên property dạng PascalCase tự map sang snake_case: `TimeLimitPerQuestion` ↔ `time_limit_per_question`.
-   - Enum được lưu dạng chuỗi, tên phải khớp `CHECK` constraint trong SQL.
-3. Reset DB: `docker compose down -v && docker compose up -d`.
-4. Báo cả team reset DB sau khi merge.
+1. Edit `database/01_schema.sql` (and `02_seed.sql` if the demo data is affected).
+2. Update the entity in `Domain/` and the mapping in the `*DbContext.cs` of **the module that owns the table**.
+   - PascalCase property names map to snake_case automatically: `TimeLimitPerQuestion` ↔ `time_limit_per_question`.
+   - Enums are stored as strings; their names must match the `CHECK` constraints in the SQL.
+3. Reset the database: `docker compose down -v && docker compose up -d`.
+4. Tell the team to reset their databases after the merge.
 
-## 7. Test
+## 7. Tests
 
 ```bash
 dotnet build
 dotnet test
 ```
 
-Unit test hiện có: state machine của lượt thi, mock AI chạy ra kết quả cố định, cách chia nhóm điểm trong thống kê.
+Current unit tests cover the attempt state machine, the deterministic mock AI and the score buckets used in statistics.
 
-## 8. Lỗi hay gặp
+## 8. Troubleshooting
 
-| Triệu chứng | Cách xử lý |
+| Symptom | Fix |
 |---|---|
-| `docker compose up` báo port 5432 đã bị dùng | Máy đang chạy PostgreSQL khác. Đổi `"5432:5432"` thành `"5433:5432"` và sửa `Port=5433` trong connection string |
-| Sửa file SQL nhưng DB không đổi | Script chỉ chạy khi volume còn trống → `docker compose down -v` rồi `up -d` |
-| `/health` báo Unhealthy | Container chưa chạy hoặc chưa healthy: `docker compose ps`, `docker compose logs postgres` |
-| API không khởi động, báo `Jwt:SigningKey phải dài tối thiểu 32 ký tự` | Đang chạy ngoài môi trường Development → đặt biến `Jwt__SigningKey` |
-| `401 unauthenticated` trên Swagger | Chưa bấm **Authorize**, hoặc token đã hết hạn |
-| `409 attempt_already_taken` | Sinh viên đó đã thi xong phiên này. Dùng `han.hg` hoặc reset DB |
-| `409 exam_session_not_open` | Phiên chưa publish hoặc ngoài giờ mở (S6 là cố ý như vậy) |
+| `docker compose up` says port 5432 is already in use | Another PostgreSQL is running locally. Change `"5432:5432"` to `"5433:5432"` and use `Port=5433` in the connection string |
+| Edited the SQL files but the database did not change | The scripts only run on an empty volume → `docker compose down -v`, then `up -d` |
+| `/health` reports Unhealthy | The container is not running or not healthy yet: `docker compose ps`, `docker compose logs postgres` |
+| The API fails at startup with `Jwt:SigningKey must be at least 32 characters long` | You are running outside the Development environment → set `Jwt__SigningKey` |
+| `401 unauthenticated` in Swagger | You have not clicked **Authorize**, or the token has expired |
+| `409 attempt_already_taken` | That student has already taken this session. Use `han.hg` or reset the database |
+| `409 exam_session_not_open` | The session is not published or is outside its opening hours (S6 is like this on purpose) |
 
-## 9. Việc tiếp theo (theo tracker)
+## 9. Next steps (from the tracker)
 
-- **M2 – AI thích ứng:** thay `Mock*` trong `Interview/Application/Ai` bằng adapter thật (OpenAI / Gemini / Google TTS…), đổi đăng ký trong `InterviewModule.cs`; thêm API upload audio + WebSocket.
-- **M3 – Báo cáo & duyệt điểm:** API cho giảng viên xem transcript và chốt điểm (`ScoreReview` → attempt `Finalized`); xuất bảng điểm theo mẫu của trường.
-- **M4 – Access & cấu hình:** Google SSO, đặt/đặt lại mật khẩu qua link, CRUD phiên thi / câu hỏi / rubric, publish (khoá câu hỏi), quản lý tài khoản, cấu hình AI, ghi audit log.
+- **M2 – Adaptive AI interview:** replace the `Mock*` classes in `Interview/Application/Ai` with real adapters (OpenAI / Gemini / Google TTS…) and switch the registrations in `InterviewModule.cs`; add an audio upload API + WebSocket.
+- **M3 – Reports & score review:** lecturer API to review transcripts and confirm scores (`ScoreReview` → attempt `Finalized`); export the grade sheet in the school template.
+- **M4 – Access & exam configuration:** Google SSO, set/reset password via email link, CRUD for sessions / questions / rubrics, publishing (locks the questions), account management, AI settings, audit logging.
 
-Các chỗ cần làm đã được đánh dấu `TODO (M2/M3/M4)` trong code.
+The places to work on are marked `TODO (M2/M3/M4)` in the code.
 
-> Lưu ý: .NET 8 LTS được Microsoft hỗ trợ tới **10/11/2026**. Dự án vẫn chạy bình thường sau ngày đó; nếu cần nâng lên .NET 10 LTS thì chỉ sửa `TargetFramework` trong `Directory.Build.props` và version package trong `Directory.Packages.props`.
+> Note: Microsoft supports .NET 8 LTS until **10 November 2026**. The project keeps running after that date; to move to .NET 10 LTS, change `TargetFramework` in `Directory.Build.props` and the package versions in `Directory.Packages.props`.

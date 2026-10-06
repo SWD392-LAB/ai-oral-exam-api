@@ -1,6 +1,6 @@
-# AIVES - PostgreSQL (+ pgAdmin) cho moi truong dev
-# Chay:      docker compose up -d        (lan dau tien se chay database/01_schema.sql roi 02_seed.sql)
-# Reset DB:  docker compose down -v && docker compose up -d   (xoa volume -> chay lai 2 script)
+# AIVES - PostgreSQL (+ pgAdmin) for local development
+# Start:     docker compose up -d        (first start runs database/01_schema.sql, then 02_seed.sql)
+# Reset DB:  docker compose down -v && docker compose up -d   (drops the volume -> scripts run again)
 services:
   postgres:
     image: postgres:16-alpine
@@ -16,7 +16,7 @@ services:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      # Script trong ./database chi chay 1 lan, theo thu tu ten file, khi volume con trong
+      # Scripts in ./database run once, in file-name order, only when the volume is empty
       - ./database/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
       - ./database/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
     healthcheck:

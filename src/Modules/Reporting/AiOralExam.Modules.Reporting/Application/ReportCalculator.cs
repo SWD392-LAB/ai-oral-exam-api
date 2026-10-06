@@ -3,7 +3,7 @@ using AiOralExam.Modules.Interview.Contracts;
 
 namespace AiOralExam.Modules.Reporting.Application;
 
-/// <summary>Tinh toan thong ke thuan (khong I/O) - de unit test.</summary>
+/// <summary>Pure statistics calculations (no I/O) - easy to unit test.</summary>
 internal static class ReportCalculator
 {
     public const decimal GoodAnswerThreshold = 0.7m;
@@ -11,7 +11,7 @@ internal static class ReportCalculator
     public static decimal SuggestedTotal(AttemptResult a) =>
         a.Responses.Sum(r => r.SuggestedScore ?? 0);
 
-    /// <summary>Diem cuoi chi co khi giang vien da Approved.</summary>
+    /// <summary>A final score exists only once the lecturer has Approved it.</summary>
     public static decimal? FinalScore(AttemptResult a) =>
         a.Review is { Status: ReviewStatus.Approved } r ? r.FinalScore : null;
 

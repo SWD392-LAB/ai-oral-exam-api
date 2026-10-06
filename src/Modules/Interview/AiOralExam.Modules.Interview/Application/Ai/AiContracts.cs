@@ -1,16 +1,16 @@
 namespace AiOralExam.Modules.Interview.Application.Ai;
 
 // =====================================================================
-// Cac interface AI (BE-AI-02, BE-AI-03, BE-AI-06).
-// Code nghiep vu chi phu thuoc cac interface nay, KHONG phu thuoc SDK nha cung cap.
-// M1 dung ban Mock (thu muc Mock/). M2 them adapter that (OpenAI, Gemini, Google TTS...)
-// va doi dang ky DI trong InterviewModule - khong sua cho goi.
+// AI interfaces (BE-AI-02, BE-AI-03, BE-AI-06).
+// Business code depends only on these interfaces, NEVER on a provider SDK.
+// M1 uses the mocks (Mock/ folder). M2 adds real adapters (OpenAI, Gemini, Google TTS...)
+// and swaps the DI registration in InterviewModule - callers do not change.
 // =====================================================================
 
-/// <summary>Mot luot hoi/dap da dien ra trong cung 1 cau hoi chinh.</summary>
+/// <summary>One question/answer exchange within the same main question.</summary>
 public sealed record DialogueTurn(string Question, string? Answer, bool IsFollowUp);
 
-// ---------- Phan tich cau tra loi (de quyet dinh hoi xoay) - TACH RIENG voi cham diem ----------
+// ---------- Answer analysis (decides on follow-ups) - SEPARATE from scoring ----------
 
 public sealed record AnswerAnalysisRequest(
     string MainQuestion,
@@ -31,7 +31,7 @@ public interface IAnswerAnalyzer
     Task<AnswerAnalysis> AnalyzeAsync(AnswerAnalysisRequest request, CancellationToken ct = default);
 }
 
-// ---------- Cham diem theo rubric (goi 1 lan khi cau hoi chinh + cac cau xoay da xong) ----------
+// ---------- Rubric scoring (called once, after the main question and its follow-ups are done) ----------
 
 public sealed record RubricScoringRequest(
     string MainQuestion,
@@ -47,7 +47,7 @@ public interface IRubricScorer
     Task<RubricScore> ScoreAsync(RubricScoringRequest request, CancellationToken ct = default);
 }
 
-// ---------- Adapter dich vu ngoai (dung tu M2) ----------
+// ---------- External service adapters (used from M2) ----------
 
 public interface ISpeechToTextService
 {
@@ -63,6 +63,6 @@ public interface ITextToSpeechService
 
 public interface ILlmService
 {
-    /// <summary>Goi LLM tra ve text (adapter that tu parse JSON neu can).</summary>
+    /// <summary>Calls the LLM and returns text (the real adapter parses JSON if needed).</summary>
     Task<string> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken ct = default);
 }

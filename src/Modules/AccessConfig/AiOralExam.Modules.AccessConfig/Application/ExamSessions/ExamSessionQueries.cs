@@ -6,8 +6,8 @@ using Microsoft.EntityFrameworkCore;
 namespace AiOralExam.Modules.AccessConfig.Application.ExamSessions;
 
 /// <summary>
-/// Doc phien thi cho giang vien / admin.
-/// TODO (M4): CreateSession, ImportQuestions, DefineRubric, Publish (khoa cau hoi + rubric), ghi audit log.
+/// Read exam sessions for lecturers / admins.
+/// TODO (M4): CreateSession, ImportQuestions, DefineRubric, Publish (locks questions + rubrics), write audit log.
 /// </summary>
 public interface IExamSessionQueries
 {
@@ -56,10 +56,10 @@ internal sealed class ExamSessionQueries(AccessConfigDbContext db, ICurrentUser 
                     .Include(x => x.Questions).ThenInclude(q => q.Rubric)
                     .AsSplitQuery()
                     .FirstOrDefaultAsync(x => x.Id == id, ct)
-                ?? throw new NotFoundException("exam_session_not_found", "Không tìm thấy phiên thi.");
+                ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
 
         if (!IsAdmin && s.Course.Lecturers.All(l => l.LecturerId != currentUser.Id))
-            throw new ForbiddenException("Bạn không được phân công vào môn của phiên thi này.");
+            throw new ForbiddenException("You are not assigned to the course of this exam session.");
 
         return new ExamSessionDetailDto(
             s.Id, s.CourseId, s.Course.Code, s.Course.Name, s.Title, s.StartTime, s.EndTime,

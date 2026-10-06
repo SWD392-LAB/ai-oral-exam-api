@@ -15,7 +15,7 @@ public interface IInterviewService
 {
     Task<IReadOnlyList<MySessionDto>> GetMySessionsAsync(CancellationToken ct = default);
 
-    /// <summary>POST /api/interview-attempts (BE-PLAT-04). Tra ve (state, created).</summary>
+    /// <summary>POST /api/interview-attempts (BE-PLAT-04). Returns (state, created).</summary>
     Task<(AttemptStateDto State, bool Created)> StartAttemptAsync(StartAttemptRequest request, CancellationToken ct = default);
 
     /// <summary>POST /api/interview-attempts/{id}/responses (BE-AI-05).</summary>
@@ -25,11 +25,11 @@ public interface IInterviewService
 }
 
 /// <summary>
-/// Dieu phoi luong thi:
-///   Start  -> tao InterviewAttempt + QuestionResponse cau 1 + turn Main
-///   Submit -> luu transcript -> phan tich (IAnswerAnalyzer) -> hoi xoay HOAC cham diem (IRubricScorer)
-///          -> sang cau tiep theo HOAC ket thuc luot thi (PendingReview)
-/// Tat ca thay doi cua 1 lan Submit duoc luu trong 1 transaction (1 SaveChanges).
+/// Orchestrates the exam flow:
+///   Start  -> create InterviewAttempt + QuestionResponse for question 1 + a Main turn
+///   Submit -> store the transcript -> analyze (IAnswerAnalyzer) -> follow-up OR score (IRubricScorer)
+///          -> next question OR finish the attempt (PendingReview)
+/// All changes of one Submit are saved in one transaction (a single SaveChanges).
 /// </summary>
 internal sealed class InterviewService(
     InterviewDbContext db,
@@ -41,7 +41,7 @@ internal sealed class InterviewService(
     IOptions<InterviewOptions> options,
     ILogger<InterviewService> logger) : IInterviewService
 {
-    private const string DefaultLanguage = "Vietnamese"; // TODO (M2): lay tu AiServiceConfig qua contract F7
+    private const string DefaultLanguage = "Vietnamese"; // TODO (M2): read from AiServiceConfig through the F7 contract
     private readonly InterviewOptions _options = options.Value;
 
     private DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
@@ -56,7 +56,7 @@ internal sealed class InterviewService(
             .ToListAsync(ct);
 
         var sessions = (await examConfig.GetSessionsAsync(participants.Select(p => p.ExamSessionId).ToList(), ct))
-            .Where(s => s.Status != ExamSessionStatus.Draft)   // sinh vien khong thay phien thi nhap
+            .Where(s => s.Status != ExamSessionStatus.Draft)   // students never see draft sessions
             .ToDictionary(s => s.Id);
 
         var now = UtcNow;
@@ -81,19 +81,19 @@ internal sealed class InterviewService(
         if (request.ExamSessionId == Guid.Empty)
             throw new ValidationException(new Dictionary<string, string[]>
             {
-                ["examSessionId"] = ["examSessionId là bắt buộc."]
+                ["examSessionId"] = ["examSessionId is required."]
             });
 
         var me = currentUser.Id;
         var session = await examConfig.GetSessionAsync(request.ExamSessionId, ct)
-                      ?? throw new NotFoundException("exam_session_not_found", "Không tìm thấy phiên thi.");
+                      ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
 
         var participant = await db.Participants
                               .Include(p => p.Attempts)
                               .FirstOrDefaultAsync(p => p.ExamSessionId == session.Id && p.StudentId == me, ct)
-                          ?? throw new ForbiddenException("Bạn chưa được đăng ký vào phiên thi này.");
+                          ?? throw new ForbiddenException("You are not registered for this exam session.");
 
-        // Dang thi do (vd. F5 trang) -> tra lai luot thi cu, khong tao moi
+        // Attempt already running (e.g. the page was refreshed) -> return it instead of creating a new one
         var running = participant.Attempts.FirstOrDefault(a => a.Status == AttemptStatus.InProgress);
         if (running is not null)
             return (await GetAttemptStateAsync(running.Id, ct), false);
@@ -102,14 +102,14 @@ internal sealed class InterviewService(
         if (!session.IsOpenAt(now))
             throw new ConflictException("exam_session_not_open",
                 session.Status != ExamSessionStatus.Published
-                    ? "Phiên thi chưa được mở."
-                    : $"Phiên thi chỉ mở từ {session.StartTime:u} đến {session.EndTime:u} (UTC).");
+                    ? "The exam session is not open."
+                    : $"The exam session is open only from {session.StartTime:u} to {session.EndTime:u} (UTC).");
 
         if (participant.Attempts.Count > 0 && !_options.AllowRetake)
-            throw new ConflictException("attempt_already_taken", "Bạn đã hoàn thành lượt thi của phiên thi này.");
+            throw new ConflictException("attempt_already_taken", "You have already taken this exam session.");
 
         if (session.Questions.Count == 0)
-            throw new ConflictException("exam_session_has_no_questions", "Phiên thi chưa có câu hỏi.");
+            throw new ConflictException("exam_session_has_no_questions", "The exam session has no questions.");
 
         var attempt = new InterviewAttempt
         {
@@ -138,15 +138,15 @@ internal sealed class InterviewService(
         attempt.EnsureInProgress();
 
         var session = await examConfig.GetSessionAsync(attempt.Participant.ExamSessionId, ct)
-                      ?? throw new NotFoundException("exam_session_not_found", "Không tìm thấy phiên thi.");
+                      ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
 
         var response = attempt.CurrentResponse
-                       ?? throw new ConflictException("no_open_question", "Không có câu hỏi nào đang chờ trả lời.");
+                       ?? throw new ConflictException("no_open_question", "There is no question waiting for an answer.");
         var turn = response.CurrentTurn
-                   ?? throw new ConflictException("no_open_turn", "Câu hỏi hiện tại đã được trả lời.");
+                   ?? throw new ConflictException("no_open_turn", "The current question has already been answered.");
         var question = session.Questions.First(q => q.Id == response.QuestionId);
 
-        // 1) Luu cau tra loi. Qua thoi gian + grace => coi nhu het gio, khong luu transcript.
+        // 1) Store the answer. Past the time limit + grace => timed out, the transcript is not stored.
         var now = UtcNow;
         var deadline = turn.AskedAt.AddSeconds(session.TimeLimitPerQuestion + _options.TimeLimitGraceSeconds);
         var timedOut = now > deadline;
@@ -157,13 +157,13 @@ internal sealed class InterviewService(
             turn.AnswerTranscript = answer;
             turn.AnsweredAt = now;
         }
-        // het gio / bo trong: giu AnswerTranscript = null, AnsweredAt = null (giong seed)
+        // timed out / empty: keep AnswerTranscript = null, AnsweredAt = null (same as the seed data)
 
         var dialogue = response.Turns.OrderBy(t => t.TurnNo)
             .Select(t => new DialogueTurn(t.QuestionText, t.AnswerTranscript, t.Type == TurnType.FollowUp))
             .ToList();
 
-        // 2) Phan tich -> hoi xoay?
+        // 2) Analyze -> follow-up?
         var analysis = await analyzer.AnalyzeAsync(new AnswerAnalysisRequest(
             question.Content, question.RubricCriteria, dialogue,
             response.FollowUpCount, session.MaxFollowUps, DefaultLanguage), ct);
@@ -178,7 +178,7 @@ internal sealed class InterviewService(
             return new SubmitAnswerResponse(SubmitOutcome.FollowUp, timedOut, null, ToState(attempt, session));
         }
 
-        // 3) Cau hoi chinh xong -> cham diem theo rubric (luu 1 lan, Reporting chi doc lai)
+        // 3) Main question done -> score against the rubric (stored once, Reporting only reads it)
         var score = await scorer.ScoreAsync(new RubricScoringRequest(
             question.Content, question.RubricCriteria, question.MaxScore, dialogue, DefaultLanguage), ct);
 
@@ -193,7 +193,7 @@ internal sealed class InterviewService(
             EvaluatedAt = now,
         };
 
-        // 4) Cau tiep theo hoac ket thuc
+        // 4) Next question or finish
         var next = session.Questions.FirstOrDefault(q => q.OrderNo > question.OrderNo);
         string outcome;
         if (next is not null)
@@ -223,7 +223,7 @@ internal sealed class InterviewService(
     {
         var attempt = await LoadOwnAttemptAsync(attemptId, ct);
         var session = await examConfig.GetSessionAsync(attempt.Participant.ExamSessionId, ct)
-                      ?? throw new NotFoundException("exam_session_not_found", "Không tìm thấy phiên thi.");
+                      ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
         return ToState(attempt, session);
     }
 
@@ -236,11 +236,11 @@ internal sealed class InterviewService(
                           .Include(a => a.Responses).ThenInclude(r => r.Evaluation)
                           .AsSplitQuery()
                           .FirstOrDefaultAsync(a => a.Id == attemptId, ct)
-                      ?? throw new NotFoundException("attempt_not_found", "Không tìm thấy lượt thi.");
+                      ?? throw new NotFoundException("attempt_not_found", "Attempt not found.");
 
-        // Sinh vien chi thay luot thi cua minh
+        // Students only see their own attempts
         if (attempt.Participant.StudentId != currentUser.Id)
-            throw new NotFoundException("attempt_not_found", "Không tìm thấy lượt thi.");
+            throw new NotFoundException("attempt_not_found", "Attempt not found.");
         return attempt;
     }
 
@@ -254,7 +254,7 @@ internal sealed class InterviewService(
         };
         response.AddTurn(TurnType.Main, question.Content, now);
         attempt.Responses.Add(response);
-        // Add tuong minh: tranh EF hieu nham entity moi (Guid da gan) la entity cu can UPDATE
+        // Explicit Add: stops EF from treating the new entity (Guid already set) as an existing row to UPDATE
         db.QuestionResponses.Add(response);
     }
 

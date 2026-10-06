@@ -1,11 +1,11 @@
 namespace AiOralExam.SharedKernel.Security;
 
-/// <summary>Nguoi dung dang goi API (lay tu JWT). Implement o AiOralExam.Api.</summary>
+/// <summary>The user calling the API (read from the JWT). Implemented in AiOralExam.Api.</summary>
 public interface ICurrentUser
 {
     bool IsAuthenticated { get; }
 
-    /// <summary>Id user; nem UnauthorizedException neu chua dang nhap.</summary>
+    /// <summary>User id; throws UnauthorizedException when not signed in.</summary>
     Guid Id { get; }
 
     string? Role { get; }

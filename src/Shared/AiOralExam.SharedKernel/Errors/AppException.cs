@@ -1,8 +1,8 @@
 namespace AiOralExam.SharedKernel.Errors;
 
 /// <summary>
-/// Loi nghiep vu co chu dich. Middleware o Api bat va tra ve format loi chung (ApiError).
-/// Moi loi co Code on dinh de FE switch theo, Message de hien cho nguoi dung.
+/// Expected business error. The Api middleware catches it and returns the shared error format (ApiError).
+/// Every error has a stable Code for the FE to switch on, and a Message to show to the user.
 /// </summary>
 public class AppException : Exception
 {
@@ -22,7 +22,7 @@ public class AppException : Exception
 public sealed class NotFoundException(string code, string message)
     : AppException(404, code, message);
 
-public sealed class ForbiddenException(string message = "Bạn không có quyền thực hiện thao tác này.")
+public sealed class ForbiddenException(string message = "You do not have permission to perform this action.")
     : AppException(403, "forbidden", message);
 
 public sealed class ConflictException(string code, string message)
@@ -31,5 +31,5 @@ public sealed class ConflictException(string code, string message)
 public sealed class UnauthorizedException(string code, string message)
     : AppException(401, code, message);
 
-public sealed class ValidationException(IDictionary<string, string[]> errors, string message = "Dữ liệu gửi lên không hợp lệ.")
+public sealed class ValidationException(IDictionary<string, string[]> errors, string message = "The submitted data is invalid.")
     : AppException(400, "validation_failed", message, errors);

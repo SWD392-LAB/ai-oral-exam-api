@@ -1,6 +1,6 @@
 namespace AiOralExam.Modules.AccessConfig.Domain;
 
-/// <summary>ERD: USER + ROLE. Class diagram: User (abstract) + Student/Lecturer/Administrator gop 1 bang.</summary>
+/// <summary>ERD: USER + ROLE. Class diagram: User (abstract) + Student/Lecturer/Administrator stored in one table.</summary>
 public class User
 {
     public Guid Id { get; set; }
@@ -10,7 +10,7 @@ public class User
     public Role Role { get; set; } = null!;
     public AuthProvider AuthProvider { get; set; } = AuthProvider.Password;
 
-    /// <summary>Dinh dang ASP.NET Core Identity V3 (salt nam trong hash). Null = chua dat mat khau / Google SSO.</summary>
+    /// <summary>ASP.NET Core Identity V3 format (the salt is inside the hash). Null = password not set yet / Google SSO.</summary>
     public string? PasswordHash { get; set; }
     public string? PasswordSalt { get; set; }
     public string? StudentCode { get; set; }
@@ -27,7 +27,7 @@ public class Role
     public string Name { get; set; } = null!;
 }
 
-/// <summary>ERD: PASSWORD SETUP TOKEN. Chi luu SHA-256 cua token, khong luu token goc.</summary>
+/// <summary>ERD: PASSWORD SETUP TOKEN. Only the SHA-256 of the token is stored, never the raw token.</summary>
 public class PasswordSetupToken
 {
     public Guid Id { get; set; }
@@ -53,7 +53,7 @@ public class AuditLog
     public DateTime CreatedAt { get; set; }
 }
 
-/// <summary>ERD: AI SERVICE CONFIG. Moi ServiceType chi co 1 ban ghi IsActive.</summary>
+/// <summary>ERD: AI SERVICE CONFIG. Only one IsActive row per ServiceType.</summary>
 public class AiServiceConfig
 {
     public Guid Id { get; set; }

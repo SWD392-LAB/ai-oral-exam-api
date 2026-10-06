@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- F3 - AI Viva Interview. So huu: participants, interview_attempts, question_responses,
+  <!-- F3 - AI Viva Interview. Owns: participants, interview_attempts, question_responses,
        interview_turns, ai_evaluations, score_reviews -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -11,7 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\..\Shared\AiOralExam.SharedKernel\AiOralExam.SharedKernel.csproj" />
     <ProjectReference Include="..\AiOralExam.Modules.Interview.Contracts\AiOralExam.Modules.Interview.Contracts.csproj" />
-    <!-- Chi dung public contract cua F7, khong dung bang cua F7 -->
+    <!-- Uses only the public contract of F7, never F7's tables -->
     <ProjectReference Include="..\..\AccessConfig\AiOralExam.Modules.AccessConfig.Contracts\AiOralExam.Modules.AccessConfig.Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>

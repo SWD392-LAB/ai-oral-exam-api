@@ -1,5 +1,5 @@
 <Project>
-  <!-- Central Package Management: version cua moi NuGet package khai bao 1 lan o day -->
+  <!-- Central Package Management: every NuGet package version is declared once, here -->
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>

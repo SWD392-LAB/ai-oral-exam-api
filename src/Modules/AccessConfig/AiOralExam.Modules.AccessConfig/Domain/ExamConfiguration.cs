@@ -13,7 +13,7 @@ public class Course
     public ICollection<ExamSession> ExamSessions { get; set; } = new List<ExamSession>();
 }
 
-/// <summary>Quan he N-N "teaches" giua COURSE va USER (Lecturer).</summary>
+/// <summary>N-N "teaches" relationship between COURSE and USER (Lecturer).</summary>
 public class CourseLecturer
 {
     public Guid CourseId { get; set; }
@@ -23,7 +23,7 @@ public class CourseLecturer
     public DateTime AssignedAt { get; set; }
 }
 
-/// <summary>ERD: EXAM SESSION (phien thi) - KHAC InterviewAttempt (luot thi cua tung sinh vien).</summary>
+/// <summary>ERD: EXAM SESSION - NOT the same as InterviewAttempt (one student's attempt).</summary>
 public class ExamSession
 {
     public Guid Id { get; set; }
@@ -34,7 +34,7 @@ public class ExamSession
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
 
-    /// <summary>Giay.</summary>
+    /// <summary>Seconds.</summary>
     public int TimeLimitPerQuestion { get; set; }
     public int MaxFollowUps { get; set; } = 2;
     public ExamSessionStatus Status { get; set; } = ExamSessionStatus.Draft;
@@ -42,11 +42,11 @@ public class ExamSession
 
     public ICollection<Question> Questions { get; set; } = new List<Question>();
 
-    /// <summary>Da publish thi khoa cau hoi va rubric (quy tac nghiep vu #6).</summary>
+    /// <summary>Once published, questions and rubrics are locked (business rule #6).</summary>
     public bool IsLocked => Status != ExamSessionStatus.Draft;
 }
 
-/// <summary>ERD: QUESTION - cau hoi chinh do giang vien soan.</summary>
+/// <summary>ERD: QUESTION - a main question written by the lecturer.</summary>
 public class Question
 {
     public Guid Id { get; set; }
@@ -56,7 +56,7 @@ public class Question
     public Rubric Rubric { get; set; } = null!;
 }
 
-/// <summary>ERD: RUBRIC - dung 1 rubric cho moi cau hoi.</summary>
+/// <summary>ERD: RUBRIC - exactly one rubric per question.</summary>
 public class Rubric
 {
     public Guid Id { get; set; }

@@ -1,9 +1,9 @@
 namespace AiOralExam.Modules.Interview.Application.Ai.Mock;
 
 /// <summary>
-/// Mock phan tich cau tra loi: co dinh, chay lai van ra cung ket qua.
-/// Cau tra loi duoi MinWords tu (hoac bo trong) => chua du y, hoi xoay neu con luot.
-/// Bat/tat bang cau hinh Interview:Mock:EnableFollowUps (M1 mac dinh tat).
+/// Mock answer analysis: deterministic, the same input always gives the same result.
+/// An answer shorter than MinWords words (or empty) => insufficient, ask a follow-up if any are left.
+/// Toggle with Interview:Mock:EnableFollowUps (off by default in M1).
 /// </summary>
 internal sealed class MockAnswerAnalyzer(bool enableFollowUps) : IAnswerAnalyzer
 {
@@ -18,11 +18,11 @@ internal sealed class MockAnswerAnalyzer(bool enableFollowUps) : IAnswerAnalyzer
         var needsFollowUp = enableFollowUps && !sufficient && request.FollowUpsUsed < request.MaxFollowUps;
         var followUp = needsFollowUp
             ? (string.IsNullOrWhiteSpace(lastAnswer)
-                ? "Em chưa trả lời câu hỏi. Em có thể trình bày ngắn gọn ý chính của mình không?"
-                : "Em có thể giải thích rõ hơn và cho một ví dụ cụ thể không?")
+                ? "You have not answered the question yet. Could you briefly explain your main idea?"
+                : "Could you explain that in more detail and give a concrete example?")
             : null;
 
-        IReadOnlyList<string> missing = sufficient ? [] : ["Câu trả lời còn ngắn, thiếu giải thích hoặc ví dụ."];
+        IReadOnlyList<string> missing = sufficient ? [] : ["The answer is short and lacks an explanation or an example."];
         return Task.FromResult(new AnswerAnalysis(sufficient, missing, needsFollowUp, followUp));
     }
 }

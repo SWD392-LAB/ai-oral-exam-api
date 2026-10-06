@@ -1,12 +1,12 @@
 -- =====================================================================
 -- AIVES - AI-powered Viva Exam System
--- 01_schema.sql : tao bang cho PostgreSQL (>= 13)
--- Dua tren Conceptual ERD (Figure 8) + thuoc tinh trong Class Diagram (Figure 9)
---   15 entity cua ERD + 1 bang trung gian course_lecturers (quan he N-N "teaches")
--- Enum duoc luu dang VARCHAR + CHECK de map de dang voi EF Core (string conversion).
+-- 01_schema.sql : creates the tables for PostgreSQL (>= 13)
+-- Based on the Conceptual ERD (Figure 8) + attributes from the Class Diagram (Figure 9)
+--   15 ERD entities + 1 join table course_lecturers (N-N "teaches" relationship)
+-- Enums are stored as VARCHAR + CHECK so they map easily to EF Core (string conversion).
 -- =====================================================================
 
--- Chay lai tu dau: xoa bang cu (thu tu nguoc voi phu thuoc)
+-- Re-runnable: drop old tables first (reverse dependency order)
 DROP TABLE IF EXISTS score_reviews, ai_evaluations, interview_turns, question_responses,
     interview_attempts, participants, rubrics, questions, exam_sessions,
     course_lecturers, courses, ai_service_configs, audit_logs,
@@ -23,7 +23,7 @@ CREATE TABLE roles (
                 CHECK (name IN ('Student', 'Lecturer', 'Administrator'))
 );
 
--- ERD: USER  (Class diagram: User + Student/Lecturer/Administrator -> 1 bang)
+-- ERD: USER  (Class diagram: User + Student/Lecturer/Administrator -> one table)
 CREATE TABLE users (
     id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     full_name       VARCHAR(150) NOT NULL,
@@ -31,10 +31,10 @@ CREATE TABLE users (
     role_id         SMALLINT     NOT NULL REFERENCES roles(id),
     auth_provider   VARCHAR(20)  NOT NULL DEFAULT 'Password'
                     CHECK (auth_provider IN ('Password', 'GoogleSSO')),
-    password_hash   VARCHAR(512),          -- NULL khi chua set mat khau / dung Google SSO
-    password_salt   VARCHAR(128),          -- giu theo class diagram; NULL neu dung Identity PasswordHasher (salt nam trong hash)
-    student_code    VARCHAR(20)  UNIQUE,   -- chi Student
-    lecturer_code   VARCHAR(20)  UNIQUE,   -- chi Lecturer
+    password_hash   VARCHAR(512),          -- NULL when no password is set yet / Google SSO
+    password_salt   VARCHAR(128),          -- kept from the class diagram; NULL when using Identity PasswordHasher (salt is inside the hash)
+    student_code    VARCHAR(20)  UNIQUE,   -- Student only
+    lecturer_code   VARCHAR(20)  UNIQUE,   -- Lecturer only
     is_active       BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
@@ -44,7 +44,7 @@ CREATE INDEX ix_users_role ON users(role_id);
 CREATE TABLE password_setup_tokens (
     id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id     UUID         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_hash  VARCHAR(128) NOT NULL UNIQUE,   -- chi luu hash cua token, khong luu token goc
+    token_hash  VARCHAR(128) NOT NULL UNIQUE,   -- only the token hash is stored, never the raw token
     purpose     VARCHAR(20)  NOT NULL CHECK (purpose IN ('AccountSetup', 'PasswordReset')),
     expires_at  TIMESTAMPTZ  NOT NULL,
     used_at     TIMESTAMPTZ,
@@ -77,7 +77,7 @@ CREATE TABLE ai_service_configs (
     is_active          BOOLEAN      NOT NULL DEFAULT TRUE,
     updated_at         TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
--- Moi loai dich vu chi co 1 cau hinh dang active
+-- Only one active configuration per service type
 CREATE UNIQUE INDEX ux_ai_config_active ON ai_service_configs(service_type) WHERE is_active;
 
 -- ---------------------------------------------------------------------
@@ -91,7 +91,7 @@ CREATE TABLE courses (
     name  VARCHAR(200) NOT NULL
 );
 
--- ERD: COURSE >o--|< USER "teaches"  (N-N -> bang trung gian)
+-- ERD: COURSE >o--|< USER "teaches"  (N-N -> join table)
 CREATE TABLE course_lecturers (
     course_id    UUID        NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
     lecturer_id  UUID        NOT NULL REFERENCES users(id)   ON DELETE CASCADE,
@@ -108,7 +108,7 @@ CREATE TABLE exam_sessions (
     title                    VARCHAR(200) NOT NULL,
     start_time               TIMESTAMPTZ  NOT NULL,
     end_time                 TIMESTAMPTZ  NOT NULL,
-    time_limit_per_question  INT          NOT NULL CHECK (time_limit_per_question > 0),  -- giay
+    time_limit_per_question  INT          NOT NULL CHECK (time_limit_per_question > 0),  -- seconds
     max_follow_ups           INT          NOT NULL DEFAULT 2 CHECK (max_follow_ups >= 0),
     status                   VARCHAR(20)  NOT NULL DEFAULT 'Draft'
                              CHECK (status IN ('Draft', 'Published', 'Closed')),
@@ -178,9 +178,9 @@ CREATE TABLE interview_turns (
     question_response_id  UUID         NOT NULL REFERENCES question_responses(id) ON DELETE CASCADE,
     turn_no               INT          NOT NULL CHECK (turn_no > 0),
     type                  VARCHAR(10)  NOT NULL CHECK (type IN ('Main', 'FollowUp')),
-    question_text         TEXT         NOT NULL,   -- luu nguyen van cau da hoi (ca cau hoi xoay)
-    answer_transcript     TEXT,                    -- NULL neu het gio ma chua tra loi
-    audio_url             VARCHAR(500),            -- file audio nam o Object Storage
+    question_text         TEXT         NOT NULL,   -- exact text of the question asked (follow-ups too)
+    answer_transcript     TEXT,                    -- NULL when time ran out without an answer
+    audio_url             VARCHAR(500),            -- the audio file lives in object storage
     asked_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     answered_at           TIMESTAMPTZ,
     UNIQUE (question_response_id, turn_no)

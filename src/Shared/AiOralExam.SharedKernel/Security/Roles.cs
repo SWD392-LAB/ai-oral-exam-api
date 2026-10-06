@@ -1,6 +1,6 @@
 namespace AiOralExam.SharedKernel.Security;
 
-/// <summary>Ten role dung trong JWT va [Authorize(Roles = ...)]. Khop voi bang roles.</summary>
+/// <summary>Role names used in the JWT and in [Authorize(Roles = ...)]. Match the roles table.</summary>
 public static class Roles
 {
     public const string Student = "Student";
@@ -10,7 +10,7 @@ public static class Roles
     public const string LecturerOrAdmin = Lecturer + "," + Administrator;
 }
 
-/// <summary>Ten claim trong JWT (khong dung claim URI dai cua Microsoft).</summary>
+/// <summary>Claim names in the JWT (short names instead of Microsoft's long claim URIs).</summary>
 public static class AppClaims
 {
     public const string UserId = "sub";

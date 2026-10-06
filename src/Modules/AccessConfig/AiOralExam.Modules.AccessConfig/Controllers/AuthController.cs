@@ -12,7 +12,7 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 [Tags("Auth")]
 public sealed class AuthController(IAuthService auth, ICurrentUser currentUser) : ControllerBase
 {
-    /// <summary>Dang nhap bang email + mat khau, tra ve JWT co role.</summary>
+    /// <summary>Sign in with email + password; returns a JWT that carries the role.</summary>
     [HttpPost("login")]
     [AllowAnonymous]
     [ProducesResponseType<LoginResponse>(StatusCodes.Status200OK)]
@@ -20,7 +20,7 @@ public sealed class AuthController(IAuthService auth, ICurrentUser currentUser) 
     public Task<LoginResponse> Login(LoginRequest request, CancellationToken ct) =>
         auth.LoginWithPasswordAsync(request, ct);
 
-    /// <summary>Thong tin tai khoan dang dang nhap.</summary>
+    /// <summary>Profile of the signed-in account.</summary>
     [HttpGet("me")]
     [Authorize]
     public Task<UserProfileDto> Me(CancellationToken ct) =>

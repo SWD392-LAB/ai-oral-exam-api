@@ -4,7 +4,7 @@ namespace AiOralExam.Modules.Interview.Application;
 
 public sealed record StartAttemptRequest([property: Required] Guid ExamSessionId);
 
-/// <summary>Cau hoi dang cho sinh vien tra loi (chinh hoac xoay).</summary>
+/// <summary>The question waiting for the student's answer (main or follow-up).</summary>
 public sealed record CurrentTurnDto(
     Guid QuestionResponseId,
     Guid QuestionId,
@@ -29,7 +29,7 @@ public sealed record AttemptStateDto(
     CurrentTurnDto? CurrentTurn);
 
 public sealed record SubmitAnswerRequest(
-    // Null/rong = khong tra loi (vd. FE tu nop khi het gio).
+    // Null/empty = no answer (e.g. the FE auto-submits when time runs out).
     [property: MaxLength(10000)] string? AnswerText);
 
 public sealed record EvaluationDto(
@@ -48,7 +48,7 @@ public static class SubmitOutcome
 public sealed record SubmitAnswerResponse(
     string Outcome,
     bool TimedOut,
-    // Null khi Outcome = FollowUp hoac khi an diem AI voi sinh vien.
+    // Null when Outcome = FollowUp or when AI scores are hidden from students.
     EvaluationDto? Evaluation,
     AttemptStateDto Attempt);
 

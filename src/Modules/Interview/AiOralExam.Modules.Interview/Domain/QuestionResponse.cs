@@ -2,19 +2,19 @@ using AiOralExam.Modules.Interview.Contracts;
 
 namespace AiOralExam.Modules.Interview.Domain;
 
-/// <summary>ERD: QUESTION RESPONSE - cau tra loi cho MOT cau hoi chinh (gom nhieu turn: chinh + xoay).</summary>
+/// <summary>ERD: QUESTION RESPONSE - the answer to ONE main question (several turns: main + follow-ups).</summary>
 public class QuestionResponse
 {
     public Guid Id { get; set; }
     public Guid AttemptId { get; set; }
-    public Guid QuestionId { get; set; }   // FK sang questions (module F7)
+    public Guid QuestionId { get; set; }   // FK to questions (module F7)
     public int FollowUpCount { get; set; }
     public bool IsFinished { get; set; }
 
     public ICollection<InterviewTurn> Turns { get; set; } = new List<InterviewTurn>();
     public AiEvaluation? Evaluation { get; set; }
 
-    /// <summary>Turn dang cho tra loi = turn cuoi cung neu chua co AnsweredAt.</summary>
+    /// <summary>The turn waiting for an answer = the last turn, if it has no AnsweredAt yet.</summary>
     public InterviewTurn? CurrentTurn
     {
         get
@@ -32,7 +32,7 @@ public class QuestionResponse
             QuestionResponseId = Id,
             TurnNo = Turns.Count == 0 ? 1 : Turns.Max(t => t.TurnNo) + 1,
             Type = type,
-            QuestionText = questionText,   // luu nguyen van cau da hoi (quy tac #6)
+            QuestionText = questionText,   // store the exact question text that was asked (rule #6)
             AskedAt = utcNow,
         };
         Turns.Add(turn);
@@ -41,7 +41,7 @@ public class QuestionResponse
     }
 }
 
-/// <summary>ERD: INTERVIEW TURN - mot luot hoi/dap. Tap cac turn chinh la transcript.</summary>
+/// <summary>ERD: INTERVIEW TURN - one question/answer exchange. The turns together are the transcript.</summary>
 public class InterviewTurn
 {
     public Guid Id { get; set; }
@@ -55,7 +55,7 @@ public class InterviewTurn
     public DateTime? AnsweredAt { get; set; }
 }
 
-/// <summary>ERD: AI EVALUATION - diem AI GOI Y cho 1 question response. Luu 1 lan, Reporting chi doc.</summary>
+/// <summary>ERD: AI EVALUATION - the AI-SUGGESTED score for one question response. Stored once; Reporting only reads it.</summary>
 public class AiEvaluation
 {
     public Guid Id { get; set; }
@@ -65,7 +65,7 @@ public class AiEvaluation
     public DateTime EvaluatedAt { get; set; }
 }
 
-/// <summary>ERD: SCORE REVIEW - diem CUOI do giang vien chot cho ca luot thi.</summary>
+/// <summary>ERD: SCORE REVIEW - the FINAL score the lecturer confirms for the whole attempt.</summary>
 public class ScoreReview
 {
     public Guid Id { get; set; }

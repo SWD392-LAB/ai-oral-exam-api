@@ -12,7 +12,7 @@ internal sealed class CurrentUser(IHttpContextAccessor accessor) : ICurrentUser
     public Guid Id =>
         Guid.TryParse(Principal?.FindFirst(AppClaims.UserId)?.Value, out var id)
             ? id
-            : throw new UnauthorizedException("unauthenticated", "Bạn cần đăng nhập.");
+            : throw new UnauthorizedException("unauthenticated", "You need to sign in.");
 
     public string? Role => Principal?.FindFirst(AppClaims.Role)?.Value;
 

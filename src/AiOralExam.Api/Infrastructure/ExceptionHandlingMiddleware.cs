@@ -3,8 +3,8 @@ using AiOralExam.SharedKernel.Errors;
 namespace AiOralExam.Api.Infrastructure;
 
 /// <summary>
-/// Bat loi toan cuc (BE-PLAT-05): AppException -> dung status + ApiError; loi khac -> 500,
-/// khong tra stack trace / secret ra ngoai.
+/// Global error handling (BE-PLAT-05): AppException -> its status + ApiError; anything else -> 500,
+/// never leaking stack traces or secrets.
 /// </summary>
 internal sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
 {
@@ -22,13 +22,13 @@ internal sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<
         }
         catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
         {
-            // client huy request - khong can log loi
+            // the client cancelled the request - nothing to log
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled error on {Method} {Path}", context.Request.Method, context.Request.Path);
             await WriteAsync(context, StatusCodes.Status500InternalServerError,
-                new ApiError("internal_error", "Đã có lỗi xảy ra, vui lòng thử lại.", context.TraceIdentifier));
+                new ApiError("internal_error", "Something went wrong, please try again.", context.TraceIdentifier));
         }
     }
 

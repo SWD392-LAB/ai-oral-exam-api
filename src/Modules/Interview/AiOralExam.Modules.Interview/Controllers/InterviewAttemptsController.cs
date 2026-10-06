@@ -7,20 +7,20 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace AiOralExam.Modules.Interview.Controllers;
 
-/// <summary>API luong thi cua sinh vien - chi role Student (BE-PLAT-07).</summary>
+/// <summary>Student exam-flow API - Student role only (BE-PLAT-07).</summary>
 [ApiController]
 [Route("api")]
 [Tags("Interview")]
 [Authorize(Roles = Roles.Student)]
 public sealed class InterviewAttemptsController(IInterviewService interview) : ControllerBase
 {
-    /// <summary>Phien thi sinh vien duoc dang ky (khong gom phien Draft).</summary>
+    /// <summary>Exam sessions the student is registered for (Draft sessions excluded).</summary>
     [HttpGet("interview/my-sessions")]
     public Task<IReadOnlyList<MySessionDto>> MySessions(CancellationToken ct) =>
         interview.GetMySessionsAsync(ct);
 
     /// <summary>
-    /// Tao luot thi va tra ve cau hoi dau tien. Neu dang co luot thi InProgress thi tra lai luot do (200).
+    /// Creates an attempt and returns the first question. If an InProgress attempt exists, returns it (200).
     /// </summary>
     [HttpPost("interview-attempts")]
     [ProducesResponseType<AttemptStateDto>(StatusCodes.Status201Created)]
@@ -35,14 +35,14 @@ public sealed class InterviewAttemptsController(IInterviewService interview) : C
             : Ok(state);
     }
 
-    /// <summary>Trang thai hien tai cua luot thi (dung khi FE reload trang).</summary>
+    /// <summary>Current state of the attempt (used when the FE reloads the page).</summary>
     [HttpGet("interview-attempts/{id:guid}")]
     public Task<AttemptStateDto> Get(Guid id, CancellationToken ct) =>
         interview.GetAttemptStateAsync(id, ct);
 
     /// <summary>
-    /// Nop cau tra loi (M1: dang text) cho cau hoi dang hoi. Tra ve cau hoi xoay, cau tiep theo
-    /// hoac ket thuc, kem diem goi y cua AI (neu InterviewOptions.ShowAiScoreToStudent).
+    /// Submits the answer (M1: text) to the current question. Returns a follow-up, the next question
+    /// or completion, plus the AI-suggested score (if InterviewOptions.ShowAiScoreToStudent).
     /// </summary>
     [HttpPost("interview-attempts/{id:guid}/responses")]
     [ProducesResponseType<SubmitAnswerResponse>(StatusCodes.Status200OK)]
@@ -51,5 +51,5 @@ public sealed class InterviewAttemptsController(IInterviewService interview) : C
         interview.SubmitAnswerAsync(id, request, ct);
 
     // TODO (M2): POST interview-attempts/{id}/audio (multipart) -> STT -> SubmitAnswer; WebSocket /hubs/interview
-    // TODO (M3): API giang vien xem lai transcript + chot diem (ScoreReview) -> attempt Finalized
+    // TODO (M3): lecturer API to review the transcript + confirm the score (ScoreReview) -> attempt Finalized
 }

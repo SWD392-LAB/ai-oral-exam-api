@@ -1,6 +1,6 @@
 namespace AiOralExam.Modules.AccessConfig.Contracts;
 
-/// <summary>Khop CHECK constraint exam_sessions.status.</summary>
+/// <summary>Matches the CHECK constraint on exam_sessions.status.</summary>
 public enum ExamSessionStatus
 {
     Draft,

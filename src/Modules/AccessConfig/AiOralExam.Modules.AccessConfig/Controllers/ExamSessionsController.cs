@@ -12,17 +12,17 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 [Authorize(Roles = Roles.LecturerOrAdmin)]
 public sealed class ExamSessionsController(IExamSessionQueries queries) : ControllerBase
 {
-    /// <summary>Mon hoc giang vien duoc phan cong (admin: tat ca).</summary>
+    /// <summary>Courses the lecturer is assigned to (admin: all courses).</summary>
     [HttpGet("courses/mine")]
     public Task<IReadOnlyList<CourseDto>> MyCourses(CancellationToken ct) =>
         queries.GetMyCoursesAsync(ct);
 
-    /// <summary>Danh sach phien thi trong cac mon cua giang vien.</summary>
+    /// <summary>Exam sessions in the lecturer's courses.</summary>
     [HttpGet("exam-sessions")]
     public Task<IReadOnlyList<ExamSessionSummaryDto>> List([FromQuery] Guid? courseId, CancellationToken ct) =>
         queries.GetSessionsAsync(courseId, ct);
 
-    /// <summary>Chi tiet phien thi kem cau hoi va rubric.</summary>
+    /// <summary>Exam session details with questions and rubrics.</summary>
     [HttpGet("exam-sessions/{id:guid}")]
     public Task<ExamSessionDetailDto> Get(Guid id, CancellationToken ct) =>
         queries.GetSessionAsync(id, ct);

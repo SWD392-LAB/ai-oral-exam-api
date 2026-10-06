@@ -4,8 +4,8 @@ using AiOralExam.SharedKernel.Errors;
 namespace AiOralExam.Modules.Interview.Domain;
 
 /// <summary>
-/// ERD: INTERVIEW ATTEMPT - luot thi cua MOT sinh vien (khac ExamSession).
-/// Chuyen trang thai (BE-AI-01): InProgress -> PendingReview -> Finalized. Khong co chieu nguoc lai.
+/// ERD: INTERVIEW ATTEMPT - ONE student's attempt (not the same as ExamSession).
+/// State transitions (BE-AI-01): InProgress -> PendingReview -> Finalized. Never backwards.
 /// </summary>
 public class InterviewAttempt
 {
@@ -30,11 +30,11 @@ public class InterviewAttempt
     {
         if (!CanTransition(Status, next))
             throw new ConflictException("invalid_attempt_transition",
-                $"Không thể chuyển lượt thi từ {Status} sang {next}.");
+                $"Cannot move the attempt from {Status} to {next}.");
         Status = next;
     }
 
-    /// <summary>Het cau hoi -> cho giang vien duyet.</summary>
+    /// <summary>No questions left -> waits for lecturer review.</summary>
     public void Complete(DateTime utcNow)
     {
         TransitionTo(AttemptStatus.PendingReview);
@@ -44,9 +44,9 @@ public class InterviewAttempt
     public void EnsureInProgress()
     {
         if (Status != AttemptStatus.InProgress)
-            throw new ConflictException("attempt_not_in_progress", "Lượt thi đã kết thúc.");
+            throw new ConflictException("attempt_not_in_progress", "This attempt has already ended.");
     }
 
-    /// <summary>Cau hoi dang hoi = response chua xong (moi luc chi co toi da 1).</summary>
+    /// <summary>The question being asked = the unfinished response (at most one at any time).</summary>
     public QuestionResponse? CurrentResponse => Responses.FirstOrDefault(r => !r.IsFinished);
 }

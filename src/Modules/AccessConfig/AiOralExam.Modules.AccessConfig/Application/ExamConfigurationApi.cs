@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AiOralExam.Modules.AccessConfig.Application;
 
-/// <summary>Implement public contract cho module khac (Interview, Reporting).</summary>
+/// <summary>Implements the public contract used by other modules (Interview, Reporting).</summary>
 internal sealed class ExamConfigurationApi(AccessConfigDbContext db) : IExamConfigurationApi
 {
     public async Task<ExamSessionInfo?> GetSessionAsync(Guid examSessionId, CancellationToken ct = default)

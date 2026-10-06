@@ -50,7 +50,7 @@ public sealed record QuestionStatisticDto(
     decimal MaxScore,
     int AnswerCount,
     decimal AverageScore,
-    // Ti le cau tra loi dat >= 70% diem toi da.
+    // Share of answers scoring >= 70% of the maximum.
     decimal GoodAnswerRate,
     double AverageFollowUps);
 
@@ -64,7 +64,7 @@ public sealed record SessionStatisticsDto(
     int PendingReviewAttempts,
     decimal? AverageFinalScore,
     decimal MaxTotalScore,
-    // Phan bo diem cuoi (thang 10) cua cac luot thi da chot.
+    // Distribution of final scores (on a 10-point scale) of finalized attempts.
     IReadOnlyList<ScoreBucketDto> ScoreDistribution,
-    // Sap xep tu kho nhat (diem trung binh % thap nhat).
+    // Sorted hardest first (lowest average score in %).
     IReadOnlyList<QuestionStatisticDto> Questions);

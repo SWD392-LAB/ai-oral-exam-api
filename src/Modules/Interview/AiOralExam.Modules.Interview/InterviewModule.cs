@@ -23,7 +23,7 @@ public static class InterviewModule
         services.AddScoped<IInterviewService, InterviewService>();
         services.AddScoped<IInterviewResultsApi, InterviewResultsApi>();
 
-        // ---- AI: M1 dung Mock. M2: doi sang adapter that o day, khong sua InterviewService ----
+        // ---- AI: M1 uses mocks. M2: switch to real adapters here, without touching InterviewService ----
         services.AddSingleton<IAnswerAnalyzer>(sp =>
             new MockAnswerAnalyzer(sp.GetRequiredService<IOptions<InterviewOptions>>().Value.Mock.EnableFollowUps));
         services.AddSingleton<IRubricScorer, MockRubricScorer>();

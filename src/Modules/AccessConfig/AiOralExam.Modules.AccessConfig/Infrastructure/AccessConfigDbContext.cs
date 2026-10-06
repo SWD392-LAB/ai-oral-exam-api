@@ -5,9 +5,9 @@ using Microsoft.EntityFrameworkCore;
 namespace AiOralExam.Modules.AccessConfig.Infrastructure;
 
 /// <summary>
-/// DbContext cua F7. KHONG dung EF migration: bang duoc tao boi database/01_schema.sql.
-/// Ten bang/cot snake_case (UseSnakeCaseNamingConvention o ModuleRegistration).
-/// Neu sua schema: sua file SQL truoc, roi sua entity + mapping o day cho khop.
+/// DbContext of F7. NO EF migrations: tables are created by database/01_schema.sql.
+/// Table/column names are snake_case (UseSnakeCaseNamingConvention in AccessConfigModule).
+/// To change the schema: edit the SQL file first, then update the entities + mapping here to match.
 /// </summary>
 public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext> options) : DbContext(options)
 {
@@ -24,7 +24,7 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
     {
-        // Enum luu dang VARCHAR (khop CHECK constraint)
+        // Enums are stored as VARCHAR (matching the CHECK constraints)
         builder.Properties<AuthProvider>().HaveConversion<string>();
         builder.Properties<TokenPurpose>().HaveConversion<string>();
         builder.Properties<AiServiceType>().HaveConversion<string>();
@@ -105,8 +105,8 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
             e.Property(x => x.MaxScore).HasPrecision(5, 2);
         });
 
-        // Id (Guid) do code tu sinh (Guid.NewGuid). ValueGeneratedNever de EF luon INSERT entity moi
-        // gan vao navigation thay vi hieu nham la entity cu can UPDATE.
+        // Guid ids are generated in code (Guid.NewGuid). ValueGeneratedNever makes EF always INSERT new
+        // entities attached to a navigation instead of mistaking them for existing rows to UPDATE.
         foreach (var entity in b.Model.GetEntityTypes())
             foreach (var key in entity.GetKeys())
                 foreach (var prop in key.Properties.Where(p => p.ClrType == typeof(Guid)))

@@ -1,7 +1,7 @@
-# Dung voi VS Code REST Client hoac Visual Studio (.http). Chay API truoc: dotnet run --project src/AiOralExam.Api
+# Use with VS Code REST Client or Visual Studio (.http). Start the API first: dotnet run --project src/AiOralExam.Api
 @host = http://localhost:5080
 
-### Dang nhap sinh vien (chua thi) -> copy accessToken vao @token
+### Sign in as a student who has not taken the exam yet -> copy accessToken into @token
 POST {{host}}/api/auth/login
 Content-Type: application/json
 
@@ -10,23 +10,23 @@ Content-Type: application/json
 ###
 @token = paste-access-token-here
 
-### Phien thi cua toi
+### My exam sessions
 GET {{host}}/api/interview/my-sessions
 Authorization: Bearer {{token}}
 
-### Tao luot thi (phien SWD392 dang mo)
+### Start an attempt (SWD392 session, currently open)
 POST {{host}}/api/interview-attempts
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
 { "examSessionId": "33333333-0000-0000-0000-000000000001" }
 
-### Nop cau tra loi (thay attemptId)
+### Submit an answer (replace ATTEMPT_ID)
 POST {{host}}/api/interview-attempts/ATTEMPT_ID/responses
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
-{ "answerText": "Modular monolith triển khai một khối nhưng chia module rõ ràng theo nghiệp vụ, mỗi module giữ bảng riêng và chỉ gọi nhau qua interface." }
+{ "answerText": "A modular monolith is deployed as one unit but split into business modules; each module owns its tables and talks to the others only through interfaces." }
 
 ### Health check
 GET {{host}}/health

@@ -15,7 +15,7 @@ public sealed record ExamSessionInfo(
     string Title,
     DateTime StartTime,
     DateTime EndTime,
-    int TimeLimitPerQuestion, // don vi: giay
+    int TimeLimitPerQuestion, // seconds
     int MaxFollowUps,
     ExamSessionStatus Status,
     IReadOnlyList<QuestionInfo> Questions)

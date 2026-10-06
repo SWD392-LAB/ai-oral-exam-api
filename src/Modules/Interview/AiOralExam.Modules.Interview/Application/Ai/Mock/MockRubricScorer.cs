@@ -1,8 +1,8 @@
 namespace AiOralExam.Modules.Interview.Application.Ai.Mock;
 
 /// <summary>
-/// Mock cham diem (BE-AI-04): diem tinh tu so tu cua tat ca cau tra loi, lam tron 0.5.
-/// Co dinh: cung dau vao => cung diem + nhan xet.
+/// Mock scoring (BE-AI-04): the score comes from the word count of all answers, rounded to 0.5.
+/// Deterministic: same input => same score + feedback.
 /// </summary>
 internal sealed class MockRubricScorer : IRubricScorer
 {
@@ -16,10 +16,10 @@ internal sealed class MockRubricScorer : IRubricScorer
 
         var feedback = ratio switch
         {
-            0m => "[Mock AI] Sinh viên không trả lời câu hỏi.",
-            < 0.4m => "[Mock AI] Câu trả lời quá ngắn, chưa đáp ứng các tiêu chí của rubric.",
-            < 0.8m => "[Mock AI] Trả lời được một phần ý chính, cần giải thích sâu hơn và có ví dụ.",
-            _ => "[Mock AI] Trả lời đầy đủ, có giải thích và ví dụ phù hợp với rubric."
+            0m => "[Mock AI] The student did not answer the question.",
+            < 0.4m => "[Mock AI] The answer is too short and does not meet the rubric criteria.",
+            < 0.8m => "[Mock AI] Covers some of the main points; needs a deeper explanation and an example.",
+            _ => "[Mock AI] Complete answer with an explanation and an example that fit the rubric."
         };
 
         return Task.FromResult(new RubricScore(score, feedback));

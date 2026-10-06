@@ -17,7 +17,7 @@ var builder = WebApplication.CreateBuilder(args);
 var config = builder.Configuration;
 
 var connectionString = config.GetConnectionString("Database")
-    ?? throw new InvalidOperationException("Thiếu ConnectionStrings:Database trong appsettings.");
+    ?? throw new InvalidOperationException("Missing ConnectionStrings:Database in appsettings.");
 
 // ---------------------------------------------------------------- Shared
 builder.Services.AddHttpContextAccessor();
@@ -25,7 +25,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 
 // ---------------------------------------------------------------- Modules
-// Moi module tu dang ky DbContext + service cua minh. Module chi goi nhau qua *.Contracts.
+// Each module registers its own DbContext + services. Modules talk to each other only through *.Contracts.
 builder.Services
     .AddAccessConfigModule(connectionString)
     .AddInterviewModule(connectionString, config)
@@ -35,13 +35,13 @@ builder.Services
 builder.Services.Configure<JwtOptions>(config.GetSection(JwtOptions.SectionName));
 var jwt = config.GetSection(JwtOptions.SectionName).Get<JwtOptions>() ?? new JwtOptions();
 if (string.IsNullOrWhiteSpace(jwt.SigningKey) || jwt.SigningKey.Length < 32)
-    throw new InvalidOperationException("Jwt:SigningKey phải dài tối thiểu 32 ký tự.");
+    throw new InvalidOperationException("Jwt:SigningKey must be at least 32 characters long.");
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(o =>
     {
-        o.MapInboundClaims = false; // giu ten claim ngan: sub, role, email
+        o.MapInboundClaims = false; // keep the short claim names: sub, role, email
         o.TokenValidationParameters = new TokenValidationParameters
         {
             ValidIssuer = jwt.Issuer,
@@ -51,25 +51,25 @@ builder.Services
             RoleClaimType = AppClaims.Role,
             ClockSkew = TimeSpan.FromMinutes(1),
         };
-        // 401/403 cung tra format ApiError
+        // 401/403 also use the ApiError format
         o.Events = new JwtBearerEvents
         {
             OnChallenge = async ctx =>
             {
                 ctx.HandleResponse();
                 ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-                await ctx.Response.WriteAsJsonAsync(new ApiError("unauthenticated", "Bạn cần đăng nhập.", ctx.HttpContext.TraceIdentifier));
+                await ctx.Response.WriteAsJsonAsync(new ApiError("unauthenticated", "You need to sign in.", ctx.HttpContext.TraceIdentifier));
             },
             OnForbidden = async ctx =>
             {
                 ctx.Response.StatusCode = StatusCodes.Status403Forbidden;
-                await ctx.Response.WriteAsJsonAsync(new ApiError("forbidden", "Bạn không có quyền thực hiện thao tác này.", ctx.HttpContext.TraceIdentifier));
+                await ctx.Response.WriteAsJsonAsync(new ApiError("forbidden", "You do not have permission to perform this action.", ctx.HttpContext.TraceIdentifier));
             },
         };
     });
 builder.Services.AddAuthorization();
 
-// ---------------------------------------------------------------- MVC + loi validation
+// ---------------------------------------------------------------- MVC + validation errors
 builder.Services
     .AddControllers()
     .AddApplicationPart(typeof(AccessConfigModule).Assembly)
@@ -78,20 +78,20 @@ builder.Services
     .AddJsonOptions(o => o.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()))
     .ConfigureApiBehaviorOptions(o =>
     {
-        // Loi [Required]/[EmailAddress]... cung tra format ApiError
+        // [Required]/[EmailAddress]... errors also use the ApiError format
         o.InvalidModelStateResponseFactory = ctx =>
         {
             var details = ctx.ModelState
                 .Where(kv => kv.Value?.Errors.Count > 0)
                 .ToDictionary(
                     kv => kv.Key,
-                    kv => kv.Value!.Errors.Select(e => string.IsNullOrEmpty(e.ErrorMessage) ? "Giá trị không hợp lệ." : e.ErrorMessage).ToArray());
+                    kv => kv.Value!.Errors.Select(e => string.IsNullOrEmpty(e.ErrorMessage) ? "Invalid value." : e.ErrorMessage).ToArray());
             return new BadRequestObjectResult(new ApiError(
-                "validation_failed", "Dữ liệu gửi lên không hợp lệ.", ctx.HttpContext.TraceIdentifier, details));
+                "validation_failed", "The submitted data is invalid.", ctx.HttpContext.TraceIdentifier, details));
         };
     });
 
-// ---------------------------------------------------------------- CORS cho FE (ai-oral-exam-web)
+// ---------------------------------------------------------------- CORS for the FE (ai-oral-exam-web)
 var allowedOrigins = config.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
     .WithOrigins(allowedOrigins)
@@ -110,7 +110,7 @@ builder.Services.AddSwaggerGen(o =>
         Scheme = "bearer",
         BearerFormat = "JWT",
         In = ParameterLocation.Header,
-        Description = "Dán accessToken nhận được từ POST /api/auth/login (không cần chữ 'Bearer ').",
+        Description = "Paste the accessToken from POST /api/auth/login (without the 'Bearer ' prefix).",
     });
     o.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
@@ -120,7 +120,7 @@ builder.Services.AddSwaggerGen(o =>
         o.IncludeXmlComments(xml);
 });
 
-// ---------------------------------------------------------------- Health check (kiem tra ket noi DB)
+// ---------------------------------------------------------------- Health check (database connectivity)
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseHealthCheck>("database");
 
@@ -145,14 +145,14 @@ app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 
 app.Run();
 
-/// <summary>Kiem tra API ket noi duoc PostgreSQL.</summary>
+/// <summary>Checks that the API can reach PostgreSQL.</summary>
 internal sealed class DatabaseHealthCheck(AccessConfigDbContext db) : IHealthCheck
 {
     public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken ct = default) =>
         await db.Database.CanConnectAsync(ct)
             ? HealthCheckResult.Healthy("PostgreSQL OK")
-            : HealthCheckResult.Unhealthy("Không kết nối được PostgreSQL");
+            : HealthCheckResult.Unhealthy("Cannot connect to PostgreSQL");
 }
 
-/// <summary>Cho phep WebApplicationFactory dung trong integration test.</summary>
+/// <summary>Lets WebApplicationFactory be used in integration tests.</summary>
 public partial class Program;

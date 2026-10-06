@@ -1,7 +1,7 @@
 namespace AiOralExam.Modules.AccessConfig.Domain;
 
-// Gia tri enum PHAI trung ten voi CHECK constraint trong database/01_schema.sql
-// (EF Core luu enum dang string, rieng UserRole luu so = roles.id).
+// Enum member names MUST match the CHECK constraints in database/01_schema.sql
+// (EF Core stores enums as strings; UserRole is the exception and is stored as the number = roles.id).
 
 public enum UserRole : short
 {

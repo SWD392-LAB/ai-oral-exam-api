@@ -5,8 +5,8 @@ using Microsoft.EntityFrameworkCore;
 namespace AiOralExam.Modules.Interview.Infrastructure;
 
 /// <summary>
-/// DbContext cua F3 - chi map bang module nay so huu. Khong dung EF migration
-/// (schema tao boi database/01_schema.sql). FK sang users/questions/exam_sessions chi giu Guid.
+/// DbContext of F3 - maps only the tables this module owns. No EF migrations
+/// (schema is created by database/01_schema.sql). FKs to users/questions/exam_sessions are plain Guids.
 /// </summary>
 public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> options) : DbContext(options)
 {
@@ -73,8 +73,8 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.Property(x => x.FinalScore).HasPrecision(5, 2);
         });
 
-        // Id (Guid) do code tu sinh (Guid.NewGuid). ValueGeneratedNever de EF luon INSERT entity moi
-        // gan vao navigation thay vi hieu nham la entity cu can UPDATE.
+        // Guid ids are generated in code (Guid.NewGuid). ValueGeneratedNever makes EF always INSERT new
+        // entities attached to a navigation instead of mistaking them for existing rows to UPDATE.
         foreach (var entity in b.Model.GetEntityTypes())
             foreach (var key in entity.GetKeys())
                 foreach (var prop in key.Properties.Where(p => p.ClrType == typeof(Guid)))

@@ -18,13 +18,13 @@ public static class AccessConfigModule
             .UseNpgsql(connectionString)
             .UseSnakeCaseNamingConvention());
 
-        // PasswordHasher cua ASP.NET Core Identity: PBKDF2-HMAC-SHA512, salt nam trong hash
+        // ASP.NET Core Identity PasswordHasher: PBKDF2-HMAC-SHA512, the salt is inside the hash
         services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
         services.AddScoped<IJwtTokenIssuer, JwtTokenIssuer>();
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IExamSessionQueries, ExamSessionQueries>();
 
-        // Public contract cho module khac
+        // Public contract for other modules
         services.AddScoped<IExamConfigurationApi, ExamConfigurationApi>();
         return services;
     }
