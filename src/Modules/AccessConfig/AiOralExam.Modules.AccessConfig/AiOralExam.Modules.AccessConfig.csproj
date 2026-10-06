@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- F7 - Access Control & Exam Configuration. So huu: users, roles, password_setup_tokens, courses,
+       course_lecturers, exam_sessions, questions, rubrics, ai_service_configs, audit_logs -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="EFCore.NamingConventions" />
+    <PackageReference Include="Microsoft.IdentityModel.JsonWebTokens" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Shared\AiOralExam.SharedKernel\AiOralExam.SharedKernel.csproj" />
+    <ProjectReference Include="..\AiOralExam.Modules.AccessConfig.Contracts\AiOralExam.Modules.AccessConfig.Contracts.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Public API cua module Access Control & Exam Configuration (F7).
+    Module khac CHI duoc reference project nay, khong reference AiOralExam.Modules.AccessConfig.
+  -->
+</Project>

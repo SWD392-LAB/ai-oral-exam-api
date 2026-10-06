@@ -1,0 +1,43 @@
+# AIVES - PostgreSQL (+ pgAdmin) cho moi truong dev
+# Chay:      docker compose up -d        (lan dau tien se chay database/01_schema.sql roi 02_seed.sql)
+# Reset DB:  docker compose down -v && docker compose up -d   (xoa volume -> chay lai 2 script)
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: aives-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: aives
+      POSTGRES_USER: aives
+      POSTGRES_PASSWORD: aives@123
+      TZ: Asia/Ho_Chi_Minh
+      PGTZ: Asia/Ho_Chi_Minh
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # Script trong ./database chi chay 1 lan, theo thu tu ten file, khi volume con trong
+      - ./database/01_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./database/02_seed.sql:/docker-entrypoint-initdb.d/02_seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aives -d aives"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: aives-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@aives.edu.vn
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

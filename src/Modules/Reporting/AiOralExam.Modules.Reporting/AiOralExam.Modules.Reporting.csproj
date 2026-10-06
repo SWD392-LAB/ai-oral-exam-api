@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- F6 - Feedback & Reporting. KHONG so huu bang nao: chi doc diem da luu qua contract cua Interview. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Shared\AiOralExam.SharedKernel\AiOralExam.SharedKernel.csproj" />
+    <ProjectReference Include="..\..\Interview\AiOralExam.Modules.Interview.Contracts\AiOralExam.Modules.Interview.Contracts.csproj" />
+    <ProjectReference Include="..\..\AccessConfig\AiOralExam.Modules.AccessConfig.Contracts\AiOralExam.Modules.AccessConfig.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AiOralExam.UnitTests" />
+  </ItemGroup>
+</Project>

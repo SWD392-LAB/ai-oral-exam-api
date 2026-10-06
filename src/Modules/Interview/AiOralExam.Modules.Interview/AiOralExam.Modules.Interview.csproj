@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- F3 - AI Viva Interview. So huu: participants, interview_attempts, question_responses,
+       interview_turns, ai_evaluations, score_reviews -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="EFCore.NamingConventions" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Shared\AiOralExam.SharedKernel\AiOralExam.SharedKernel.csproj" />
+    <ProjectReference Include="..\AiOralExam.Modules.Interview.Contracts\AiOralExam.Modules.Interview.Contracts.csproj" />
+    <!-- Chi dung public contract cua F7, khong dung bang cua F7 -->
+    <ProjectReference Include="..\..\AccessConfig\AiOralExam.Modules.AccessConfig.Contracts\AiOralExam.Modules.AccessConfig.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="AiOralExam.UnitTests" />
+  </ItemGroup>
+</Project>

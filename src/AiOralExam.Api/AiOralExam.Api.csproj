@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Host duy nhat cua modular monolith: ghep cac module, auth, Swagger, xu ly loi chung -->
+  <PropertyGroup>
+    <UserSecretsId>aives-api-dev</UserSecretsId>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Shared\AiOralExam.SharedKernel\AiOralExam.SharedKernel.csproj" />
+    <ProjectReference Include="..\Modules\AccessConfig\AiOralExam.Modules.AccessConfig\AiOralExam.Modules.AccessConfig.csproj" />
+    <ProjectReference Include="..\Modules\Interview\AiOralExam.Modules.Interview\AiOralExam.Modules.Interview.csproj" />
+    <ProjectReference Include="..\Modules\Reporting\AiOralExam.Modules.Reporting\AiOralExam.Modules.Reporting.csproj" />
+  </ItemGroup>
+</Project>

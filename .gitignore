@@ -1,0 +1,23 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userprefs
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.DotSettings.user
+TestResults/
+*.trx
+coverage*/
+
+## Secrets / local config
+appsettings.Local.json
+*.env
+!.env.example
+
+## OS
+.DS_Store
+Thumbs.db
