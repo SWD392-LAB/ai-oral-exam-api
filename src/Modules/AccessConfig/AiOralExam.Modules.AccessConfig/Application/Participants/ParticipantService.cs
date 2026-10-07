@@ -24,7 +24,7 @@ public sealed record ParticipantDto(
     DateTime? JoinedAt);
 
 public sealed record ImportStudentsRequest(
-    [property: Required] IReadOnlyList<string> StudentCodes);
+    [Required] IReadOnlyList<string> StudentCodes);
 
 public sealed record ImportStudentsResult(
     int Imported,

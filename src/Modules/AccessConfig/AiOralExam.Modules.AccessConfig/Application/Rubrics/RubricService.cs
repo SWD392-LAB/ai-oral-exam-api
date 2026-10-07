@@ -16,8 +16,8 @@ namespace AiOralExam.Modules.AccessConfig.Application.Rubrics;
 public sealed record RubricDto(Guid Id, string Criteria, decimal MaxScore);
 
 public sealed record SaveRubricRequest(
-    [property: Required] string Criteria,
-    [property: Range(0.01, 99999)] decimal MaxScore);
+    [Required] string Criteria,
+    [Range(0.01, 99999)] decimal MaxScore);
 
 public interface IRubricService
 {

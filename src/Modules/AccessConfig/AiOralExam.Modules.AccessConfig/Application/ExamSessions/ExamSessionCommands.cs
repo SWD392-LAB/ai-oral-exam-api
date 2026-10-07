@@ -15,18 +15,18 @@ using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 namespace AiOralExam.Modules.AccessConfig.Application.ExamSessions;
 public sealed record CreateExamSessionRequest(
     Guid CourseId,
-    [property: Required] string Title,
+    [Required] string Title,
     DateTime StartTime,
     DateTime EndTime,
-    [property: Range(1, 3600)] int TimeLimitPerQuestion,
-    [property: Range(0, 20)] int MaxFollowUps = 2);
+    [Range(1, 3600)] int TimeLimitPerQuestion,
+    [Range(0, 20)] int MaxFollowUps = 2);
 
 public sealed record UpdateExamSessionRequest(
-    [property: Required] string Title,
+    [Required] string Title,
     DateTime StartTime,
     DateTime EndTime,
-    [property: Range(1, 3600)] int TimeLimitPerQuestion,
-    [property: Range(0, 20)] int MaxFollowUps = 2);
+    [Range(1, 3600)] int TimeLimitPerQuestion,
+    [Range(0, 20)] int MaxFollowUps = 2);
 
 public sealed record ExamSessionCommandDto(
     Guid Id,

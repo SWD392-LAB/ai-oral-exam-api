@@ -14,9 +14,9 @@ public sealed record CourseDto(
     int ExamSessionCount);
 
 public sealed record CreateCourseRequest(
-    [property: Required, MaxLength(20)] string Code,
-    [property: Required, MaxLength(200)] string Name);
+    [Required, MaxLength(20)] string Code,
+    [Required, MaxLength(200)] string Name);
 
 public sealed record UpdateCourseRequest(
-    [property: Required, MaxLength(200)] string Name);
+    [Required, MaxLength(200)] string Name);
 

@@ -16,12 +16,12 @@ namespace AiOralExam.Modules.AccessConfig.Application.Questions;
 public sealed record QuestionDto(Guid Id, int OrderNo, string Content, bool HasRubric);
 
 public sealed record CreateQuestionRequest(
-    [property: Range(1, int.MaxValue)] int OrderNo,
-    [property: Required] string Content);
+    [Range(1, int.MaxValue)] int OrderNo,
+    [Required] string Content);
 
 public sealed record UpdateQuestionRequest(
-    [property: Range(1, int.MaxValue)] int OrderNo,
-    [property: Required] string Content);
+    [Range(1, int.MaxValue)] int OrderNo,
+    [Required] string Content);
 
 public interface IQuestionService
 {

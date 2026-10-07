@@ -25,10 +25,10 @@ public sealed record AiServiceConfigDto(
 
 public sealed record SaveAiServiceConfigRequest(
     AiServiceType ServiceType,
-    [property: Required] string ProviderName,
-    [property: Url, Required] string EndpointUrl,
-    [property: Required] string ApiKey,
-    [property: Required] SpeechLanguage Language,
+    [Required] string ProviderName,
+    [Url, Required] string EndpointUrl,
+    [Required] string ApiKey,
+    [Required] SpeechLanguage Language,
     bool IsActive = true);
 
 public interface IAiConfigService

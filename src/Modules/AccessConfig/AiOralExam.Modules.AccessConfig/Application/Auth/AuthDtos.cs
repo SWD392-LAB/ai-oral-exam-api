@@ -3,8 +3,8 @@ using System.ComponentModel.DataAnnotations;
 namespace AiOralExam.Modules.AccessConfig.Application.Auth;
 
 public sealed record LoginRequest(
-    [property: Required, EmailAddress] string Email,
-    [property: Required] string Password);
+    [Required, EmailAddress] string Email,
+    [Required] string Password);
 
 public sealed record UserProfileDto(
     Guid Id,

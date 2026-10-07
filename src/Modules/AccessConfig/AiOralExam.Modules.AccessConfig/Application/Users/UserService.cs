@@ -24,13 +24,13 @@ public sealed record UserDto(
     bool IsActive);
 
 public sealed record CreateUserRequest(
-    [property: Required] string FullName,
-    [property: EmailAddress, Required] string Email,
+    [Required] string FullName,
+    [EmailAddress, Required] string Email,
     UserRole Role, string? StudentCode,
     string? LecturerCode, string? Password);
 
 public sealed record UpdateUserRequest(
-    [property: Required] string FullName,
+    [Required] string FullName,
     string? StudentCode,
     string? LecturerCode,
     bool IsActive);
