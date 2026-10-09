@@ -1,0 +1,315 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="AIVES Class Diagram" id="class">
+    <mxGraphModel dx="1600" dy="1000" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2320" pageHeight="1924" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="Role" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#EDE7F6;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;Role&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- name: string&lt;br&gt;- description: string [0..1]&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;&amp;nbsp;&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="70" width="380" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="AIServiceConfig" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#ECEFF1;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;AIServiceConfig&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- serviceType: AIServiceType&lt;br&gt;- providerName: string&lt;br&gt;- endpointUrl: string&lt;br&gt;- apiKeyEncrypted: string&lt;br&gt;- language: Language&lt;br&gt;- isActive: bool&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ configure(providerName: string, endpointUrl: string,&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;apiKey: string, language: Language): void&lt;br&gt;+ testConnection(): bool&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="210" width="380" height="218" as="geometry" />
+        </mxCell>
+        <mxCell id="AuditLog" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#ECEFF1;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;AuditLog&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- action: string&lt;br&gt;- targetEntity: string&lt;br&gt;- createdAt: DateTime&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;&lt;u&gt;+ record(actor: User, action: string, target: string): AuditLog&lt;/u&gt;&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="450" width="380" height="138" as="geometry" />
+        </mxCell>
+        <mxCell id="User" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#EDE7F6;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;User&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- fullName: string [0..1]&lt;br&gt;- username: string [0..1]&lt;br&gt;- studentCode: string [0..1]&lt;br&gt;- lecturerCode: string [0..1]&lt;br&gt;- classCode: string [0..1]&lt;br&gt;- isActive: bool&lt;br&gt;- createdAt: DateTime&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;&lt;u&gt;+ register(accountName: string, email: string,&lt;/u&gt;&lt;br&gt;&lt;u&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;password: string): User&lt;/u&gt;&lt;br&gt;&lt;u&gt;+ createByAdmin(fullName: string, email: string,&lt;/u&gt;&lt;br&gt;&lt;u&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;role: Role): User&lt;/u&gt;&lt;br&gt;+ changeUsername(newName: string): void&lt;br&gt;+ changeRole(role: Role): void&lt;br&gt;+ deactivate(): void&lt;/p&gt;" vertex="1">
+          <mxGeometry x="500" y="70" width="380" height="298" as="geometry" />
+        </mxCell>
+        <mxCell id="UserAccount" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#EDE7F6;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;UserAccount&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- accountName: string [0..1]&lt;br&gt;- email: string&lt;br&gt;- emailVerified: bool&lt;br&gt;- passwordHash: string [0..1]&lt;br&gt;- passwordSalt: string [0..1]&lt;br&gt;- googleLinked: bool&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ verifyEmail(): void&lt;br&gt;+ verifyPassword(password: string): bool&lt;br&gt;+ hasPassword(): bool&lt;br&gt;+ setAccountName(accountName: string): void&lt;br&gt;+ setPassword(newPassword: string): void&lt;br&gt;+ requestPasswordReset(): EmailLinkToken&lt;br&gt;+ linkGoogle(googleIdToken: string): void&lt;/p&gt;" vertex="1">
+          <mxGeometry x="960" y="70" width="380" height="282" as="geometry" />
+        </mxCell>
+        <mxCell id="EmailLinkToken" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#EDE7F6;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;EmailLinkToken&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- tokenHash: string&lt;br&gt;- purpose: TokenPurpose&lt;br&gt;- createdAt: DateTime&lt;br&gt;- expiresAt: DateTime&lt;br&gt;- usedAt: DateTime [0..1]&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ isValid(): bool&lt;br&gt;+ markUsed(): void&lt;/p&gt;" vertex="1">
+          <mxGeometry x="1420" y="70" width="380" height="186" as="geometry" />
+        </mxCell>
+        <mxCell id="Course" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#E8F5E9;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;Course&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- code: string&lt;br&gt;- name: string&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;&lt;u&gt;+ create(code: string, name: string): Course&lt;/u&gt;&lt;br&gt;+ edit(code: string, name: string): void&lt;br&gt;+ assignLecturer(lecturer: User): void&lt;br&gt;+ removeLecturer(lecturer: User): void&lt;br&gt;+ createExamSession(title: string, lecturer: User): ExamSession&lt;/p&gt;" vertex="1">
+          <mxGeometry x="960" y="400" width="380" height="186" as="geometry" />
+        </mxCell>
+        <mxCell id="ExamSession" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#E8F5E9;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;ExamSession&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- title: string&lt;br&gt;- startTime: DateTime&lt;br&gt;- endTime: DateTime&lt;br&gt;- timeLimitPerAnswerSeconds: int&lt;br&gt;- maxFollowUps: int&lt;br&gt;- status: SessionStatus&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ importQuestions(file: string): int&lt;br&gt;+ addQuestion(content: string): Question&lt;br&gt;+ importParticipants(file: string): int&lt;br&gt;+ canPublish(): bool&lt;br&gt;+ publish(): void&lt;br&gt;+ close(): void&lt;br&gt;+ exportGradeSheet(): string&lt;/p&gt;" vertex="1">
+          <mxGeometry x="500" y="640" width="380" height="282" as="geometry" />
+        </mxCell>
+        <mxCell id="Question" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#E8F5E9;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;Question&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- orderNo: int&lt;br&gt;- content: string&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ defineRubric(): Rubric&lt;/p&gt;" vertex="1">
+          <mxGeometry x="1420" y="640" width="380" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="Rubric" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#E8F5E9;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;Rubric&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- maxScore: decimal&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ addCriterion(description: string, maxPoints: decimal):&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;RubricCriterion&lt;br&gt;+ totalMaxScore(): decimal&lt;/p&gt;" vertex="1">
+          <mxGeometry x="1420" y="840" width="380" height="138" as="geometry" />
+        </mxCell>
+        <mxCell id="RubricCriterion" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#E8F5E9;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;RubricCriterion&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- orderNo: int&lt;br&gt;- description: string&lt;br&gt;- maxPoints: decimal&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;&amp;nbsp;&lt;/p&gt;" vertex="1">
+          <mxGeometry x="1880" y="840" width="380" height="138" as="geometry" />
+        </mxCell>
+        <mxCell id="Participant" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFEBEE;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;Participant&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- joinedAt: DateTime&lt;br&gt;- status: ParticipantStatus&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ startAttempt(): InterviewAttempt&lt;/p&gt;" vertex="1">
+          <mxGeometry x="500" y="1010" width="380" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="ScoreReview" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFEBEE;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;ScoreReview&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- finalScore: decimal&lt;br&gt;- comment: string [0..1]&lt;br&gt;- status: ReviewStatus&lt;br&gt;- reviewedAt: DateTime [0..1]&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ adjustScore(score: decimal, comment: string): void&lt;br&gt;+ confirm(reviewer: User): void&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="1200" width="380" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="InterviewAttempt" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFEBEE;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;InterviewAttempt&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- startedAt: DateTime&lt;br&gt;- completedAt: DateTime [0..1]&lt;br&gt;- status: AttemptStatus&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ loadNextQuestion(): Question&lt;br&gt;+ submitAnswer(audioUrl: string): InterviewTurn&lt;br&gt;+ complete(): void&lt;/p&gt;" vertex="1">
+          <mxGeometry x="500" y="1200" width="380" height="170" as="geometry" />
+        </mxCell>
+        <mxCell id="QuestionResponse" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFEBEE;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;QuestionResponse&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- followUpCount: int&lt;br&gt;- isFinished: bool&lt;br&gt;- aiSuggestedScore: decimal [0..1]&lt;br&gt;- aiFeedback: string [0..1]&lt;br&gt;- evaluatedAt: DateTime [0..1]&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;+ canAskFollowUp(maxFollowUps: int): bool&lt;br&gt;+ addTurn(turn: InterviewTurn): void&lt;br&gt;+ recordAIEvaluation(scores: List&amp;lt;CriterionScore&amp;gt;,&lt;br&gt;&amp;nbsp;&amp;nbsp;&amp;nbsp;&amp;nbsp;feedback: string): void&lt;/p&gt;" vertex="1">
+          <mxGeometry x="960" y="1200" width="380" height="218" as="geometry" />
+        </mxCell>
+        <mxCell id="CriterionScore" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFEBEE;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;CriterionScore&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- points: decimal&lt;br&gt;- comment: string [0..1]&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;&amp;nbsp;&lt;/p&gt;" vertex="1">
+          <mxGeometry x="1420" y="1200" width="380" height="122" as="geometry" />
+        </mxCell>
+        <mxCell id="InterviewTurn" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFEBEE;strokeColor=#37474F;" value="&lt;p style=&quot;margin:0px;margin-top:6px;text-align:center;font-size:14px;&quot;&gt;&lt;b&gt;InterviewTurn&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;- id: Guid&lt;br&gt;- turnNo: int&lt;br&gt;- type: TurnType&lt;br&gt;- questionText: string&lt;br&gt;- answerTranscript: string [0..1]&lt;br&gt;- audioUrl: string [0..1]&lt;br&gt;- askedAt: DateTime&lt;br&gt;- answeredAt: DateTime [0..1]&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;&amp;nbsp;&lt;/p&gt;" vertex="1">
+          <mxGeometry x="960" y="1480" width="380" height="202" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_SessionStatus" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;SessionStatus&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;Draft&lt;br&gt;Published&lt;br&gt;Closed&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="1430" width="185" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_ParticipantStatus" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;ParticipantStatus&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;Registered&lt;br&gt;InProgress&lt;br&gt;Completed&lt;/p&gt;" vertex="1">
+          <mxGeometry x="240" y="1430" width="185" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_AttemptStatus" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;AttemptStatus&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;InProgress&lt;br&gt;PendingReview&lt;br&gt;Finalized&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="1548" width="185" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_TurnType" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;TurnType&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;Main&lt;br&gt;FollowUp&lt;/p&gt;" vertex="1">
+          <mxGeometry x="240" y="1548" width="185" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_ReviewStatus" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;ReviewStatus&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;Pending&lt;br&gt;Approved&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="1666" width="185" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_AIServiceType" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;AIServiceType&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;STT&lt;br&gt;TTS&lt;br&gt;LLM&lt;/p&gt;" vertex="1">
+          <mxGeometry x="240" y="1666" width="185" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_Language" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;Language&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;Vietnamese&lt;br&gt;English&lt;/p&gt;" vertex="1">
+          <mxGeometry x="40" y="1784" width="185" height="84" as="geometry" />
+        </mxCell>
+        <mxCell id="enum_TokenPurpose" parent="1" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;rounded=0;fontSize=12;fontFamily=Arial;fillColor=#FFF8E1;strokeColor=#8D6E63;" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;font-size:11px;&quot;&gt;«enumeration»&lt;/p&gt;&lt;p style=&quot;margin:0px;text-align:center;font-size:13px;&quot;&gt;&lt;b&gt;TokenPurpose&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:6px;line-height:16px;&quot;&gt;AccountSetup&lt;br&gt;PasswordReset&lt;br&gt;EmailVerification&lt;/p&gt;" vertex="1">
+          <mxGeometry x="240" y="1784" width="185" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="legend" parent="1" style="shape=note;whiteSpace=wrap;html=1;size=14;align=left;verticalAlign=top;spacingLeft=10;spacingTop=6;fillColor=#FFF9E6;strokeColor=#D6B656;fontSize=12;" value="&lt;b&gt;Notation&lt;/b&gt;&lt;br&gt;◆ composition (the part cannot exist without the whole)&lt;br&gt;◇ aggregation (the part can exist on its own)&lt;br&gt;plain line = association&lt;br&gt;- private &amp;nbsp;+ public &amp;nbsp;·&amp;nbsp; [0..1] = optional value&lt;br&gt;&lt;u&gt;underlined&lt;/u&gt; = class-level (static) operation&lt;br&gt;&lt;br&gt;&lt;b&gt;Mapping to the ERD&lt;/b&gt;&lt;br&gt;Every ERD entity has a class of the same name. Role is a class of its own: every user has exactly one role (Student, Lecturer or Administrator), and the role decides what the user may do; the API layer checks it before each operation. User holds the person (name, username, student/lecturer code, class); UserAccount holds how they sign in (account name, email, Google link, salt + password hash). Every user has exactly one account.&lt;br&gt;&lt;br&gt;&lt;b&gt;Rubric and AI scores&lt;/b&gt;&lt;br&gt;A rubric is a list of criteria; its maxScore is the sum of their maxPoints. For each answered question the AI gives every criterion a CriterionScore; QuestionResponse.aiSuggestedScore is their sum, kept with the AI feedback.&lt;br&gt;&lt;br&gt;&lt;b&gt;Final score&lt;/b&gt;&lt;br&gt;A ScoreReview starts as Pending, at the sum of the AI-suggested scores. The score counts as confirmed only when its status is Approved (the attempt is then Finalized). A question not reached before the session closes has no QuestionResponse and counts as 0.&lt;br&gt;&lt;br&gt;&lt;b&gt;Not shown as operations&lt;/b&gt;&lt;br&gt;Log in and Log out run in the API layer (Authentication, JWT); the classes keep only the data they use, all in UserAccount: accountName, email, passwordHash, passwordSalt and googleLinked. Read-only views (exam report, student results, class statistics, audit log, reviewing an attempt) are queries in the API layer. TTS, STT, follow-up generation and rubric scoring run in the AI adapters; the classes keep their results (InterviewTurn, CriterionScore, QuestionResponse)." vertex="1">
+          <mxGeometry x="1420" y="1382" width="840" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="title" parent="1" style="text;html=1;fontSize=22;fontStyle=1;align=left;verticalAlign=middle;" value="AIVES – Class Diagram" vertex="1">
+          <mxGeometry x="40" y="15" width="600" height="36" as="geometry" />
+        </mxCell>
+        <mxCell id="a_role" edge="1" parent="1" source="User" target="Role" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0;exitY=0.2013;exitDx=0;exitDy=0;entryX=1;entryY=0.4918;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_role_m0" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_role">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_role_m1" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_role">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_cfg" edge="1" parent="1" source="User" target="AIServiceConfig" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0;exitY=0.7718;exitDx=0;exitDy=0;entryX=1;entryY=0.4128;entryDx=0;entryDy=0;" value="configures">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_cfg_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_cfg">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_cfg_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_cfg">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_audit" edge="1" parent="1" source="User" target="AuditLog" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0;exitY=0.9396;exitDx=0;exitDy=0;entryX=1;entryY=0.3623;entryDx=0;entryDy=0;" value="performs">
+          <mxGeometry relative="1" as="geometry" x="0.4">
+            <Array as="points">
+              <mxPoint x="480" y="350" />
+              <mxPoint x="480" y="500" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_audit_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_audit">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_audit_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_audit">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_account" edge="1" parent="1" source="User" target="UserAccount" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=none;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=1;exitY=0.2013;exitDx=0;exitDy=0;entryX=0;entryY=0.2128;entryDx=0;entryDy=0;" value="signs in with">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="0" y="18" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_account_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_account">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_account_m1" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_account">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_token" edge="1" parent="1" source="UserAccount" target="EmailLinkToken" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=1;exitY=0.2128;exitDx=0;exitDy=0;entryX=0;entryY=0.3226;entryDx=0;entryDy=0;" value="receives">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_token_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_token">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_token_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_token">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="ag_teach" edge="1" parent="1" source="Course" target="User" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=0;startSize=18;endArrow=none;exitX=0;exitY=0.3226;exitDx=0;exitDy=0;entryX=1;entryY=0.8725;entryDx=0;entryDy=0;" value="teaches">
+          <mxGeometry relative="1" as="geometry" x="0">
+            <Array as="points">
+              <mxPoint x="920" y="460" />
+              <mxPoint x="920" y="330" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="ag_teach_m0" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="ag_teach">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="ag_teach_m1" value="1..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="ag_teach">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_creates" edge="1" parent="1" source="User" target="ExamSession" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="creates">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="a_creates_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_creates">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_creates_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_creates">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="14" y="-16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_has" edge="1" parent="1" source="Course" target="ExamSession" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.1418;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1150.0" y="680" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_has_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_has">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_has_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_has">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_quest" edge="1" parent="1" source="ExamSession" target="Question" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=1;exitY=0.2837;exitDx=0;exitDy=0;entryX=0;entryY=0.6557;entryDx=0;entryDy=0;" value="includes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_quest_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_quest">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_quest_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_quest">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_rubric" edge="1" parent="1" source="Question" target="Rubric" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="is graded by">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_rubric_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_rubric">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_rubric_m1" value="0..1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_rubric">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="14" y="-16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_crit" edge="1" parent="1" source="Rubric" target="RubricCriterion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=1;exitY=0.4348;exitDx=0;exitDy=0;entryX=0;entryY=0.4348;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_crit_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_crit">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_crit_m1" value="1..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_crit">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_part" edge="1" parent="1" source="ExamSession" target="Participant" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_part_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_part">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_part_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_part">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="14" y="-16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_join" edge="1" parent="1" source="User" target="Participant" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0.1579;exitY=1;exitDx=0;exitDy=0;entryX=0;entryY=0.4918;entryDx=0;entryDy=0;" value="joins as">
+          <mxGeometry relative="1" as="geometry" x="0.55">
+            <Array as="points">
+              <mxPoint x="560" y="610" />
+              <mxPoint x="460" y="610" />
+              <mxPoint x="460" y="1070" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_join_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_join">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_join_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_join">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_review" edge="1" parent="1" source="User" target="ScoreReview" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0.1053;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="reviews">
+          <mxGeometry relative="1" as="geometry" x="0.7">
+            <Array as="points">
+              <mxPoint x="540" y="590" />
+              <mxPoint x="440" y="590" />
+              <mxPoint x="440" y="1160" />
+              <mxPoint x="230.0" y="1160" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_review_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_review">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_review_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_review">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="14" y="-16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_attempt" edge="1" parent="1" source="Participant" target="InterviewAttempt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="makes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_attempt_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_attempt">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_attempt_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_attempt">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="14" y="-16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_review" edge="1" parent="1" source="InterviewAttempt" target="ScoreReview" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=none;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=0;exitY=0.3529;exitDx=0;exitDy=0;entryX=1;entryY=0.3529;entryDx=0;entryDy=0;" value="is finalized by">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="0" y="18" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_review_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_review">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_review_m1" value="0..1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_review">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_resp" edge="1" parent="1" source="InterviewAttempt" target="QuestionResponse" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=1;exitY=0.3529;exitDx=0;exitDy=0;entryX=0;entryY=0.2752;entryDx=0;entryDy=0;" value="contains">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_resp_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_resp">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_resp_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_resp">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_answered" edge="1" parent="1" source="Question" target="QuestionResponse" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0;exitY=0.9016;exitDx=0;exitDy=0;entryX=0.5526;entryY=0;entryDx=0;entryDy=0;" value="is answered in">
+          <mxGeometry relative="1" as="geometry" x="0.3">
+            <Array as="points">
+              <mxPoint x="1170" y="750" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_answered_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_answered">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_answered_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_answered">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="14" y="-16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_turn" edge="1" parent="1" source="QuestionResponse" target="InterviewTurn" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="consists of">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="c_turn_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_turn">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_turn_m1" value="1..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_turn">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="14" y="-16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_cscore" edge="1" parent="1" source="QuestionResponse" target="CriterionScore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=none;startArrow=diamondThin;startFill=1;startSize=18;endArrow=none;exitX=1;exitY=0.2752;exitDx=0;exitDy=0;entryX=0;entryY=0.4918;entryDx=0;entryDy=0;" value="is scored by">
+          <mxGeometry relative="1" as="geometry"><mxPoint x="0" y="18" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_cscore_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_cscore">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="c_cscore_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="c_cscore">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="-16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_scored" edge="1" parent="1" source="RubricCriterion" target="CriterionScore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;jumpStyle=arc;jumpSize=12;strokeColor=#37474F;fontSize=12;labelBackgroundColor=#FFFFFF;endArrow=none;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=1;entryY=0.4918;entryDx=0;entryDy=0;" value="is scored in">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="2070.0" y="1260" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="a_scored_m0" value="1" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_scored">
+          <mxGeometry x="-1" relative="1" as="geometry"><mxPoint x="14" y="16" as="offset" /></mxGeometry>
+        </mxCell>
+        <mxCell id="a_scored_m1" value="0..*" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];fontSize=12;fontStyle=1;labelBackgroundColor=none;" vertex="1" connectable="0" parent="a_scored">
+          <mxGeometry x="1" relative="1" as="geometry"><mxPoint x="16" y="-12" as="offset" /></mxGeometry>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
