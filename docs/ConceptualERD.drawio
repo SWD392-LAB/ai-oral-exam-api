@@ -1,0 +1,160 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="AIVES Conceptual ERD - Crow&#39;s Foot" id="0">
+    <mxGraphModel dx="1400" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1450" pageHeight="1000" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="title" parent="1" style="text;html=1;fontSize=18;fontStyle=1;align=left;verticalAlign=middle;" value="AIVES – Conceptual ERD (Crow&#39;s Foot)" vertex="1">
+          <mxGeometry x="40" y="20" width="600" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="course" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="COURSE" vertex="1">
+          <mxGeometry x="320" y="80" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="session" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="EXAM SESSION" vertex="1">
+          <mxGeometry x="620" y="80" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="question" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="QUESTION" vertex="1">
+          <mxGeometry x="920" y="80" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="rubric" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="RUBRIC" vertex="1">
+          <mxGeometry x="1220" y="80" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="role" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="ROLE" vertex="1">
+          <mxGeometry x="40" y="240" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="participant" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="PARTICIPANT" vertex="1">
+          <mxGeometry x="620" y="240" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="aiconfig" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="AI SERVICE CONFIG" vertex="1">
+          <mxGeometry x="40" y="400" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="user" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="USER" vertex="1">
+          <mxGeometry x="320" y="380" width="170" height="100" as="geometry" />
+        </mxCell>
+        <mxCell id="attempt" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="INTERVIEW ATTEMPT" vertex="1">
+          <mxGeometry x="620" y="400" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="response" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="QUESTION RESPONSE" vertex="1">
+          <mxGeometry x="920" y="400" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="turn" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="INTERVIEW TURN" vertex="1">
+          <mxGeometry x="1220" y="400" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="audit" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="AUDIT LOG" vertex="1">
+          <mxGeometry x="40" y="560" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="account" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="USER ACCOUNT" vertex="1">
+          <mxGeometry x="320" y="560" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="token" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="EMAIL LINK TOKEN" vertex="1">
+          <mxGeometry x="320" y="700" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="review" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="SCORE REVIEW" vertex="1">
+          <mxGeometry x="620" y="560" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="cscore" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="CRITERION SCORE" vertex="1">
+          <mxGeometry x="920" y="560" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="criterion" parent="1" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#6c8ebf;fontStyle=1;" value="RUBRIC CRITERION" vertex="1">
+          <mxGeometry x="1220" y="240" width="170" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="r_role" edge="1" parent="1" source="role" target="user" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.2;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="265" y="270" />
+              <mxPoint x="265" y="400" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="r_account" edge="1" parent="1" source="user" target="account" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERmandOne;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="signs in with">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_token" edge="1" parent="1" source="account" target="token" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="receives">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_cfg" edge="1" parent="1" source="user" target="aiconfig" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="configures">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_audit" edge="1" parent="1" source="user" target="audit" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0;exitY=0.8;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="performs">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="265" y="460" />
+              <mxPoint x="265" y="590" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="r_teach" edge="1" parent="1" source="user" target="course" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERoneToMany;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.35;exitY=0;exitDx=0;exitDy=0;entryX=0.35;entryY=1;entryDx=0;entryDy=0;" value="teaches">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_create" edge="1" parent="1" source="user" target="session" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.75;exitY=0;exitDx=0;exitDy=0;entryX=0.25;entryY=1;entryDx=0;entryDy=0;" value="creates">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="447.5" y="190" />
+              <mxPoint x="662.5" y="190" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="r_join" edge="1" parent="1" source="user" target="participant" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.2;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="joins as">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="555" y="400" />
+              <mxPoint x="555" y="270" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="r_review" edge="1" parent="1" source="user" target="review" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.8;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="reviews">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="555" y="460" />
+              <mxPoint x="555" y="590" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="r_has_ses" edge="1" parent="1" source="course" target="session" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_incl" edge="1" parent="1" source="session" target="question" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="includes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_rubric" edge="1" parent="1" source="question" target="rubric" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToOne;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="is graded by">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_has_par" edge="1" parent="1" source="session" target="participant" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_makes" edge="1" parent="1" source="participant" target="attempt" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="makes">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_final" edge="1" parent="1" source="attempt" target="review" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToOne;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="is finalized by">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_contains" edge="1" parent="1" source="attempt" target="response" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="contains">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_answered" edge="1" parent="1" source="question" target="response" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="is answered in">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_turns" edge="1" parent="1" source="response" target="turn" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERoneToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" value="consists of">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_crit" edge="1" parent="1" source="rubric" target="criterion" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERoneToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="has">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_cscore" edge="1" parent="1" source="response" target="cscore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" value="is scored by">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="r_scored" edge="1" parent="1" source="criterion" target="cscore" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;startArrow=ERmandOne;endArrow=ERzeroToMany;startFill=0;endFill=0;startSize=10;endSize=10;labelBackgroundColor=#FFFFFF;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" value="is scored in">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="1420" y="270" />
+              <mxPoint x="1420" y="590" />
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="note" parent="1" style="shape=note;whiteSpace=wrap;html=1;size=14;align=left;verticalAlign=top;spacingLeft=8;spacingTop=4;fillColor=#FFF9E6;strokeColor=#D6B656;fontSize=11;" value="Notes:&lt;br&gt;• USER covers Student, Lecturer and Administrator (via ROLE) and keeps the person&#39;s details (name, username, student/lecturer code, class). Each user has exactly one USER ACCOUNT with the sign-in data: account name, email, Google link, salt + password hash (never the plain password). A user signs in with Google (if linked) and/or with account name or email + password (if set).&lt;br&gt;• INTERVIEW TURN = one question (main or follow-up) + the student&#39;s answer transcript; the audio file is kept in Object Storage.&lt;br&gt;• RUBRIC = the scoring guide of one question, made of RUBRIC CRITERION items (description + max points). The AI gives each criterion a CRITERION SCORE; their sum is the AI-suggested score kept on QUESTION RESPONSE with the AI feedback.&lt;br&gt;• SCORE REVIEW = the lecturer&#39;s final score for the attempt (pending until the lecturer confirms it); it starts at the sum of the AI-suggested scores.&lt;br&gt;• EMAIL LINK TOKEN = one-time, expiring email link: verify the email after registering, set the account name and password (account-setup link), or reset a forgotten password (reset link: password only).&lt;br&gt;• AI SERVICE CONFIG = STT/TTS/LLM provider, endpoint, encrypted API key and STT/TTS language (VI/EN).&lt;br&gt;• A draft EXAM SESSION may have no questions yet, and a QUESTION may have no rubric yet. It can be published only when it has at least one question, every question has a rubric and at least one student is on the list.&lt;br&gt;• PARTICIPANT = a student on the session&#39;s list, imported by the lecturer. Only listed students can start an attempt, one attempt each, inside the session time window.&lt;br&gt;• A question not reached before the session closes has no QUESTION RESPONSE; it counts as 0 in the attempt total." vertex="1">
+          <mxGeometry x="560" y="700" width="860" height="215" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
