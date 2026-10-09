@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 
 namespace AiOralExam.Modules.Interview.Application;
 
-public sealed record StartAttemptRequest([property: Required] Guid ExamSessionId);
+public sealed record StartAttemptRequest([Required] Guid ExamSessionId);
 
 /// <summary>The question waiting for the student's answer (main or follow-up).</summary>
 public sealed record CurrentTurnDto(
@@ -30,7 +30,7 @@ public sealed record AttemptStateDto(
 
 public sealed record SubmitAnswerRequest(
     // Null/empty = no answer (e.g. the FE auto-submits when time runs out).
-    [property: MaxLength(10000)] string? AnswerText);
+    [MaxLength(10000)] string? AnswerText);
 
 public sealed record EvaluationDto(
     Guid QuestionId,
