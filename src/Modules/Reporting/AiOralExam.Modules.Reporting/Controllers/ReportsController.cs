@@ -12,7 +12,7 @@ namespace AiOralExam.Modules.Reporting.Controllers;
 [Authorize]
 public sealed class ReportsController(IReportService reports) : ControllerBase
 {
-    /// <summary>Report of one attempt. Students: only their own, and only after the score is confirmed.</summary>
+    /// <summary>Students: their own report; metadata only while awaiting confirmation, full details afterward.</summary>
     [HttpGet("attempts/{attemptId:guid}")]
     public Task<AttemptReportDto> Attempt(Guid attemptId, CancellationToken ct) =>
         reports.GetAttemptReportAsync(attemptId, ct);
@@ -29,7 +29,7 @@ public sealed class ReportsController(IReportService reports) : ControllerBase
     public Task<SessionStatisticsDto> Statistics(Guid examSessionId, CancellationToken ct) =>
         reports.GetSessionStatisticsAsync(examSessionId, ct);
 
-    /// <summary>Grade sheet export (temporary CSV until we have the school's template).</summary>
+    /// <summary>UTF-8 CSV grade sheet; unconfirmed attempts have a blank final score and PendingReview status.</summary>
     [HttpGet("exam-sessions/{examSessionId:guid}/grade-sheet")]
     [Authorize(Roles = Roles.LecturerOrAdmin)]
     public async Task<IActionResult> GradeSheet(Guid examSessionId, CancellationToken ct)

@@ -30,24 +30,27 @@ internal static class ReportCalculator
     public static SessionStatisticsDto Statistics(ExamSessionInfo session, IReadOnlyList<AttemptResult> attempts)
     {
         var maxTotal = session.TotalMaxScore;
-        var finals = attempts.Select(FinalScore).Where(s => s is not null).Select(s => s!.Value).ToList();
+        var confirmed = attempts.Where(a => FinalScore(a) is not null).ToList();
+        var finals = confirmed.Select(a => FinalScore(a)!.Value).ToList();
 
         var questions = session.Questions.Select(q =>
             {
-                var answers = attempts
-                    .SelectMany(a => a.Responses)
-                    .Where(r => r.QuestionId == q.Id && r.SuggestedScore is not null)
+                // Every confirmed attempt contributes: an unanswered question counts as zero.
+                var answers = confirmed
+                    .Select(a => a.Responses.FirstOrDefault(r => r.QuestionId == q.Id))
                     .ToList();
-                var avg = answers.Count == 0 ? 0 : answers.Average(r => r.SuggestedScore!.Value);
+                var avg = answers.Count == 0 ? 0 : answers.Average(r => r?.SuggestedScore ?? 0);
                 var good = answers.Count == 0
                     ? 0
-                    : (decimal)answers.Count(r => r.SuggestedScore!.Value >= q.MaxScore * GoodAnswerThreshold) / answers.Count;
+                    : q.MaxScore <= 0 ? 0
+                    : (decimal)answers.Count(r => (r?.SuggestedScore ?? 0) >= q.MaxScore * GoodAnswerThreshold) / answers.Count;
                 return new QuestionStatisticDto(
                     q.Id, q.OrderNo, q.Content, q.MaxScore, answers.Count,
                     Math.Round(avg, 2), Math.Round(good, 2),
-                    answers.Count == 0 ? 0 : Math.Round(answers.Average(r => r.FollowUpCount), 2));
+                    answers.Count == 0 ? 0 : Math.Round(answers.Average(r => r?.FollowUpCount ?? 0), 2));
             })
-            .OrderBy(x => x.AnswerCount == 0 ? decimal.MaxValue : x.AverageScore / x.MaxScore)
+            .OrderBy(x => x.AnswerCount == 0 || x.MaxScore <= 0 ? decimal.MaxValue : x.AverageScore / x.MaxScore)
+            .ThenBy(x => x.OrderNo)
             .ToList();
 
         return new SessionStatisticsDto(

@@ -27,7 +27,7 @@ public sealed record AttemptReportDto(
     DateTime StartedAt,
     DateTime? CompletedAt,
     decimal MaxTotalScore,
-    decimal SuggestedTotalScore,
+    decimal? SuggestedTotalScore,
     decimal? FinalScore,
     string? LecturerComment,
     IReadOnlyList<QuestionReportDto> Questions);
@@ -48,6 +48,7 @@ public sealed record QuestionStatisticDto(
     int OrderNo,
     string Content,
     decimal MaxScore,
+    // Confirmed attempts, including unanswered questions counted as zero.
     int AnswerCount,
     decimal AverageScore,
     // Share of answers scoring >= 70% of the maximum.

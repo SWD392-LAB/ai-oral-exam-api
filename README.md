@@ -71,7 +71,7 @@ Sample requests are also in `src/AiOralExam.Api/AiOralExam.Api.http` (VS Code RE
 | `binh.tt@aives.edu.vn` | Lecturer | PRN232 |
 | `han.hg@aives.edu.vn` | Student | **not taken yet** – use it to demo the exam flow |
 | `chau.lm@aives.edu.vn` | Student | S1 finished, **score confirmed** → can view the report |
-| `dung.pq@aives.edu.vn` | Student | S1 finished, **waiting for review** → cannot view the report yet |
+| `dung.pq@aives.edu.vn` | Student | S1 finished, **waiting for review** → report metadata only; scores and dialogue are hidden |
 | `khoa.vt@aives.edu.vn` | Student | temporary password → Keycloak asks for a new one at first sign-in |
 | `duy.hg@aives.edu.vn` | Student | **disabled** in Keycloak → sign-in fails |
 | 36 other students (`SE180005`…`SE180040`) | Student | see the `users` table |
@@ -155,10 +155,10 @@ ai-oral-exam-api/
 | POST | `/api/interview-attempts` | Student | BE-PLAT-04 |
 | GET | `/api/interview-attempts/{id}` | Student | |
 | POST | `/api/interview-attempts/{id}/responses` | Student | BE-AI-05 |
-| GET | `/api/reports/attempts/{id}` | Student (only once the score is confirmed), Lecturer, Admin | M3 |
+| GET | `/api/reports/attempts/{id}` | Student (own report; metadata until confirmed), Lecturer, Admin | M3 |
 | GET | `/api/reports/exam-sessions/{id}/results` | Lecturer, Admin | M3 |
 | GET | `/api/reports/exam-sessions/{id}/statistics` | Lecturer, Admin | M3 |
-| GET | `/api/reports/exam-sessions/{id}/grade-sheet` | Lecturer, Admin | M3 (temporary CSV until we have the school template) |
+| GET | `/api/reports/exam-sessions/{id}/grade-sheet` | Lecturer, Admin | F6 (UTF-8 CSV) |
 | GET | `/health` | – | |
 
 Every error uses the same format (FOUNDATION-02):
@@ -180,6 +180,48 @@ There is no way back. Each submitted answer returns an `outcome`:
 - `FollowUp`: the AI asks a follow-up; `currentTurn.type = "FollowUp"`
 - `NextQuestion`: moves on to the next main question
 - `Completed`: no questions left; the attempt moves to `PendingReview`
+
+### F6 reporting without the F3 score-approval API
+
+Reporting reads existing data through `IInterviewResultsApi` and
+`IExamConfigurationApi`. It does not write reviews, finalize attempts, or call AI.
+A confirmed final score means a stored `ScoreReview` with status `Approved`.
+The seed includes these records, so all F6 endpoints can be tested before the
+lecturer approval API is implemented. New attempts remain pending until F3
+provides that workflow; an AI score is never substituted for a final score.
+
+- **Student report:** `GET /api/reports/attempts/{id}` returns HTTP 200 for the
+  student's own pending attempt, with its status and basic metadata.
+  `suggestedTotalScore`, `finalScore`, and `lecturerComment` are null, and
+  `questions` is empty. Once confirmed, the report includes stored AI scores,
+  feedback, ordered dialogue, and the lecturer's final score/comment.
+- **Lecturer/admin results:** `GET /api/reports/exam-sessions/{id}/results`
+  lists finished attempts, including pending ones. Lecturers must be assigned
+  to the session's course. They can also read pending report details.
+- **Statistics:** `GET /api/reports/exam-sessions/{id}/statistics` counts only
+  confirmed attempts in averages, question difficulty, good-answer rates, and
+  score distribution. Missing/unanswered questions contribute zero. Question
+  `answerCount` is the number of confirmed attempts counted, including those
+  unanswered questions. Completion/pending counters describe all finished attempts.
+  With no confirmed scores, the final-score average is null and distributions
+  have zero counts. Final-score distribution is normalized to a 10-point scale.
+- **CSV:** `GET /api/reports/exam-sessions/{id}/grade-sheet` downloads UTF-8
+  with a BOM for Vietnamese names in Excel. Columns are
+  `No,StudentCode,FullName,Status,FinalScore,MaxScore`.
+  Confirmed rows have `Finalized` status and the stored final score; other rows
+  have `PendingReview` status and a blank final score. Scores use the exam's
+  original points scale, indicated by `MaxScore`. AI suggestions are excluded.
+  Text cells preserve commas, quotes, and line breaks, and formula-like names
+  or codes are escaped as text. Rows cover finished attempts returned by F3's
+  read contract, not students who have not completed an attempt.
+
+To demo with the existing seed, use S1 (`33333333-0000-0000-0000-000000000001`):
+`chau.lm@aives.edu.vn` can read confirmed attempt
+`66666666-0000-0000-0000-000000000001`; `dung.pq@aives.edu.vn` gets pending
+metadata for attempt `66666666-0000-0000-0000-000000000002`.
+`an.nv@aives.edu.vn` can read S1 results/statistics and download its CSV.
+Sign in through Keycloak/Swagger with `Password@123`; no manual database updates
+or score-approval endpoint are needed for these seeded examples.
 
 ## 5. Configuration (`appsettings.json`)
 
@@ -215,7 +257,9 @@ dotnet build
 dotnet test
 ```
 
-Current unit tests cover the attempt state machine, the deterministic mock AI and the score buckets used in statistics.
+Current unit tests cover the attempt state machine, deterministic mock AI,
+confirmed-only statistics, pending-report privacy, report authorization,
+stored report details, and CSV encoding/escaping and final-score handling.
 
 ## 8. Troubleshooting
 
@@ -234,7 +278,7 @@ Current unit tests cover the attempt state machine, the deterministic mock AI an
 ## 9. Next steps (from the tracker)
 
 - **M2 – Adaptive AI interview:** replace the `Mock*` classes in `Interview/Application/Ai` with real adapters (OpenAI / Gemini / Google TTS…) and switch the registrations in `InterviewModule.cs`; add an audio upload API + WebSocket.
-- **M3 – Reports & score review:** lecturer API to review transcripts and confirm scores (`ScoreReview` → attempt `Finalized`); export the grade sheet in the school template.
+- **M3 – Score review:** lecturer API to review transcripts and confirm scores (`ScoreReview` → attempt `Finalized`). F6 reads those stored reviews; its CSV export and reporting are available independently (see section 4).
 - **M4 – Access & exam configuration:** CRUD for sessions / questions / rubrics, publishing (locks the questions), account management (creates the user in Keycloak too, through its Admin API), AI settings, audit logging. Google SSO and password reset are configured in Keycloak, not in the API.
 
 The places to work on are marked `TODO (M2/M3/M4)` in the code.

@@ -15,8 +15,8 @@ public interface IReportService
 }
 
 /// <summary>
-/// Reports only read STORED scores (AiEvaluation, ScoreReview) - never call the AI again (rule #5).
-/// Students can see a report only after the lecturer has confirmed the score.
+/// Reports only read STORED scores (CriterionScores, ScoreReview) - never call the AI again (rule #5).
+/// Students see only report metadata until the lecturer has confirmed the score.
 /// </summary>
 internal sealed class ReportService(
     IInterviewResultsApi results,
@@ -27,13 +27,13 @@ internal sealed class ReportService(
     {
         var attempt = await results.GetAttemptResultAsync(attemptId, ct)
                       ?? throw new NotFoundException("attempt_not_found", "Attempt not found.");
+        var finalScore = ReportCalculator.FinalScore(attempt);
+        var hideDetails = currentUser.IsInRole(Roles.Student) && finalScore is null;
 
         if (currentUser.IsInRole(Roles.Student))
         {
             if (attempt.StudentId != currentUser.Id)
                 throw new NotFoundException("attempt_not_found", "Attempt not found.");
-            if (ReportCalculator.FinalScore(attempt) is null)
-                throw new ConflictException("score_not_finalized", "The lecturer has not confirmed the score yet, so the report is not available.");
         }
         else
         {
@@ -43,12 +43,12 @@ internal sealed class ReportService(
         var session = await GetSessionAsync(attempt.ExamSessionId, ct);
         var student = (await examConfig.GetUsersAsync([attempt.StudentId], ct)).FirstOrDefault();
 
-        var questions = session.Questions.Select(q =>
+        IReadOnlyList<QuestionReportDto> questions = hideDetails ? [] : session.Questions.OrderBy(q => q.OrderNo).Select(q =>
         {
             var r = attempt.Responses.FirstOrDefault(x => x.QuestionId == q.Id);
             return new QuestionReportDto(
                 q.OrderNo, q.Content, q.MaxScore, r?.SuggestedScore, r?.AiFeedback, r?.FollowUpCount ?? 0,
-                r?.Turns.Select(t => new TurnReportDto(t.TurnNo, t.Type.ToString(), t.QuestionText,
+                r?.Turns.OrderBy(t => t.TurnNo).Select(t => new TurnReportDto(t.TurnNo, t.Type.ToString(), t.QuestionText,
                     t.AnswerTranscript, t.AskedAt, t.AnsweredAt)).ToList() ?? []);
         }).ToList();
 
@@ -56,8 +56,8 @@ internal sealed class ReportService(
             attempt.AttemptId, session.CourseCode, session.Title,
             student?.FullName ?? "(unknown)", student?.StudentCode,
             attempt.Status.ToString(), attempt.StartedAt, attempt.CompletedAt,
-            session.TotalMaxScore, ReportCalculator.SuggestedTotal(attempt), ReportCalculator.FinalScore(attempt),
-            attempt.Review?.Comment, questions);
+            session.TotalMaxScore, hideDetails ? null : ReportCalculator.SuggestedTotal(attempt), finalScore,
+            hideDetails ? null : attempt.Review?.Comment, questions);
     }
 
     public async Task<IReadOnlyList<StudentResultDto>> GetSessionResultsAsync(Guid examSessionId, CancellationToken ct = default)
@@ -78,6 +78,8 @@ internal sealed class ReportService(
                     a.CompletedAt);
             })
             .OrderBy(r => r.StudentCode)
+            .ThenBy(r => r.StudentName)
+            .ThenBy(r => r.AttemptId)
             .ToList();
     }
 
@@ -89,28 +91,35 @@ internal sealed class ReportService(
         return ReportCalculator.Statistics(session, attempts);
     }
 
-    /// <summary>TODO (M3): switch to the school's grade-sheet template once we have it (open point).</summary>
+    /// <summary>UTF-8 CSV: confirmed final scores only; unconfirmed attempts are marked PendingReview.</summary>
     public async Task<(byte[] Content, string FileName)> ExportGradeSheetCsvAsync(Guid examSessionId, CancellationToken ct = default)
     {
-        var session = await GetSessionAsync(examSessionId, ct);
         var rows = await GetSessionResultsAsync(examSessionId, ct);
+        var session = await GetSessionAsync(examSessionId, ct);
 
         var sb = new StringBuilder();
-        sb.AppendLine("No,StudentCode,FullName,Status,AiSuggestedScore,FinalScore,MaxScore");
+        sb.Append("No,StudentCode,FullName,Status,FinalScore,MaxScore\r\n");
         var i = 1;
         foreach (var r in rows)
-            sb.AppendLine(string.Join(',',
-                i++, r.StudentCode, Csv(r.StudentName), r.Status,
-                r.SuggestedTotalScore.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            sb.Append(string.Join(',',
+                i++, Csv(r.StudentCode), Csv(r.StudentName), r.FinalScore is null ? "PendingReview" : "Finalized",
                 r.FinalScore?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "",
-                r.MaxTotalScore.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+                r.MaxTotalScore.ToString(System.Globalization.CultureInfo.InvariantCulture))).Append("\r\n");
 
         // BOM so Excel reads UTF-8 (accented names) correctly
         var bytes = Encoding.UTF8.GetPreamble().Concat(Encoding.UTF8.GetBytes(sb.ToString())).ToArray();
         return (bytes, $"grade-sheet-{session.CourseCode}-{session.Id.ToString()[..8]}.csv");
     }
 
-    private static string Csv(string s) => s.Contains(',') || s.Contains('"') ? $"\"{s.Replace("\"", "\"\"")}\"" : s;
+    private static string Csv(string? value)
+    {
+        var text = value ?? "";
+        // User-provided names/codes must remain text when the CSV is opened in a spreadsheet.
+        if ("=+-@".Contains(text.TrimStart().FirstOrDefault()) ||
+            (text.Length > 0 && text[0] is '\t' or '\r' or '\n'))
+            text = "'" + text;
+        return $"\"{text.Replace("\"", "\"\"")}\"";
+    }
 
     private async Task<ExamSessionInfo> GetSessionAsync(Guid id, CancellationToken ct) =>
         await examConfig.GetSessionAsync(id, ct)
