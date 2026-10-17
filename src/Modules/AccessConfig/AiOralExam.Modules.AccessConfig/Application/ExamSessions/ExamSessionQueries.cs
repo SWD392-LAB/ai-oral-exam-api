@@ -1,4 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Infrastructure;
+using AiOralExam.Modules.AccessConfig.Application.Rubrics;
+using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
@@ -16,7 +18,10 @@ public interface IExamSessionQueries
     Task<ExamSessionDetailDto> GetSessionAsync(Guid id, CancellationToken ct = default);
 }
 
-internal sealed class ExamSessionQueries(AccessConfigDbContext db, ICurrentUser currentUser) : IExamSessionQueries
+internal sealed class ExamSessionQueries(
+    AccessConfigDbContext db,
+    ICurrentUser currentUser,
+    IInterviewResultsApi interviewResults) : IExamSessionQueries
 {
     private bool IsAdmin => currentUser.IsInRole(Roles.Administrator);
 
@@ -41,12 +46,35 @@ internal sealed class ExamSessionQueries(AccessConfigDbContext db, ICurrentUser 
         }
         if (courseId is not null) q = q.Where(s => s.CourseId == courseId);
 
-        return await q
+        var sessions = await q
             .OrderByDescending(s => s.StartTime)
             .Select(s => new ExamSessionSummaryDto(
                 s.Id, s.Course.Code, s.Title, s.StartTime, s.EndTime,
-                s.TimeLimitPerAnswerSeconds, s.MaxFollowUps, s.Status.ToString(), s.Questions.Count))
+                s.TimeLimitPerAnswerSeconds, s.MaxFollowUps, s.Status.ToString(), s.Questions.Count,
+                0, 0, 0))
             .ToListAsync(ct);
+        if (sessions.Count == 0)
+            return sessions;
+
+        var sessionIds = sessions.Select(s => s.Id).ToArray();
+        var participantCounts = await db.Participants.AsNoTracking()
+            .Where(p => sessionIds.Contains(p.ExamSessionId))
+            .GroupBy(p => p.ExamSessionId)
+            .Select(g => new { ExamSessionId = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.ExamSessionId, x => x.Count, ct);
+        var attemptCounts = await interviewResults.GetAttemptCountsAsync(sessionIds, ct);
+        var attemptCountsBySession = attemptCounts.ToDictionary(x => x.ExamSessionId);
+
+        return sessions.Select(session =>
+        {
+            attemptCountsBySession.TryGetValue(session.Id, out var counts);
+            return session with
+            {
+                ParticipantCount = participantCounts.GetValueOrDefault(session.Id),
+                TakenCount = counts?.TakenCount ?? 0,
+                ToReviewCount = counts?.ToReviewCount ?? 0
+            };
+        }).ToList();
     }
 
     public async Task<ExamSessionDetailDto> GetSessionAsync(Guid id, CancellationToken ct = default)

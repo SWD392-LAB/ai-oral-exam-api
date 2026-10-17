@@ -34,6 +34,7 @@ public class ExamSession
     public DateTime StartTime { get; set; }
     public DateTime EndTime { get; set; }
 
+    /// <summary>Seconds.</summary>
     public int TimeLimitPerAnswerSeconds { get; set; }
     public int MaxFollowUps { get; set; } = 2;
     public ExamSessionStatus Status { get; set; } = ExamSessionStatus.Draft;
@@ -74,7 +75,26 @@ public class RubricCriterion
 {
     public Guid Id { get; set; }
     public Guid RubricId { get; set; }
+    public Rubric Rubric { get; set; } = null!;
     public int OrderNo { get; set; }
     public string Description { get; set; } = null!;
     public decimal MaxPoints { get; set; }
+}
+
+public enum ParticipantStatus
+{
+    Registered,
+    InProgress,
+    Completed
+}
+
+public class Participant
+{
+    public Guid Id { get; set; }
+    public Guid ExamSessionId { get; set; }
+    public ExamSession ExamSession { get; set; } = null!;
+    public Guid StudentId { get; set; }
+    public User Student { get; set; } = null!;
+    public DateTime JoinedAt { get; set; }
+    public ParticipantStatus Status { get; set; } = ParticipantStatus.Registered;
 }

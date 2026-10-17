@@ -17,9 +17,6 @@ internal sealed class AuthService(AccessConfigDbContext db) : IAuthService
     {
         var user = await db.Users.AsNoTracking().Include(u => u.Role).FirstOrDefaultAsync(u => u.Id == userId, ct)
                    ?? throw new NotFoundException("user_not_found", "Account not found.");
-        return ToDto(user);
+        return new UserProfileDto(user.Id, user.FullName, user.Email, user.Role.Name, user.StudentCode, user.LecturerCode);
     }
-
-    private static UserProfileDto ToDto(User u) =>
-        new(u.Id, u.FullName, u.Email, u.Role.Name, u.StudentCode, u.LecturerCode);
 }

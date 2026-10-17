@@ -42,6 +42,13 @@ dotnet run --project src/AiOralExam.Api --launch-profile http
 
 Check that the API can reach the database: open http://localhost:5080/health. It should say `Healthy`.
 
+For an existing database, apply the role/code validation upgrade with
+`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/03_user_role_code_constraint.sql`.
+The script reports any existing users that need correction before it installs the trigger.
+Fresh databases get this trigger automatically from `database/01_schema.sql`.
+
+For existing databases, also apply `database/04_audit_log_description.sql` to add the audit-log description column. Fresh databases get it from `database/01_schema.sql`.
+
 In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 
 ### Try the M1 exam flow in Swagger
@@ -107,7 +114,9 @@ ai-oral-exam-api/
 ├── Directory.Packages.props         # NuGet versions declared once (Central Package Management)
 ├── database/
 │   ├── 01_schema.sql                # SOURCE OF TRUTH for the schema (16 tables)
-│   └── 02_seed.sql                  # demo data
+│   ├── 02_seed.sql                  # demo data
+│   ├── 03_user_role_code_constraint.sql # upgrade for existing databases
+│   └── 04_audit_log_description.sql # adds audit log descriptions to existing databases
 ├── src/
 │   ├── AiOralExam.Api/              # Host: Program.cs, Keycloak token validation, Swagger, CORS, error middleware
 │   ├── Shared/
@@ -149,6 +158,11 @@ ai-oral-exam-api/
 | Method | Route | Role | Tracker task |
 |---|---|---|---|
 | GET | `/api/auth/me` | any | BE-PLAT-07 |
+| PATCH | `/api/auth/me` | any | |
+| GET | `/api/admin/courses` | Admin | |
+| GET | `/api/ai-services`, `/api/admin/ai-settings` | Admin | |
+| POST, PUT | `/api/ai-services`, `/api/ai-services/{id}` | Admin | |
+| PUT | `/api/admin/ai-settings` | Admin | |
 | GET | `/api/courses/mine` | Lecturer, Admin | |
 | GET | `/api/exam-sessions`, `/api/exam-sessions/{id}` | Lecturer, Admin | |
 | GET | `/api/interview/my-sessions` | Student | FE-INT-01 |
@@ -161,6 +175,14 @@ ai-oral-exam-api/
 | GET | `/api/reports/exam-sessions/{id}/grade-sheet` | Lecturer, Admin | F6 (UTF-8 CSV) |
 | GET | `/health` | – | |
 
+The `GET /api/exam-sessions` list includes `participantCount`, `takenCount` (attempts with `PendingReview` or `Finalized` status), and `toReviewCount` (attempts with `PendingReview` status). `PATCH /api/auth/me` accepts a body containing only `fullName` and returns the same profile shape as the GET endpoint.
+
+#### Audit logs
+
+`GET /api/audit-logs` (also available at `/api/admin/audit-logs`) is administrator-only. Its response includes a nullable `description` alongside the action, target entity/id, timestamp, and actor details. Actions are `Create`, `Update`, `Delete`, `Publish`, `Close`, `AssignLecturer`, `RemoveLecturer`, `ImportParticipants`, `RemoveParticipant`, `ResendSetupEmail`, and `UpdateOwnProfile`. Entity names are `User`, `Course`, `ExamSession`, `Question`, `Rubric`, and `AiServiceConfig`.
+
+AI service configuration responses include `hasApiKey`; the API never returns the API key or its ciphertext. When updating an existing configuration, omit `apiKey` or send it as blank/whitespace to keep the stored key. Creating a configuration (including the first `PUT /api/admin/ai-settings` for a service type) requires a nonblank `apiKey`; provide a new nonblank value to replace the key.
+
 Every error uses the same format (FOUNDATION-02):
 
 ```json
@@ -168,6 +190,26 @@ Every error uses the same format (FOUNDATION-02):
 ```
 
 The FE should `switch` on `code`; `message` is meant for display.
+
+### Username rule
+
+An admin user's username is the email local part, lowercased. Users with the same local part on different domains (for example, `a@x.com` and `a@y.com`) collide; the second create fails with `409 username_exists`. A final rule is pending a team decision.
+
+### GET `/api/auth/me` without a database user row
+
+A valid Keycloak token alone is not enough; the user must have an active AIVES database row, 
+created through the admin API.
+In the current HTTP pipeline, a missing or inactive row is rejected during token validation with `403 account_inactive` before `/api/auth/me` reaches its profile lookup.
+The profile service itself reports `404 user_not_found` if called for an unknown ID, but that is not the current endpoint response for a missing row.
+
+### Source of truth for roles and active status
+
+The AIVES database is the source of truth for authorization: its role replaces the token role, 
+and an inactive or missing user row is denied by the API.
+Changing a user's role or deactivating them in AIVES does not currently update the Keycloak account. 
+Admin user creation also provisions the Keycloak identity and assigns its initial realm role; 
+Keycloak handles authentication and password setup, but subsequent role and active-status changes remain database-only. 
+Changing the full name through `PATCH /api/auth/me` updates only the AIVES profile and is not synchronized to Keycloak.
 
 ### Attempt states (BE-AI-01)
 
@@ -237,13 +279,25 @@ or score-approval endpoint are needed for these seeded examples.
 | `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |
 | `Cors:AllowedOrigins` | `http://localhost:5173`, `http://localhost:3000` | where the FE runs |
 
+Admin user creation provisions the Keycloak identity and assigns its initial realm role, then stores the AIVES profile. The username is derived from the email local part (see [Username rule](#username-rule)).
+
 To override settings on your machine without committing them, use `dotnet user-secrets` (the project already has a `UserSecretsId`) or environment variables, e.g. `ConnectionStrings__Database=...`.
+
+Set the Keycloak admin client secret for local development with:
+
+```sh
+dotnet user-secrets set "KeycloakAdmin:ClientSecret" "dev-aives-admin-api-secret" --project src/AiOralExam.Api
+```
+
+This is a development-only value matching `keycloak/aives-realm.json`. Do not put
+the secret in any `appsettings*.json` file.
 
 ## 6. Changing the database
 
 The team chose **`database/01_schema.sql` as the source of truth** (no EF migrations). To add or change a column or table:
 
 1. Edit `database/01_schema.sql` (and `02_seed.sql` if the demo data is affected).
+   - Run the applicable upgrade scripts on existing databases; `database/04_audit_log_description.sql` adds the audit-log description column.
 2. Update the entity in `Domain/` and the mapping in the `*DbContext.cs` of **the module that owns the table**.
    - PascalCase property names map to snake_case automatically: `TimeLimitPerAnswerSeconds` ↔ `time_limit_per_answer_seconds`.
    - Enums are stored as strings; their names must match the `CHECK` constraints in the SQL.

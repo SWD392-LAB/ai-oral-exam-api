@@ -32,6 +32,10 @@ public sealed record SubmitAnswerRequest(
     // Null/empty = no answer (e.g. the FE auto-submits when time runs out).
     [MaxLength(10000)] string? AnswerText);
 
+public sealed record SubmitScoreReviewRequest(
+    [Range(typeof(decimal), "0", "999.99")] decimal FinalScore,
+    string? Comment);
+
 public sealed record EvaluationDto(
     Guid QuestionId,
     decimal SuggestedScore,
@@ -61,7 +65,7 @@ public sealed record MySessionDto(
     string SessionStatus,
     bool IsOpenNow,
     int QuestionCount,
-    int TimeLimitPerQuestion,
+    int TimeLimitPerAnswerSeconds,
     string ParticipantStatus,
     Guid? LatestAttemptId,
     string? LatestAttemptStatus);

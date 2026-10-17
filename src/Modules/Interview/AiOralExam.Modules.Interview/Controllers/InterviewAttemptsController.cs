@@ -51,5 +51,4 @@ public sealed class InterviewAttemptsController(IInterviewService interview) : C
         interview.SubmitAnswerAsync(id, request, ct);
 
     // TODO (M2): POST interview-attempts/{id}/audio (multipart) -> STT -> SubmitAnswer; WebSocket /hubs/interview
-    // TODO (M3): lecturer API to review the transcript + confirm the score (ScoreReview) -> attempt Finalized
 }

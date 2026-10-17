@@ -39,7 +39,8 @@ internal sealed class ExamConfigurationApi(AccessConfigDbContext db) : IExamConf
         if (userIds.Count == 0) return [];
         return await db.Users.AsNoTracking()
             .Where(u => userIds.Contains(u.Id))
-            .Select(u => new UserBasicInfo(u.Id, u.FullName, u.Email, u.StudentCode))
+            .Select(u => new UserBasicInfo(u.Id, u.FullName,
+                u.Email, u.StudentCode))
             .ToListAsync(ct);
     }
 

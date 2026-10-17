@@ -35,6 +35,7 @@ public class AuditLog
     public string Action { get; set; } = null!;
     public string TargetEntity { get; set; } = null!;
     public Guid? TargetId { get; set; }
+    public string? Description { get; set; }
     public DateTime CreatedAt { get; set; }
 }
 

@@ -28,7 +28,7 @@ builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 // ---------------------------------------------------------------- Modules
 // Each module registers its own DbContext + services. Modules talk to each other only through *.Contracts.
 builder.Services
-    .AddAccessConfigModule(connectionString)
+    .AddAccessConfigModule(connectionString, config)
     .AddInterviewModule(connectionString, config)
     .AddReportingModule();
 
@@ -131,6 +131,7 @@ builder.Services.AddCors(o => o.AddDefaultPolicy(p => p
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(o =>
 {
+    o.CustomSchemaIds(type => type.FullName!.Replace("+", "."));
     o.SwaggerDoc("v1", new OpenApiInfo { Title = "AIVES API", Version = "v1", Description = "AI-powered Viva Exam System" });
     // "Authorize" signs in through Keycloak (Authorization Code + PKCE, client aives-swagger)
     o.AddSecurityDefinition("Keycloak", new OpenApiSecurityScheme

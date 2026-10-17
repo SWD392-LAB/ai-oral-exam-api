@@ -8,10 +8,13 @@ public sealed record ExamSessionSummaryDto(
     string Title,
     DateTime StartTime,
     DateTime EndTime,
-    int TimeLimitPerQuestion,
+    int TimeLimitPerAnswerSeconds,
     int MaxFollowUps,
     string Status,
-    int QuestionCount);
+    int QuestionCount,
+    int ParticipantCount,
+    int TakenCount,
+    int ToReviewCount);
 
 public sealed record QuestionDto(
     Guid Id,
@@ -28,7 +31,7 @@ public sealed record ExamSessionDetailDto(
     string Title,
     DateTime StartTime,
     DateTime EndTime,
-    int TimeLimitPerQuestion,
+    int TimeLimitPerAnswerSeconds,
     int MaxFollowUps,
     string Status,
     IReadOnlyList<QuestionDto> Questions);
