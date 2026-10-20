@@ -172,6 +172,11 @@ if (app.Environment.IsDevelopment())
         o.DocumentTitle = "AIVES API";
         o.OAuthClientId(config["Keycloak:SwaggerClientId"]);
         o.OAuthUsePkce();
+        o.OAuthAdditionalQueryStringParams(
+        new Dictionary<string, string>
+        {
+            ["prompt"] = "login"
+        });
     });
 }
 
