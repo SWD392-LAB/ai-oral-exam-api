@@ -15,7 +15,11 @@ public interface IInterviewResultsApi
     Task<IReadOnlyList<AttemptResult>> GetSessionResultsAsync(Guid examSessionId, CancellationToken ct = default);
 }
 
-public sealed record AttemptCounts(Guid ExamSessionId, int TakenCount, int ToReviewCount);
+public sealed record AttemptCounts(
+    Guid ExamSessionId,
+    int TakenCount,
+    int ToReviewCount,
+    int InProgressCount);
 
 public sealed record AttemptResult(
     Guid AttemptId,

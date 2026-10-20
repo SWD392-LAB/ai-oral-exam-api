@@ -14,7 +14,8 @@ public sealed record ExamSessionSummaryDto(
     int QuestionCount,
     int ParticipantCount,
     int TakenCount,
-    int ToReviewCount);
+    int ToReviewCount,
+    int InProgressCount);
 
 public sealed record QuestionDto(
     Guid Id,

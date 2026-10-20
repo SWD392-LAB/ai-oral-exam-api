@@ -30,6 +30,7 @@ public static class AccessConfigModule
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IExamSessionQueries, ExamSessionQueries>();
         services.AddScoped<IExamSessionCommands, ExamSessionCommands>();
+        services.AddHostedService<ExamSessionAutoCloseService>();
         services.AddScoped<ICourseService, CourseService>();
         services.AddScoped<IQuestionService, QuestionService>();
         services.AddScoped<IRubricService, RubricService>();

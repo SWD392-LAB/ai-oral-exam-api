@@ -28,7 +28,7 @@ public sealed record ExamSessionInfo(
     IReadOnlyList<QuestionInfo> Questions)
 {
     public bool IsOpenAt(DateTime utcNow) =>
-        Status == ExamSessionStatus.Published && utcNow >= StartTime && utcNow <= EndTime;
+        Status == ExamSessionStatus.Published && utcNow >= StartTime && utcNow < EndTime;
 
     public decimal TotalMaxScore => Questions.Sum(q => q.MaxScore);
 }

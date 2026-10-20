@@ -51,7 +51,7 @@ internal sealed class ExamSessionQueries(
             .Select(s => new ExamSessionSummaryDto(
                 s.Id, s.Course.Code, s.Title, s.StartTime, s.EndTime,
                 s.TimeLimitPerAnswerSeconds, s.MaxFollowUps, s.Status.ToString(), s.Questions.Count,
-                0, 0, 0))
+                0, 0, 0, 0))
             .ToListAsync(ct);
         if (sessions.Count == 0)
             return sessions;
@@ -72,7 +72,8 @@ internal sealed class ExamSessionQueries(
             {
                 ParticipantCount = participantCounts.GetValueOrDefault(session.Id),
                 TakenCount = counts?.TakenCount ?? 0,
-                ToReviewCount = counts?.ToReviewCount ?? 0
+                ToReviewCount = counts?.ToReviewCount ?? 0,
+                InProgressCount = counts?.InProgressCount ?? 0
             };
         }).ToList();
     }

@@ -34,13 +34,14 @@ internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewRes
             .Select(g => new AttemptCounts(
                 g.Key,
                 g.Count(a => a.Status == AttemptStatus.PendingReview || a.Status == AttemptStatus.Finalized),
-                g.Count(a => a.Status == AttemptStatus.PendingReview)))
+                g.Count(a => a.Status == AttemptStatus.PendingReview),
+                g.Count(a => a.Status == AttemptStatus.InProgress)))
             .ToListAsync(ct);
         var countsBySession = groupedCounts.ToDictionary(x => x.ExamSessionId);
 
         return sessionIds.Select(id => countsBySession.TryGetValue(id, out var counts)
             ? counts
-            : new AttemptCounts(id, 0, 0)).ToList();
+            : new AttemptCounts(id, 0, 0, 0)).ToList();
     }
 
     private IQueryable<InterviewAttempt> Query() => db.InterviewAttempts.AsNoTracking()

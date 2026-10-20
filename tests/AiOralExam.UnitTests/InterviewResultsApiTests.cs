@@ -33,9 +33,9 @@ public class InterviewResultsApiTests
             [noAttemptsSessionId, pendingSessionId, finalizedSessionId], CancellationToken.None);
         var counts = result.ToDictionary(x => x.ExamSessionId);
 
-        Assert.Equal(new AttemptCounts(noAttemptsSessionId, 0, 0), counts[noAttemptsSessionId]);
-        Assert.Equal(new AttemptCounts(pendingSessionId, 1, 1), counts[pendingSessionId]);
-        Assert.Equal(new AttemptCounts(finalizedSessionId, 1, 0), counts[finalizedSessionId]);
+        Assert.Equal(new AttemptCounts(noAttemptsSessionId, 0, 0, 0), counts[noAttemptsSessionId]);
+        Assert.Equal(new AttemptCounts(pendingSessionId, 1, 1, 1), counts[pendingSessionId]);
+        Assert.Equal(new AttemptCounts(finalizedSessionId, 1, 0, 0), counts[finalizedSessionId]);
     }
 
     private static InterviewAttempt AttemptFor(Participant participant)
