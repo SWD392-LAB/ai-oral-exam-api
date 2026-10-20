@@ -15,26 +15,53 @@ internal sealed class ExamSessionAutoCloseService(
 {
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
 
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    protected override Task ExecuteAsync(CancellationToken stoppingToken) =>
+        RunPollingLoopAsync(ProcessIterationAsync, timeProvider, logger, PollInterval, stoppingToken);
+
+    private async Task ProcessIterationAsync(CancellationToken stoppingToken)
+    {
+        var now = timeProvider.GetUtcNow().UtcDateTime;
+        int closedCount;
+
+        await using (var scope = scopeFactory.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AccessConfigDbContext>();
+            closedCount = await FindExpiredPublishedSessions(db, now)
+                .ExecuteUpdateAsync(
+                    updates => updates.SetProperty(session => session.Status, ExamSessionStatus.Closed),
+                    stoppingToken);
+        }
+
+        if (closedCount > 0)
+            logger.LogInformation("Automatically closed {Count} expired exam sessions.", closedCount);
+    }
+
+    internal static async Task RunPollingLoopAsync(
+        Func<CancellationToken, Task> processIteration,
+        TimeProvider timeProvider,
+        ILogger<ExamSessionAutoCloseService> logger,
+        TimeSpan pollInterval,
+        CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            var now = timeProvider.GetUtcNow().UtcDateTime;
-            int closedCount;
-
-            await using (var scope = scopeFactory.CreateAsyncScope())
+            try
             {
-                var db = scope.ServiceProvider.GetRequiredService<AccessConfigDbContext>();
-                closedCount = await FindExpiredPublishedSessions(db, now)
-                    .ExecuteUpdateAsync(
-                        updates => updates.SetProperty(session => session.Status, ExamSessionStatus.Closed),
-                        stoppingToken);
+                await processIteration(stoppingToken);
+            }
+            catch (OperationCanceledException exception)
+                when (stoppingToken.IsCancellationRequested && exception.CancellationToken == stoppingToken)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception,
+                    "Failed to automatically close expired exam sessions. The next check will run after {PollInterval}.",
+                    pollInterval);
             }
 
-            if (closedCount > 0)
-                logger.LogInformation("Automatically closed {Count} expired exam sessions.", closedCount);
-
-            await Task.Delay(PollInterval, timeProvider, stoppingToken);
+            await Task.Delay(pollInterval, timeProvider, stoppingToken);
         }
     }
 

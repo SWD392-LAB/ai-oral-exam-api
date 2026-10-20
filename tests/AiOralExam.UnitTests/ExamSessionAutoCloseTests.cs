@@ -3,11 +3,57 @@ using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AiOralExam.UnitTests;
 
 public class ExamSessionAutoCloseTests
 {
+    [Fact]
+    public async Task Polling_loop_continues_after_iteration_failure()
+    {
+        using var stopping = new CancellationTokenSource();
+        var attempts = 0;
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ExamSessionAutoCloseService.RunPollingLoopAsync(
+                _ =>
+                {
+                    attempts++;
+                    if (attempts == 1)
+                        throw new InvalidOperationException("temporary database failure");
+                    if (attempts == 2)
+                        throw new OperationCanceledException("unrelated cancellation", new CancellationToken(canceled: true));
+
+                    stopping.Cancel();
+                    return Task.CompletedTask;
+                },
+                TimeProvider.System,
+                NullLogger<ExamSessionAutoCloseService>.Instance,
+                TimeSpan.Zero,
+                stopping.Token));
+
+        Assert.Equal(3, attempts);
+    }
+
+    [Fact]
+    public async Task Polling_loop_propagates_host_cancellation()
+    {
+        using var stopping = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            ExamSessionAutoCloseService.RunPollingLoopAsync(
+                token =>
+                {
+                    stopping.Cancel();
+                    return Task.FromCanceled(token);
+                },
+                TimeProvider.System,
+                NullLogger<ExamSessionAutoCloseService>.Instance,
+                TimeSpan.Zero,
+                stopping.Token));
+    }
+
     [Fact]
     public async Task Finds_published_sessions_at_or_past_end_time_only()
     {
