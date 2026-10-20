@@ -6,4 +6,6 @@ public sealed record UserProfileDto(
     string Email,
     string Role,
     string? StudentCode,
-    string? LecturerCode);
+    string? LecturerCode,
+    string Username,
+    bool IsActive);
