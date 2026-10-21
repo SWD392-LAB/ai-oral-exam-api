@@ -23,6 +23,18 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
 {
     private readonly string _accessConfigDatabase = $"access-config-tests-{Guid.NewGuid():N}";
     private readonly string _interviewDatabase = $"interview-tests-{Guid.NewGuid():N}";
+    private Guid _authenticatedUserId;
+    private string _authenticatedRole = Roles.Student;
+
+    internal Guid AuthenticatedUserId => _authenticatedUserId;
+    internal string AuthenticatedRole => _authenticatedRole;
+
+    internal ApiTestFactory AuthenticateAs(Guid userId, string role)
+    {
+        _authenticatedUserId = userId;
+        _authenticatedRole = role;
+        return this;
+    }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -39,13 +51,21 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
 
         builder.ConfigureTestServices(services =>
         {
-            services.RemoveAll<DbContextOptions<AccessConfigDbContext>>();
-            services.AddDbContext<AccessConfigDbContext>(options =>
-                options.UseInMemoryDatabase(_accessConfigDatabase));
+            services.AddSingleton(new TestAuthenticationIdentity(_authenticatedUserId, _authenticatedRole));
 
+            services.RemoveAll<AccessConfigDbContext>();
+            services.RemoveAll<DbContextOptions<AccessConfigDbContext>>();
+            services.AddScoped(_ => new AccessConfigDbContext(
+                new DbContextOptionsBuilder<AccessConfigDbContext>()
+                    .UseInMemoryDatabase(_accessConfigDatabase)
+                    .Options));
+
+            services.RemoveAll<InterviewDbContext>();
             services.RemoveAll<DbContextOptions<InterviewDbContext>>();
-            services.AddDbContext<InterviewDbContext>(options =>
-                options.UseInMemoryDatabase(_interviewDatabase));
+            services.AddScoped(_ => new InterviewDbContext(
+                new DbContextOptionsBuilder<InterviewDbContext>()
+                    .UseInMemoryDatabase(_interviewDatabase)
+                    .Options));
 
             services.RemoveAll<IKeycloakAdminClient>();
             services.AddSingleton<IKeycloakAdminClient, FakeKeycloakAdminClient>();
@@ -78,10 +98,11 @@ public sealed class TestAuthenticationHandler(
 
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
+        var testIdentity = Context.RequestServices.GetRequiredService<TestAuthenticationIdentity>();
         var claims = new[]
         {
-            new Claim(AppClaims.UserId, Guid.Empty.ToString()),
-            new Claim(AppClaims.Role, "Student"),
+            new Claim(AppClaims.UserId, testIdentity.UserId.ToString()),
+            new Claim(AppClaims.Role, testIdentity.Role),
         };
         var identity = new ClaimsIdentity(claims, Scheme.Name, AppClaims.Name, AppClaims.Role);
         var ticket = new AuthenticationTicket(new ClaimsPrincipal(identity), Scheme.Name);
@@ -91,9 +112,11 @@ public sealed class TestAuthenticationHandler(
 
 public sealed class FakeKeycloakAdminClient : IKeycloakAdminClient
 {
+    private static readonly Guid CreatedUserId = Guid.Parse("7b4b6116-0d14-4be7-8e15-76f0886de301");
+
     public Task<Guid> CreateUserAsync(
         string username, string email, string firstName, string lastName, CancellationToken ct = default) =>
-        Task.FromResult(Guid.NewGuid());
+        Task.FromResult(CreatedUserId);
 
     public Task AssignRealmRoleAsync(Guid userId, string roleName, CancellationToken ct = default) =>
         Task.CompletedTask;
@@ -104,3 +127,5 @@ public sealed class FakeKeycloakAdminClient : IKeycloakAdminClient
     public Task DeleteUserAsync(Guid userId, CancellationToken ct = default) =>
         Task.CompletedTask;
 }
+
+internal sealed record TestAuthenticationIdentity(Guid UserId, string Role);
