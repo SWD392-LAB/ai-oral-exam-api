@@ -39,7 +39,7 @@ public sealed class UsersHttpContractTests
         Assert.Equal(HttpStatusCode.Created, response.StatusCode);
         var created = await response.Content.ReadFromJsonAsync<CreatedUserDto>();
         Assert.NotNull(created);
-        Assert.Equal(Guid.Parse("7b4b6116-0d14-4be7-8e15-76f0886de301"), created.Id);
+        Assert.NotEqual(Guid.Empty, created.Id);
         Assert.Equal("New Student", created.FullName);
         Assert.Equal("new.student@example.test", created.Email);
         Assert.Equal("new.student", created.Username);

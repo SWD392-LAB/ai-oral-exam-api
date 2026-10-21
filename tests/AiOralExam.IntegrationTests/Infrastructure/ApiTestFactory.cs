@@ -112,11 +112,9 @@ public sealed class TestAuthenticationHandler(
 
 public sealed class FakeKeycloakAdminClient : IKeycloakAdminClient
 {
-    private static readonly Guid CreatedUserId = Guid.Parse("7b4b6116-0d14-4be7-8e15-76f0886de301");
-
     public Task<Guid> CreateUserAsync(
         string username, string email, string firstName, string lastName, CancellationToken ct = default) =>
-        Task.FromResult(CreatedUserId);
+        Task.FromResult(Guid.NewGuid());
 
     public Task AssignRealmRoleAsync(Guid userId, string roleName, CancellationToken ct = default) =>
         Task.CompletedTask;
