@@ -35,6 +35,7 @@ public static class AccessConfigModule
         services.AddScoped<IQuestionService, QuestionService>();
         services.AddScoped<IRubricService, RubricService>();
         services.AddScoped<CreateUserService>();
+        services.AddScoped<UpdateUserService>();
         services.AddScoped<ListUsersService>();
         services.AddScoped<GetUserService>();
         services.AddScoped<IUserService, UserService>();

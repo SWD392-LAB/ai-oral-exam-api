@@ -1,5 +1,4 @@
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
-using AiOralExam.Modules.AccessConfig.Application.Keycloak;
 using AiOralExam.Modules.AccessConfig.Application.Users;
 using AiOralExam.Modules.AccessConfig.Controllers;
 using AiOralExam.Modules.AccessConfig.Domain;
@@ -20,8 +19,8 @@ public class UserUpdateTests
         var user = ExistingUser(UserRole.Student, "S001", null);
         var request = new UpdateUserRequest(" Lecturer ", null, "L001", true, UserRole.Lecturer);
 
-        var values = UserService.PrepareUpdate(user, request);
-        UserService.ApplyUpdate(user, values, RoleFor(values.Role));
+        var values = UpdateUserService.PrepareUpdate(user, request);
+        UpdateUserService.ApplyUpdate(user, values, RoleFor(values.Role));
 
         Assert.Equal(UserRole.Lecturer.ToString(), user.Role.Name);
         Assert.Null(user.StudentCode);
@@ -35,7 +34,7 @@ public class UserUpdateTests
         var user = ExistingUser(UserRole.Student, "S001", null);
         var request = new UpdateUserRequest("User", "S001", "L001", true, UserRole.Lecturer);
 
-        Assert.Throws<ValidationException>(() => UserService.PrepareUpdate(user, request));
+        Assert.Throws<ValidationException>(() => UpdateUserService.PrepareUpdate(user, request));
     }
 
     [Fact]
@@ -44,7 +43,7 @@ public class UserUpdateTests
         var user = ExistingUser(UserRole.Lecturer, null, "L001");
         var request = new UpdateUserRequest("User", "S001", "L001", true, UserRole.Student);
 
-        Assert.Throws<ValidationException>(() => UserService.PrepareUpdate(user, request));
+        Assert.Throws<ValidationException>(() => UpdateUserService.PrepareUpdate(user, request));
     }
 
     [Theory]
@@ -58,7 +57,7 @@ public class UserUpdateTests
         var user = ExistingUser(UserRole.Administrator, null, null);
         var request = new UpdateUserRequest("User", studentCode, lecturerCode, true, role);
 
-        Assert.Throws<ValidationException>(() => UserService.PrepareUpdate(user, request));
+        Assert.Throws<ValidationException>(() => UpdateUserService.PrepareUpdate(user, request));
     }
 
     [Fact]
@@ -69,8 +68,8 @@ public class UserUpdateTests
 
         Assert.Null(UpdateConflictCode(user, Guid.NewGuid(), request));
 
-        var values = UserService.PrepareUpdate(user, request);
-        UserService.ApplyUpdate(user, values, RoleFor(values.Role));
+        var values = UpdateUserService.PrepareUpdate(user, request);
+        UpdateUserService.ApplyUpdate(user, values, RoleFor(values.Role));
 
         Assert.Equal(UserRole.Student.ToString(), user.Role.Name);
         Assert.Equal("Updated User", user.FullName);
@@ -144,8 +143,8 @@ public class UserUpdateTests
         var email = user.Email;
         var request = new UpdateUserRequest("Existing User", "S001", null, false);
 
-        var values = UserService.PrepareUpdate(user, request);
-        UserService.ApplyUpdate(user, values, user.Role);
+        var values = UpdateUserService.PrepareUpdate(user, request);
+        UpdateUserService.ApplyUpdate(user, values, user.Role);
 
         Assert.False(user.IsActive);
         Assert.Equal(userId, user.Id);
@@ -262,8 +261,7 @@ public class UserUpdateTests
         db.Users.Add(user);
         await db.SaveChangesAsync();
 
-        var service = new UserService(db, new TestCurrentUser(Guid.NewGuid()),
-            new StubKeycloakAdminClient());
+        var service = new UpdateUserService(db, new TestCurrentUser(Guid.NewGuid()));
         await service.UpdateAsync(user.Id, request, CancellationToken.None);
 
         return db.AuditLogs.ToArray();
@@ -271,7 +269,7 @@ public class UserUpdateTests
 
     private static string? UpdateConflictCode(
         User user, Guid currentUserId, UpdateUserRequest request, params User[] administrators)
-        => UserService.GetUpdateConflictCode(
+        => UpdateUserService.GetUpdateConflictCode(
             user.Id,
             currentUserId,
             Enum.Parse<UserRole>(user.Role.Name),
@@ -304,18 +302,4 @@ public class UserUpdateTests
         public bool IsInRole(string role) => role == Roles.Administrator;
     }
 
-    private sealed class StubKeycloakAdminClient : IKeycloakAdminClient
-    {
-        public Task<Guid> CreateUserAsync(string username, string email, string firstName, string lastName,
-            CancellationToken ct = default) => Task.FromResult(Guid.NewGuid());
-
-        public Task AssignRealmRoleAsync(Guid userId, string roleName, CancellationToken ct = default)
-            => Task.CompletedTask;
-
-        public Task<bool> SendSetPasswordEmailAsync(Guid userId, CancellationToken ct = default)
-            => Task.FromResult(true);
-
-        public Task DeleteUserAsync(Guid userId, CancellationToken ct = default)
-            => Task.CompletedTask;
-    }
 }

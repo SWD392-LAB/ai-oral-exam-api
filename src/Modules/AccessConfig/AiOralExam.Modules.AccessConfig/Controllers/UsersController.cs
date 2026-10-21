@@ -15,6 +15,7 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
     Tags("Users")]
 public sealed class UsersController(
     IUserService service,
+    UpdateUserService updateUser,
     CreateUserService createUser,
     ListUsersService listUsers,
     GetUserService getUser,
@@ -49,7 +50,7 @@ public sealed class UsersController(
 
     [HttpPut("{id:guid}")]
     public Task<UserDto> Update(Guid id, UpdateUserRequest r, CancellationToken ct)
-        => service.UpdateAsync(id, r, ct);
+        => updateUser.UpdateAsync(id, r, ct);
 
     [HttpPatch("~/api/admin/users/{id:guid}/role")]
     public async Task<UserDto> ChangeRole(Guid id, PatchUserRoleRequest r, CancellationToken ct)
@@ -59,7 +60,7 @@ public sealed class UsersController(
             (r.Role == UserRole.Student && current.Role == UserRole.Student.ToString() ? current.StudentCode : null);
         var lecturerCode = r.LecturerCode ??
             (r.Role == UserRole.Lecturer && current.Role == UserRole.Lecturer.ToString() ? current.LecturerCode : null);
-        return await service.UpdateAsync(id,
+        return await updateUser.UpdateAsync(id,
             new UpdateUserRequest(current.FullName!, studentCode, lecturerCode, current.IsActive, r.Role), ct);
     }
 
@@ -67,7 +68,7 @@ public sealed class UsersController(
     public async Task<IActionResult> Deactivate(Guid id, CancellationToken ct)
     {
         var current = await getUser.GetAsync(id, ct);
-        await service.UpdateAsync(id,
+        await updateUser.UpdateAsync(id,
             new UpdateUserRequest(current.FullName!, current.StudentCode, current.LecturerCode, false), ct);
         return NoContent();
     }

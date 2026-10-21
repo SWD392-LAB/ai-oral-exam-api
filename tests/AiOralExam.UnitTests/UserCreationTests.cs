@@ -328,7 +328,7 @@ public class UserCreationTests
     }
 
     private static UserService CreateService(AccessConfigDbContext db, FakeKeycloakAdminClient keycloak)
-        => new(db, new CurrentUser(), keycloak);
+        => new(db, keycloak);
 
     private static CreateUserService CreateUserCreator(
         AccessConfigDbContext db, FakeKeycloakAdminClient keycloak)
