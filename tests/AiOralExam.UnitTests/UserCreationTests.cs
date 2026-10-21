@@ -328,7 +328,8 @@ public class UserCreationTests
     }
 
     private static UserService CreateService(AccessConfigDbContext db, FakeKeycloakAdminClient keycloak)
-        => new(db, new CurrentUser(), TimeProvider.System, keycloak, NullLogger<UserService>.Instance);
+        => new(db, new ListUsersService(db), new CurrentUser(), TimeProvider.System,
+            keycloak, NullLogger<UserService>.Instance);
 
     private static async Task AddUserAsync(AccessConfigDbContext db, Guid? userId = null)
     {

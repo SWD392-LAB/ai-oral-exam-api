@@ -25,6 +25,7 @@ internal sealed record UserUpdateValues(
 
 internal sealed class UserService(
     AccessConfigDbContext db,
+    ListUsersService listUsers,
     ICurrentUser me,
     TimeProvider timeProvider,
     IKeycloakAdminClient keycloak,
@@ -140,24 +141,8 @@ internal sealed class UserService(
         u.LecturerCode,
         u.IsActive);
 
-    public async Task<IReadOnlyList<UserDto>> ListAsync(UserRole? role, bool? active, string? search, CancellationToken ct)
-    {
-        IQueryable<User> q = db.Users.AsNoTracking().Include(x => x.Role);
-        if (role is not null)
-            q = q.Where(x => x.Role.Name == role.ToString());
-        if (active is not null)
-            q = q.Where(x => x.IsActive == active);
-        if (!string.IsNullOrWhiteSpace(search))
-        {
-            var p = $"%{search.Trim()}%";
-            q = q.Where(x => EF.Functions.ILike(x.FullName, p) ||
-            EF.Functions.ILike(x.Email, p) ||
-            EF.Functions.ILike(x.StudentCode ?? "", p) ||
-            EF.Functions.ILike(x.LecturerCode ?? "", p));
-        }
-        var rows = await q.OrderBy(x => x.FullName).ToListAsync(ct);
-        return rows.Select(D).ToList();
-    }
+    public Task<IReadOnlyList<UserDto>> ListAsync(UserRole? role, bool? active, string? search, CancellationToken ct)
+        => listUsers.ListAsync(role, active, search, ct);
 
     public async Task<UserDto> GetAsync(Guid id, CancellationToken ct)
         => D(await db.Users.Include(x => x.Role)
