@@ -9,24 +9,6 @@ using Microsoft.Extensions.Options;
 
 namespace AiOralExam.Modules.AccessConfig.Application.Keycloak;
 
-public sealed class KeycloakAdminOptions
-{
-    public const string SectionName = "KeycloakAdmin";
-
-    public string BaseUrl { get; set; } = "http://localhost:8080";
-    public string Realm { get; set; } = "aives";
-    public string ClientId { get; set; } = "aives-admin-api";
-    public string ClientSecret { get; set; } = null!;
-}
-
-public interface IKeycloakAdminClient
-{
-    Task<Guid> CreateUserAsync(string username, string email, string firstName, string lastName, CancellationToken ct = default);
-    Task AssignRealmRoleAsync(Guid userId, string roleName, CancellationToken ct = default);
-    Task<bool> SendSetPasswordEmailAsync(Guid userId, CancellationToken ct = default);
-    Task DeleteUserAsync(Guid userId, CancellationToken ct = default);
-}
-
 internal sealed class KeycloakAdminClient(
     IHttpClientFactory httpClientFactory,
     IOptions<KeycloakAdminOptions> options,
