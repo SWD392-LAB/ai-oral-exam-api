@@ -9,7 +9,6 @@ using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
 
 namespace AiOralExam.UnitTests;
 
@@ -263,8 +262,8 @@ public class UserUpdateTests
         db.Users.Add(user);
         await db.SaveChangesAsync();
 
-        var service = new UserService(db, new TestCurrentUser(Guid.NewGuid()), TimeProvider.System,
-            new StubKeycloakAdminClient(), NullLogger<UserService>.Instance);
+        var service = new UserService(db, new TestCurrentUser(Guid.NewGuid()),
+            new StubKeycloakAdminClient());
         await service.UpdateAsync(user.Id, request, CancellationToken.None);
 
         return db.AuditLogs.ToArray();

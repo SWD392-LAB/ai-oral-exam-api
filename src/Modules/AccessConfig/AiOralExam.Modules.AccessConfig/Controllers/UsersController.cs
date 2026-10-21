@@ -15,6 +15,7 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
     Tags("Users")]
 public sealed class UsersController(
     IUserService service,
+    CreateUserService createUser,
     ListUsersService listUsers,
     GetUserService getUser,
     ICurrentUser me) : ControllerBase
@@ -32,7 +33,7 @@ public sealed class UsersController(
     [HttpPost("~/api/admin/users")]
     public async Task<ActionResult<CreatedUserDto>> Create(CreateUserRequest r, CancellationToken ct)
     {
-        var x = await service.CreateAsync(r, ct);
+        var x = await createUser.CreateAsync(r, ct);
         return CreatedAtAction(nameof(Get), new
         {
             id = x.Id

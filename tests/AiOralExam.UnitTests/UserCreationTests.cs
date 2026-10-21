@@ -21,7 +21,7 @@ public class UserCreationTests
     {
         await using var db = await CreateDatabaseAsync();
         var keycloak = new FakeKeycloakAdminClient();
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         var result = await service.CreateAsync(Request(), CancellationToken.None);
 
@@ -43,7 +43,7 @@ public class UserCreationTests
     {
         await using var db = await CreateDatabaseAsync();
         var keycloak = new FakeKeycloakAdminClient { EmailSent = false };
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         var result = await service.CreateAsync(Request(), CancellationToken.None);
 
@@ -60,7 +60,7 @@ public class UserCreationTests
         {
             EmailException = new AppException(502, "keycloak_admin_client_not_configured", "Not configured.")
         };
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         var result = await service.CreateAsync(Request(), CancellationToken.None);
 
@@ -230,7 +230,7 @@ public class UserCreationTests
         var interceptor = new ThrowOnSaveInterceptor(failure);
         await using var db = await CreateDatabaseAsync(interceptor);
         var keycloak = new FakeKeycloakAdminClient();
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         var thrown = await Assert.ThrowsAsync<DbUpdateException>(() =>
             service.CreateAsync(Request(), CancellationToken.None));
@@ -248,7 +248,7 @@ public class UserCreationTests
         {
             AssignException = new InvalidOperationException("role assignment failed")
         };
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
             service.CreateAsync(Request(), CancellationToken.None));
@@ -266,7 +266,7 @@ public class UserCreationTests
         db.Users.Add(ExistingUser("han.hg@aives.edu.vn", "existing"));
         await db.SaveChangesAsync();
         var keycloak = new FakeKeycloakAdminClient();
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         var exception = await Assert.ThrowsAsync<ConflictException>(() =>
             service.CreateAsync(Request(), CancellationToken.None));
@@ -282,7 +282,7 @@ public class UserCreationTests
         db.Users.Add(ExistingUser("other@aives.edu.vn", "han.hg"));
         await db.SaveChangesAsync();
         var keycloak = new FakeKeycloakAdminClient();
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         var exception = await Assert.ThrowsAsync<ConflictException>(() =>
             service.CreateAsync(Request(), CancellationToken.None));
@@ -299,7 +299,7 @@ public class UserCreationTests
         {
             CreateException = new AppException(502, "keycloak_unavailable", "Keycloak is unavailable.")
         };
-        var service = CreateService(db, keycloak);
+        var service = CreateUserCreator(db, keycloak);
 
         var exception = await Assert.ThrowsAsync<AppException>(() =>
             service.CreateAsync(Request(), CancellationToken.None));
@@ -328,8 +328,12 @@ public class UserCreationTests
     }
 
     private static UserService CreateService(AccessConfigDbContext db, FakeKeycloakAdminClient keycloak)
+        => new(db, new CurrentUser(), keycloak);
+
+    private static CreateUserService CreateUserCreator(
+        AccessConfigDbContext db, FakeKeycloakAdminClient keycloak)
         => new(db, new CurrentUser(), TimeProvider.System,
-            keycloak, NullLogger<UserService>.Instance);
+            keycloak, NullLoggerFactory.Instance);
 
     private static async Task AddUserAsync(AccessConfigDbContext db, Guid? userId = null)
     {
