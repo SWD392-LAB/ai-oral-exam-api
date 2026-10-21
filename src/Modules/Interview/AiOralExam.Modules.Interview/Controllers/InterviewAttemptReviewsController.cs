@@ -1,4 +1,5 @@
 using AiOralExam.Modules.Interview.Application;
+using AiOralExam.Modules.Interview.Application.Features.ScoreReview;
 using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -9,7 +10,7 @@ namespace AiOralExam.Modules.Interview.Controllers;
 [ApiController]
 [Route("api/interview-attempts/{id:guid}")]
 [Authorize(Roles = Roles.Lecturer)]
-public sealed class InterviewAttemptReviewsController(IInterviewService interview) : ControllerBase
+public sealed class InterviewAttemptReviewsController(IInterviewReviewService interview) : ControllerBase
 {
     [HttpGet("review")]
     public Task<AttemptResult> GetReview(Guid id, CancellationToken ct) =>

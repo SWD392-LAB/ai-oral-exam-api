@@ -1,15 +1,13 @@
 using System.Reflection;
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.Interview.Application;
-using AiOralExam.Modules.Interview.Application.Ai;
+using AiOralExam.Modules.Interview.Application.Features.ScoreReview;
 using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.Modules.Interview.Domain;
 using AiOralExam.Modules.Interview.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Logging.Abstractions;
-using Microsoft.Extensions.Options;
 using RangeAttribute = System.ComponentModel.DataAnnotations.RangeAttribute;
 
 namespace AiOralExam.UnitTests;
@@ -155,19 +153,15 @@ public class InterviewScoreReviewTests
         Assert.Single(db.ScoreReviews);
     }
 
-    private static InterviewService CreateService(
+    private static InterviewReviewService CreateService(
         InterviewDbContext db,
         TestCurrentUser currentUser,
         IExamConfigurationApi examConfig) => new(
         db,
         examConfig,
         new InterviewResultsApi(db),
-        new StubAnswerAnalyzer(),
-        new StubRubricScorer(),
         currentUser,
-        TimeProvider.System,
-        Options.Create(new InterviewOptions()),
-        NullLogger<InterviewService>.Instance);
+        TimeProvider.System);
 
     private static async Task<InterviewAttempt> AddAttemptAsync(
         InterviewDbContext db,
@@ -245,15 +239,4 @@ public class InterviewScoreReviewTests
             Task.FromResult<UserAccessInfo?>(new UserAccessInfo(Roles.Lecturer, true));
     }
 
-    private sealed class StubAnswerAnalyzer : IAnswerAnalyzer
-    {
-        public Task<AnswerAnalysis> AnalyzeAsync(AnswerAnalysisRequest request, CancellationToken ct = default) =>
-            Task.FromResult(new AnswerAnalysis(false, [], false, null));
-    }
-
-    private sealed class StubRubricScorer : IRubricScorer
-    {
-        public Task<RubricScore> ScoreAsync(RubricScoringRequest request, CancellationToken ct = default) =>
-            Task.FromResult(new RubricScore([], string.Empty));
-    }
 }
