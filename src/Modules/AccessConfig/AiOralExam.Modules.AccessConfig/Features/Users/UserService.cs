@@ -25,6 +25,7 @@ internal sealed record UserUpdateValues(
 
 internal sealed class UserService(
     AccessConfigDbContext db,
+    GetUserService getUser,
     ListUsersService listUsers,
     ICurrentUser me,
     TimeProvider timeProvider,
@@ -144,10 +145,8 @@ internal sealed class UserService(
     public Task<IReadOnlyList<UserDto>> ListAsync(UserRole? role, bool? active, string? search, CancellationToken ct)
         => listUsers.ListAsync(role, active, search, ct);
 
-    public async Task<UserDto> GetAsync(Guid id, CancellationToken ct)
-        => D(await db.Users.Include(x => x.Role)
-            .FirstOrDefaultAsync(x => x.Id == id, ct) ??
-            throw new NotFoundException("user_not_found", "User not found."));
+    public Task<UserDto> GetAsync(Guid id, CancellationToken ct)
+        => getUser.GetAsync(id, ct);
 
     public async Task<CreatedUserDto> CreateAsync(CreateUserRequest r, CancellationToken ct)
     {
