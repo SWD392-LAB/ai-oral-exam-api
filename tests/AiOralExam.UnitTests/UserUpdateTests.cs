@@ -263,7 +263,7 @@ public class UserUpdateTests
         db.Users.Add(user);
         await db.SaveChangesAsync();
 
-        var service = new UserService(db, new GetUserService(db), new ListUsersService(db), new TestCurrentUser(Guid.NewGuid()), TimeProvider.System,
+        var service = new UserService(db, new TestCurrentUser(Guid.NewGuid()), TimeProvider.System,
             new StubKeycloakAdminClient(), NullLogger<UserService>.Instance);
         await service.UpdateAsync(user.Id, request, CancellationToken.None);
 

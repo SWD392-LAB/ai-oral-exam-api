@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AiOralExam.Modules.AccessConfig.Application.Users;
 
-internal sealed class ListUsersService(AccessConfigDbContext db)
+public sealed class ListUsersService(AccessConfigDbContext db)
 {
     public async Task<IReadOnlyList<UserDto>> ListAsync(
         UserRole? role, bool? active, string? search, CancellationToken ct)

@@ -25,8 +25,6 @@ internal sealed record UserUpdateValues(
 
 internal sealed class UserService(
     AccessConfigDbContext db,
-    GetUserService getUser,
-    ListUsersService listUsers,
     ICurrentUser me,
     TimeProvider timeProvider,
     IKeycloakAdminClient keycloak,
@@ -141,12 +139,6 @@ internal sealed class UserService(
         u.StudentCode,
         u.LecturerCode,
         u.IsActive);
-
-    public Task<IReadOnlyList<UserDto>> ListAsync(UserRole? role, bool? active, string? search, CancellationToken ct)
-        => listUsers.ListAsync(role, active, search, ct);
-
-    public Task<UserDto> GetAsync(Guid id, CancellationToken ct)
-        => getUser.GetAsync(id, ct);
 
     public async Task<CreatedUserDto> CreateAsync(CreateUserRequest r, CancellationToken ct)
     {

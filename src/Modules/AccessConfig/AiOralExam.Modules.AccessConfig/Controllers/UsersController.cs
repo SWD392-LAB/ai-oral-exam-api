@@ -15,16 +15,18 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
     Tags("Users")]
 public sealed class UsersController(
     IUserService service,
+    ListUsersService listUsers,
+    GetUserService getUser,
     ICurrentUser me) : ControllerBase
 {
     [HttpGet]
     [HttpGet("~/api/admin/users")]
     public Task<IReadOnlyList<UserDto>> List([FromQuery] UserRole? role, [FromQuery] bool? active, [FromQuery] string? search, CancellationToken ct)
-        => service.ListAsync(role, active, search, ct);
+        => listUsers.ListAsync(role, active, search, ct);
 
     [HttpGet("{id:guid}")]
     public Task<UserDto> Get(Guid id, CancellationToken ct)
-        => service.GetAsync(id, ct);
+        => getUser.GetAsync(id, ct);
 
     [HttpPost]
     [HttpPost("~/api/admin/users")]
@@ -51,7 +53,7 @@ public sealed class UsersController(
     [HttpPatch("~/api/admin/users/{id:guid}/role")]
     public async Task<UserDto> ChangeRole(Guid id, PatchUserRoleRequest r, CancellationToken ct)
     {
-        var current = await service.GetAsync(id, ct);
+        var current = await getUser.GetAsync(id, ct);
         var studentCode = r.StudentCode ??
             (r.Role == UserRole.Student && current.Role == UserRole.Student.ToString() ? current.StudentCode : null);
         var lecturerCode = r.LecturerCode ??
@@ -63,7 +65,7 @@ public sealed class UsersController(
     [HttpPost("~/api/admin/users/{id:guid}/deactivate")]
     public async Task<IActionResult> Deactivate(Guid id, CancellationToken ct)
     {
-        var current = await service.GetAsync(id, ct);
+        var current = await getUser.GetAsync(id, ct);
         await service.UpdateAsync(id,
             new UpdateUserRequest(current.FullName!, current.StudentCode, current.LecturerCode, false), ct);
         return NoContent();

@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace AiOralExam.Modules.AccessConfig.Application.Users;
 
-internal sealed class GetUserService(AccessConfigDbContext db)
+public sealed class GetUserService(AccessConfigDbContext db)
 {
     public async Task<UserDto> GetAsync(Guid id, CancellationToken ct)
     {
