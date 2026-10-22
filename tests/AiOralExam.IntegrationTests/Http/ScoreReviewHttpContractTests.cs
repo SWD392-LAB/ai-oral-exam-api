@@ -10,6 +10,7 @@ using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.Modules.Interview.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using AccessDomain = AiOralExam.Modules.AccessConfig.Domain;
 using InterviewDomain = AiOralExam.Modules.Interview.Domain;
@@ -72,6 +73,44 @@ public sealed class ScoreReviewHttpContractTests
         Assert.Equal("Reviewed and confirmed.", result.Comment);
         Assert.Equal(ReviewStatus.Approved, result.Status);
         Assert.NotNull(result.ReviewedAt);
+    }
+
+    [Fact]
+    public async Task Put_score_review_is_forbidden_for_student()
+    {
+        using var factory = new ApiTestFactory().AuthenticateAs(StudentId, Roles.Student);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/interview-attempts/{AttemptId}/score-review",
+            new { finalScore = 85.25m, comment = "Reviewed and confirmed." });
+
+        Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task Put_score_review_persists_review_data()
+    {
+        using var factory = NewLecturerFactory();
+        await SeedReviewScenarioAsync(factory);
+        using var client = factory.CreateClient();
+
+        using var response = await client.PutAsJsonAsync(
+            $"/api/interview-attempts/{AttemptId}/score-review",
+            new { finalScore = 85.25m, comment = "Reviewed and confirmed." });
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+
+        await using var scope = factory.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<InterviewDbContext>();
+        var review = await db.ScoreReviews.SingleAsync(x => x.AttemptId == AttemptId);
+
+        Assert.Equal(AttemptId, review.AttemptId);
+        Assert.Equal(LecturerId, review.ReviewerId);
+        Assert.Equal(85.25m, review.FinalScore);
+        Assert.Equal("Reviewed and confirmed.", review.Comment);
+        Assert.Equal(ReviewStatus.Approved, review.Status);
+        Assert.NotNull(review.ReviewedAt);
     }
 
     [Fact]
