@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -12,12 +11,3 @@ public sealed record CourseDto(
     string Name,
     int LecturerCount,
     int ExamSessionCount);
-
-public sealed record CreateCourseRequest(
-    [Required, MaxLength(20)] string Code,
-    [Required, MaxLength(200)] string Name,
-    Guid LecturerId);
-
-public sealed record UpdateCourseRequest(
-    [Required, MaxLength(200)] string Name);
-

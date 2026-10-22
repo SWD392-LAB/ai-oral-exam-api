@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,26 +14,6 @@ using Microsoft.EntityFrameworkCore;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 
 namespace AiOralExam.Modules.AccessConfig.Application.Rubrics;
-public sealed record RubricCriterionDto(Guid Id, int OrderNo, string Description, decimal MaxPoints);
-
-public sealed record RubricDto(Guid Id, decimal MaxScore, IReadOnlyList<RubricCriterionDto> Criteria);
-
-public sealed record SaveRubricCriterionRequest(
-    Guid? Id,
-    [Range(1, int.MaxValue)] int OrderNo,
-    [Required] string Description,
-    [Range(0, 999.99)] decimal MaxPoints);
-
-/// <summary>The criteria list replaces the existing list; omitted criterion IDs are removed.</summary>
-public sealed record SaveRubricRequest([Required] IReadOnlyList<SaveRubricCriterionRequest> Criteria);
-
-public interface IRubricService
-{
-    Task<RubricDto> GetAsync(Guid sid, Guid qid, CancellationToken ct);
-    Task<RubricDto> SaveAsync(Guid sid, Guid qid, SaveRubricRequest r, CancellationToken ct);
-    Task DeleteAsync(Guid sid, Guid qid, CancellationToken ct);
-}
-
 internal sealed class RubricService(AccessConfigDbContext db, ICurrentUser me) : IRubricService
 {
     private const decimal MaxRubricScore = 999.99m;

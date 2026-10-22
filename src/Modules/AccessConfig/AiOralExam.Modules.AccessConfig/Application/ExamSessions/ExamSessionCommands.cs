@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Courses;
@@ -14,42 +13,6 @@ using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 
 
 namespace AiOralExam.Modules.AccessConfig.Application.ExamSessions;
-public sealed record CreateExamSessionRequest(
-    Guid CourseId,
-    [Required] string Title,
-    DateTime StartTime,
-    DateTime EndTime,
-    [Range(1, 3600)] int TimeLimitPerAnswerSeconds,
-    [Range(0, 20)] int MaxFollowUps = 2);
-
-public sealed record UpdateExamSessionRequest(
-    [Required] string Title,
-    DateTime StartTime,
-    DateTime EndTime,
-    [Range(1, 3600)] int TimeLimitPerAnswerSeconds,
-    [Range(0, 20)] int MaxFollowUps = 2);
-
-public sealed record ExamSessionCommandDto(
-    Guid Id,
-    Guid CourseId,
-    string Title,
-    DateTime StartTime,
-    DateTime EndTime,
-    int TimeLimitPerAnswerSeconds,
-    int MaxFollowUps,
-    string Status,
-    int QuestionCount,
-    int ParticipantCount);
-
-public interface IExamSessionCommands
-{
-    Task<ExamSessionCommandDto> CreateAsync(CreateExamSessionRequest r, CancellationToken ct);
-    Task<ExamSessionCommandDto> UpdateAsync(Guid id, UpdateExamSessionRequest r, CancellationToken ct);
-    Task DeleteAsync(Guid id, CancellationToken ct);
-    Task<ExamSessionCommandDto> PublishAsync(Guid id, CancellationToken ct);
-    Task<ExamSessionCommandDto> CloseAsync(Guid id, CancellationToken ct);
-}
-
 internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser me) : IExamSessionCommands
 {
     async Task<ExamSession> Load(Guid id, CancellationToken ct)

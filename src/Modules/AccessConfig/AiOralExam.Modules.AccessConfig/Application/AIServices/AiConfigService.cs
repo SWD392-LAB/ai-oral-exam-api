@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -16,33 +15,6 @@ using Npgsql;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 
 namespace AiOralExam.Modules.AccessConfig.Application.AIServices;
-
-public sealed record AiServiceConfigDto(
-    Guid Id,
-    string ServiceType,
-    string ProviderName,
-    string EndpointUrl,
-    string Language,
-    bool IsActive,
-    DateTime UpdatedAt,
-    bool HasApiKey);
-
-public sealed record SaveAiServiceConfigRequest(
-    AiServiceType ServiceType,
-    [Required, StringLength(100)] string ProviderName,
-    [Url, Required, StringLength(500)] string EndpointUrl,
-    string? ApiKey,
-    [Required] SpeechLanguage Language,
-    bool IsActive = true);
-
-public interface IAiConfigService
-{
-    Task<IReadOnlyList<AiServiceConfigDto>> ListAsync(CancellationToken ct);
-    Task<AiServiceConfigDto> GetAsync(Guid id, CancellationToken ct);
-    Task<AiServiceConfigDto> SaveAsync(Guid? id, SaveAiServiceConfigRequest r, CancellationToken ct);
-    Task<AiServiceConfigDto> SaveActiveAsync(SaveAiServiceConfigRequest r, CancellationToken ct);
-    Task DeleteAsync(Guid id, CancellationToken ct);
-}
 internal sealed class AiConfigService(AccessConfigDbContext db, ICurrentUser me, IDataProtectionProvider protection) : IAiConfigService
 {
     IDataProtector P => protection.CreateProtector("AIVES.AiService.ApiKey.v1");

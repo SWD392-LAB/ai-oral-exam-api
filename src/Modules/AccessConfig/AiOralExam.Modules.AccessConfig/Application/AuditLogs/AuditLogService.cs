@@ -7,21 +7,6 @@ using AiOralExam.Modules.AccessConfig.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
 namespace AiOralExam.Modules.AccessConfig.Application.AuditLogs;
-public sealed record AuditLogDto(
-    Guid Id,
-    Guid UserId,
-    string Action,
-    string TargetEntity,
-    Guid? TargetId,
-    DateTime CreatedAt,
-    string? Description,
-    string? UserName,
-    string? Email);
-
-public interface IAuditLogService
-{
-    Task<IReadOnlyList<AuditLogDto>> ListAsync(Guid? userId, string? action, string? targetEntity, DateTime? from, DateTime? to, int take, CancellationToken ct);
-}
 internal sealed class AuditLogService(AccessConfigDbContext db) : IAuditLogService
 {
     public async Task<IReadOnlyList<AuditLogDto>> ListAsync(Guid? userId, string? action, string? targetEntity, DateTime? from, DateTime? to, int take, CancellationToken ct)

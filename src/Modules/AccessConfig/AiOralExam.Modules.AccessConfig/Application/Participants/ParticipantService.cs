@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,31 +14,6 @@ using Microsoft.EntityFrameworkCore;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 
 namespace AiOralExam.Modules.AccessConfig.Application.Participants;
-public sealed record ParticipantDto(
-    Guid Id,
-    Guid StudentId,
-    string StudentCode,
-    string? StudentName,
-    string? Email,
-    string Status,
-    DateTime JoinedAt);
-
-public sealed record ImportStudentsRequest(
-    [Required] IReadOnlyList<string> StudentCodes);
-
-public sealed record ImportStudentsResult(
-    int Imported,
-    int Skipped,
-    IReadOnlyList<string> SkippedStudentCodes,
-    IReadOnlyList<ParticipantDto> Participants);
-
-public interface IParticipantService
-{
-    Task<IReadOnlyList<ParticipantDto>> ListAsync(Guid sessionId, CancellationToken ct);
-    Task<ImportStudentsResult> ImportAsync(Guid sessionId, ImportStudentsRequest r, CancellationToken ct);
-    Task RemoveAsync(Guid sessionId, Guid participantId, CancellationToken ct);
-}
-
 public sealed class ParticipantService(AccessConfigDbContext db, ICurrentUser me) : IParticipantService
 {
     async Task<ExamSession> Editable(Guid sid, CancellationToken ct)

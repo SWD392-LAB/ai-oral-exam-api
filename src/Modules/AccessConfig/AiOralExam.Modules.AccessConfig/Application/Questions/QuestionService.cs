@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,28 +14,6 @@ using Microsoft.EntityFrameworkCore;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 
 namespace AiOralExam.Modules.AccessConfig.Application.Questions;
-public sealed record QuestionDto(Guid Id, int OrderNo, string Content, bool HasRubric);
-
-public sealed record CreateQuestionRequest(
-    [Range(1, int.MaxValue)] int OrderNo,
-    [Required] string Content);
-
-public sealed record ImportQuestionsRequest([Required] IReadOnlyList<CreateQuestionRequest> Questions);
-
-public sealed record UpdateQuestionRequest(
-    [Range(1, int.MaxValue)] int OrderNo,
-    [Required] string Content);
-
-public interface IQuestionService
-{
-    Task<IReadOnlyList<QuestionDto>> ListAsync(Guid sessionId, CancellationToken ct);
-    Task<QuestionDto> GetAsync(Guid sessionId, Guid id, CancellationToken ct);
-    Task<QuestionDto> CreateAsync(Guid sessionId, CreateQuestionRequest r, CancellationToken ct);
-    Task<IReadOnlyList<QuestionDto>> ImportAsync(Guid sessionId, ImportQuestionsRequest r, CancellationToken ct);
-    Task<QuestionDto> UpdateAsync(Guid sessionId, Guid id, UpdateQuestionRequest r, CancellationToken ct);
-    Task DeleteAsync(Guid sessionId, Guid id, CancellationToken ct);
-}
-
 internal sealed class QuestionService(AccessConfigDbContext db, ICurrentUser me) : IQuestionService
 {
     async Task<ExamSession> Editable(Guid id, CancellationToken ct)

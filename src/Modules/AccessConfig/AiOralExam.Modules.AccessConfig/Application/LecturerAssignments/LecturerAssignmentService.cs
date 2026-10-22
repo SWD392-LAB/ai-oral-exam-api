@@ -12,21 +12,6 @@ using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
 
 namespace AiOralExam.Modules.AccessConfig.Application.LecturerAssignments;
-public sealed record LecturerDto(
-    Guid Id,
-    string? FullName,
-    string? Email,
-    string? LecturerCode,
-    DateTime AssignedAt);
-
-public interface ILecturerAssignmentService
-{
-    Task<IReadOnlyList<LecturerDto>> ListAsync(Guid courseId, CancellationToken ct);
-    Task ValidateLecturerAsync(Guid lecturerId, CancellationToken ct);
-    Task<LecturerDto> AssignAsync(Guid courseId, Guid lecturerId, CancellationToken ct);
-    Task RemoveAsync(Guid courseId, Guid lecturerId, CancellationToken ct);
-}
-
 internal sealed class LecturerAssignmentService(AccessConfigDbContext db, ICurrentUser me) : ILecturerAssignmentService
 {
     async Task<User> LoadLecturerAsync(Guid lecturerId, CancellationToken ct)
