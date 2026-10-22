@@ -49,6 +49,8 @@ Fresh databases get this trigger automatically from `database/01_schema.sql`.
 
 For existing databases, also apply `database/04_audit_log_description.sql` to add the audit-log description column. Fresh databases get it from `database/01_schema.sql`.
 
+For the retake schema change on an existing database, identify the application schema and apply `database/05_allow_interview_attempt_retakes.sql` as described in [Changing the database](#6-changing-the-database). Do not rerun `database/01_schema.sql` against existing data.
+
 In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 
 ### Try the M1 exam flow in Swagger
@@ -116,7 +118,8 @@ ai-oral-exam-api/
 │   ├── 01_schema.sql                # SOURCE OF TRUTH for the schema (16 tables)
 │   ├── 02_seed.sql                  # demo data
 │   ├── 03_user_role_code_constraint.sql # upgrade for existing databases
-│   └── 04_audit_log_description.sql # adds audit log descriptions to existing databases
+│   ├── 04_audit_log_description.sql # adds audit log descriptions to existing databases
+│   └── 05_allow_interview_attempt_retakes.sql # removes the old one-attempt constraint
 ├── src/
 │   ├── AiOralExam.Api/              # Host: Program.cs, Keycloak token validation, Swagger, CORS, error middleware
 │   ├── Shared/
@@ -125,6 +128,7 @@ ai-oral-exam-api/
 │       ├── AccessConfig/            # F7 - Access Control & Exam Configuration
 │       │   ├── AiOralExam.Modules.AccessConfig.Contracts/  # public interfaces + DTOs for other modules
 │       │   └── AiOralExam.Modules.AccessConfig/            # Domain, Infrastructure (DbContext), Application, Controllers
+│       │       └── Features/Users/ # CreateUser, GetUser, ListUsers, UpdateUser, ChangeRole, UpdateOwnProfile slices
 │       ├── Interview/               # F3 - AI Viva Interview
 │       │   ├── AiOralExam.Modules.Interview.Contracts/
 │       │   └── AiOralExam.Modules.Interview/
@@ -144,7 +148,7 @@ ai-oral-exam-api/
 | Module | Does | Owns tables | Depends on |
 |---|---|---|---|
 | **AccessConfig** (F7) | user profiles, lecturer assignment, exam sessions, questions, rubrics, AI settings, audit log | `users`, `roles`, `courses`, `course_lecturers`, `exam_sessions`, `questions`, `rubrics`, `rubric_criteria`, `ai_service_configs`, `audit_logs` | – |
-| **Interview** (F3) | runs the exam, follow-ups, AI score suggestions (per rubric criterion), (M3) lecturer review | `participants`, `interview_attempts`, `question_responses`, `interview_turns`, `criterion_scores`, `score_reviews` | `AccessConfig.Contracts` |
+| **Interview** (F3) | runs the exam, follow-ups, AI score suggestions (per rubric criterion), lecturer score review and finalization | `participants`, `interview_attempts`, `question_responses`, `interview_turns`, `criterion_scores`, `score_reviews` | `AccessConfig.Contracts` |
 | **Reporting** (F6) | student reports, results, class statistics, grade sheet export | *(none)* | `Interview.Contracts`, `AccessConfig.Contracts` |
 
 **Three rules that keep the modules apart:**
@@ -159,6 +163,13 @@ ai-oral-exam-api/
 |---|---|---|---|
 | GET | `/api/auth/me` | any | BE-PLAT-07 |
 | PATCH | `/api/auth/me` | any | |
+| GET | `/api/users`, `/api/admin/users` | Admin | |
+| GET | `/api/users/{id}` | Admin | |
+| POST | `/api/users`, `/api/admin/users` | Admin | |
+| PUT | `/api/users/{id}` | Admin | |
+| POST | `/api/admin/users/{id}/setup-link` | Admin | |
+| PATCH | `/api/admin/users/{id}/role` | Admin | |
+| POST | `/api/admin/users/{id}/deactivate` | Admin | |
 | GET | `/api/admin/courses` | Admin | |
 | GET | `/api/ai-services`, `/api/admin/ai-settings` | Admin | |
 | POST, PUT | `/api/ai-services`, `/api/ai-services/{id}` | Admin | |
@@ -169,6 +180,8 @@ ai-oral-exam-api/
 | POST | `/api/interview-attempts` | Student | BE-PLAT-04 |
 | GET | `/api/interview-attempts/{id}` | Student | |
 | POST | `/api/interview-attempts/{id}/responses` | Student | BE-AI-05 |
+| GET | `/api/interview-attempts/{id}/review` | Lecturer | |
+| PUT | `/api/interview-attempts/{id}/score-review` | Lecturer | |
 | GET | `/api/reports/attempts/{id}` | Student (own report; metadata until confirmed), Lecturer, Admin | M3 |
 | GET | `/api/reports/exam-sessions/{id}/results` | Lecturer, Admin | M3 |
 | GET | `/api/reports/exam-sessions/{id}/statistics` | Lecturer, Admin | M3 |
@@ -225,14 +238,15 @@ There is no way back. Each submitted answer returns an `outcome`:
 - `NextQuestion`: moves on to the next main question
 - `Completed`: no questions left; the attempt moves to `PendingReview`
 
-### F6 reporting without the F3 score-approval API
+### F6 reporting and F3 Score Review
 
 Reporting reads existing data through `IInterviewResultsApi` and
 `IExamConfigurationApi`. It does not write reviews, finalize attempts, or call AI.
 A confirmed final score means a stored `ScoreReview` with status `Approved`.
-The seed includes these records, so all F6 endpoints can be tested before the
-lecturer approval API is implemented. New attempts remain pending until F3
-provides that workflow; an AI score is never substituted for a final score.
+Lecturers can inspect an attempt through `GET /api/interview-attempts/{id}/review`
+and submit its final score through `PUT /api/interview-attempts/{id}/score-review`.
+Submission stores the approved review and finalizes the attempt. An AI score is
+never substituted for a lecturer-confirmed final score.
 
 - **Student report:** `GET /api/reports/attempts/{id}` returns HTTP 200 for the
   student's own pending attempt, with its status and basic metadata.
@@ -264,8 +278,8 @@ To demo with the existing seed, use S1 (`33333333-0000-0000-0000-000000000001`):
 `66666666-0000-0000-0000-000000000001`; `dung.pq@aives.edu.vn` gets pending
 metadata for attempt `66666666-0000-0000-0000-000000000002`.
 `an.nv@aives.edu.vn` can read S1 results/statistics and download its CSV.
-Sign in through Keycloak/Swagger with `Password@123`; no manual database updates
-or score-approval endpoint are needed for these seeded examples.
+Sign in through Keycloak/Swagger with `Password@123`; the seeded pending and
+confirmed examples can be read without submitting a new review.
 
 ## 5. Configuration (`appsettings.json`)
 
@@ -277,11 +291,11 @@ or score-approval endpoint are needed for these seeded examples.
 | `Keycloak:SwaggerClientId` | `aives-swagger` | client used by Swagger's **Authorize** button |
 | `Interview:ShowAiScoreToStudent` | `true` | M1 shows the mock score to the student right away. From M3 on, set `false` (students see scores only after the lecturer confirms them) |
 | `Interview:Mock:EnableFollowUps` | `false` | turn on to try the follow-up flow with the mock (answers under 15 words trigger a follow-up) |
-| `Interview:AllowRetake` | `false` | whether students may retake an exam (open point) |
+| `Interview:AllowRetake` | `false` | globally allows another attempt after a student's prior attempt is finished; not a per-session setting |
 | `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |
 | `Cors:AllowedOrigins` | `http://localhost:5173`, `http://localhost:3000` | where the FE runs |
 
-Admin user creation provisions the Keycloak identity and assigns its initial realm role, then stores the AIVES profile. The username is derived from the email local part (see [Username rule](#username-rule)).
+Admin user creation provisions the Keycloak identity, assigns its initial realm role, stores the AIVES profile, and requests a password-setup email. The response reports whether the email request succeeded. The username is derived from the email local part (see [Username rule](#username-rule)).
 
 To override settings on your machine without committing them, use `dotnet user-secrets` (the project already has a `UserSecretsId`) or environment variables, e.g. `ConnectionStrings__Database=...`.
 
@@ -299,12 +313,48 @@ the secret in any `appsettings*.json` file.
 The team chose **`database/01_schema.sql` as the source of truth** (no EF migrations). To add or change a column or table:
 
 1. Edit `database/01_schema.sql` (and `02_seed.sql` if the demo data is affected).
-   - Run the applicable upgrade scripts on existing databases; `database/04_audit_log_description.sql` adds the audit-log description column.
+   - Run the applicable forward-only upgrade scripts on existing databases; `database/04_audit_log_description.sql` adds the audit-log description column.
 2. Update the entity in `Domain/` and the mapping in the `*DbContext.cs` of **the module that owns the table**.
    - PascalCase property names map to snake_case automatically: `TimeLimitPerAnswerSeconds` ↔ `time_limit_per_answer_seconds`.
    - Enums are stored as strings; their names must match the `CHECK` constraints in the SQL.
-3. Reset the database: `docker compose down -v && docker compose up -d`.
-4. Tell the team to reset their databases after the merge.
+3. Reset only a disposable local development database when appropriate: `docker compose down -v && docker compose up -d`.
+
+**Never rerun `database/01_schema.sql` against an existing database.** It starts by dropping tables with `CASCADE`; it is for fresh database initialization only. Existing databases must use the applicable forward-only upgrade scripts.
+
+### Existing databases: enable interview retakes
+
+The `database/05_allow_interview_attempt_retakes.sql` upgrade requires an explicit `app_schema`, removes only the old single-column unique constraint on `interview_attempts.participant_id`, and ensures its non-unique index exists. It does not update or delete rows. It fails if the selected schema/table is missing or ambiguous, or if a conflicting standalone unique index exists.
+
+Connect to the application database as the same database user used by the API. Check the resolved application table and candidate schemas:
+
+```sql
+SELECT current_database(), current_user, current_schema(), current_schemas(true),
+       to_regclass('interview_attempts') AS resolved_interview_attempts;
+SHOW search_path;
+
+SELECT n.nspname AS resolved_schema
+FROM pg_class t
+JOIN pg_namespace n ON n.oid = t.relnamespace
+WHERE t.oid = to_regclass('interview_attempts');
+
+SELECT n.nspname AS schema_name
+FROM pg_class t
+JOIN pg_namespace n ON n.oid = t.relnamespace
+WHERE t.relname = 'interview_attempts'
+  AND t.relkind IN ('r', 'p')
+  AND n.nspname <> 'information_schema'
+  AND n.nspname !~ '^pg_';
+```
+
+Use `resolved_schema` for the API's active search path. Pass it explicitly as `app_schema`; do not infer or guess when the target is unclear. The upgrade validates only that schema, so databases containing both `fresh` and `public` are supported when the correct one is selected. If the resolved table is null, or the application schema cannot be established, stop and resolve the configuration first. Apply the upgrade (the database URL must target the application database):
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v app_schema=public -f database/05_allow_interview_attempt_retakes.sql
+```
+
+Replace `public` with the verified schema name. The script requires this psql variable and aborts if the selected schema/table is missing or ambiguous.
+
+The upgrade is transactional. Its regular index build may briefly block writes; schedule it accordingly for a large or busy table.
 
 ## 7. Tests
 
@@ -334,9 +384,7 @@ stored report details, and CSV encoding/escaping and final-score handling.
 ## 9. Next steps (from the tracker)
 
 - **M2 – Adaptive AI interview:** replace the `Mock*` classes in `Interview/Application/Ai` with real adapters (OpenAI / Gemini / Google TTS…) and switch the registrations in `InterviewModule.cs`; add an audio upload API + WebSocket.
-- **M3 – Score review:** lecturer API to review transcripts and confirm scores (`ScoreReview` → attempt `Finalized`). F6 reads those stored reviews; its CSV export and reporting are available independently (see section 4).
-- **M4 – Access & exam configuration:** CRUD for sessions / questions / rubrics, publishing (locks the questions), account management (creates the user in Keycloak too, through its Admin API), AI settings, audit logging. Google SSO and password reset are configured in Keycloak, not in the API.
 
-The places to work on are marked `TODO (M2/M3/M4)` in the code.
+Google sign-in is not configured by default and requires OAuth credentials. Keycloak handles authentication and password setup/reset flows; see [keycloak/README.md](keycloak/README.md).
 
 > Note: Microsoft supports .NET 8 LTS until **10 November 2026**. The project keeps running after that date; to move to .NET 10 LTS, change `TargetFramework` in `Directory.Build.props` and the package versions in `Directory.Packages.props`.
