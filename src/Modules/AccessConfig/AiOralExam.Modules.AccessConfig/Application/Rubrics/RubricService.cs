@@ -53,6 +53,13 @@ internal sealed class RubricService(AccessConfigDbContext db, ICurrentUser me) :
 
     public async Task<RubricDto> GetAsync(Guid sid, Guid qid, CancellationToken ct)
     {
+        var session = await db.ExamSessions.AsNoTracking()
+            .Include(x => x.Course).ThenInclude(x => x.Lecturers)
+            .FirstOrDefaultAsync(x => x.Id == sid, ct) ??
+            throw new NotFoundException("exam_session_not_found", "Exam session not found.");
+        if (!me.IsInRole(Roles.Administrator) && session.Course.Lecturers.All(x => x.LecturerId != me.Id))
+            throw new ForbiddenException("You are not assigned to this course.");
+
         var r = await db.Rubrics.AsNoTracking()
             .Where(x => x.QuestionId == qid)
             .Join(db.Questions,
