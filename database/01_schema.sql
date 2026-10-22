@@ -258,16 +258,17 @@ CREATE TABLE participants (
 CREATE INDEX ix_participants_student ON participants(student_id);
 
 -- ERD: INTERVIEW ATTEMPT  (PARTICIPANT 1 --< 0..* "makes")
--- Business rule (diagram note): one attempt per participant -> UNIQUE (participant_id).
+-- A participant may have multiple attempts.
 CREATE TABLE interview_attempts (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    participant_id  UUID        NOT NULL UNIQUE REFERENCES participants(id) ON DELETE CASCADE,
+    participant_id  UUID        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     status          VARCHAR(20) NOT NULL DEFAULT 'InProgress'
                     CHECK (status IN ('InProgress', 'PendingReview', 'Finalized')),
     CHECK (completed_at IS NULL OR completed_at >= started_at)
 );
+CREATE INDEX ix_interview_attempts_participant ON interview_attempts(participant_id);
 
 -- ERD: QUESTION RESPONSE  (ATTEMPT 1 --< 0..* "contains", QUESTION 1 --< 0..* "is answered in")
 -- A question not reached before the session closes has no row here and counts as 0.
