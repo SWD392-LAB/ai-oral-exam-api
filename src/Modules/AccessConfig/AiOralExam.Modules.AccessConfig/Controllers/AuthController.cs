@@ -1,4 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Application.Auth;
+using AiOralExam.Modules.AccessConfig.Application.Users;
+using AiOralExam.Modules.AccessConfig.Application.Users.UpdateOwnProfile;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -10,11 +12,20 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 [ApiController]
 [Route("api/auth")]
 [Tags("Auth")]
-public sealed class AuthController(IAuthService auth, ICurrentUser currentUser) : ControllerBase
+public sealed class AuthController(IAuthService auth, IUserService users, ICurrentUser currentUser) : ControllerBase
 {
     /// <summary>Profile of the signed-in account.</summary>
     [HttpGet("me")]
     [Authorize]
     public Task<UserProfileDto> Me(CancellationToken ct) =>
         auth.GetProfileAsync(currentUser.Id, ct);
+
+    [HttpPatch("me")]
+    [Authorize]
+    public async Task<UserProfileDto> UpdateMe(UpdateOwnProfileRequest request, CancellationToken ct)
+    {
+        var userId = currentUser.Id;
+        await users.UpdateOwnProfileAsync(userId, request, ct);
+        return await auth.GetProfileAsync(userId, ct);
+    }
 }

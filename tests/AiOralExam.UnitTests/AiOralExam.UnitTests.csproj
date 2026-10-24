@@ -7,11 +7,13 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />
     <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
   </ItemGroup>
   <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Modules\AccessConfig\AiOralExam.Modules.AccessConfig\AiOralExam.Modules.AccessConfig.csproj" />
     <ProjectReference Include="..\..\src\Modules\Interview\AiOralExam.Modules.Interview\AiOralExam.Modules.Interview.csproj" />
     <ProjectReference Include="..\..\src\Modules\Reporting\AiOralExam.Modules.Reporting\AiOralExam.Modules.Reporting.csproj" />
   </ItemGroup>

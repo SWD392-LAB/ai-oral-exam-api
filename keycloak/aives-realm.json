@@ -177,9 +177,34 @@
       "enabled": true,
       "protocol": "openid-connect",
       "bearerOnly": true
+    },
+    {
+      "clientId": "aives-admin-api",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-aives-admin-api-secret",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "implicitFlowEnabled": false,
+      "serviceAccountsEnabled": true
     }
   ],
   "users": [
+    {
+      "username": "service-account-aives-admin-api",
+      "enabled": true,
+      "serviceAccountClientId": "aives-admin-api",
+      "clientRoles": {
+        "realm-management": [
+          "manage-users",
+          "view-users",
+          "query-users",
+          "view-realm"
+        ]
+      }
+    },
     {
       "id": "11111111-0000-0000-0000-000000000001",
       "username": "admin",

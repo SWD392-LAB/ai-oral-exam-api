@@ -50,6 +50,9 @@ administration rights.
 - Realm roles are emitted as a flat `role` claim in access tokens, matching the
   API's `RoleClaimType`.
 - `aives-api`: bearer-only client, included as the access-token audience.
+- `aives-admin-api`: confidential client-credentials client used by the API to
+  administer users; its service account has only the required `realm-management`
+  roles (`manage-users`, `view-users`, `query-users`, `view-realm`).
 - Password grants and implicit flow are disabled for the public clients.
 - Access tokens expire after five minutes; brute-force protection is enabled.
 - Self-registration is disabled; password reset is enabled through Mailpit.
@@ -79,8 +82,23 @@ application database uses its existing `pgdata` volume.
 
 `aives-realm.json` is imported on startup only when the realm does not already
 exist. Editing this file does not update a running or existing realm. Apply
-changes to the existing realm in the Admin Console. Avoid `docker compose down -v`
-when you want to preserve data: it deletes the Compose project's volumes.
+changes to the existing realm in the Admin Console. In particular, create the
+admin client manually for an existing realm:
+
+1. In the **aives** realm, open **Clients** and create an OpenID Connect client
+   with ID `aives-admin-api`.
+2. Enable **Client authentication** and **Service accounts roles**. Disable
+   **Standard flow**, **Direct access grants**, and **Implicit flow**, then save.
+3. Set the API's local development secret with:
+   `dotnet user-secrets set "KeycloakAdmin:ClientSecret" "dev-aives-admin-api-secret" --project src/AiOralExam.Api`.
+   This value matches `aives-realm.json` and is for development only; do not
+   store it in any `appsettings*.json` file.
+4. On **Service account roles**, select the `realm-management` client and assign
+   `manage-users`, `view-users`, `query-users`, and `view-realm`.
+
+The client-credentials secret is for local development only; never log it or
+reuse it in a deployed environment. Avoid `docker compose down -v` when you want
+to preserve data: it deletes the Compose project's volumes.
 
 Optional Compose environment variables:
 
