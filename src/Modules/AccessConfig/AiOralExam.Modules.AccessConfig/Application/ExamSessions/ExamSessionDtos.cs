@@ -16,25 +16,3 @@ public sealed record ExamSessionSummaryDto(
     int TakenCount,
     int ToReviewCount,
     int InProgressCount);
-
-public sealed record QuestionDto(
-    Guid Id,
-    int OrderNo,
-    string Content,
-    IReadOnlyList<RubricCriterionInfo> RubricCriteria,
-    decimal MaxScore);
-
-public sealed record ExamSessionDetailDto(
-    Guid Id,
-    Guid CourseId,
-    string CourseCode,
-    string CourseName,
-    string Title,
-    DateTime StartTime,
-    DateTime EndTime,
-    int TimeLimitPerAnswerSeconds,
-    int MaxFollowUps,
-    string Status,
-    IReadOnlyList<QuestionDto> Questions);
-
-public sealed record CourseDto(Guid Id, string Code, string Name);

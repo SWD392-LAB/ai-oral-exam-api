@@ -8,9 +8,3 @@ public sealed record ParticipantDto(
     string? Email,
     string Status,
     DateTime JoinedAt);
-
-public sealed record ImportStudentsResult(
-    int Imported,
-    int Skipped,
-    IReadOnlyList<string> SkippedStudentCodes,
-    IReadOnlyList<ParticipantDto> Participants);

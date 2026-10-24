@@ -18,18 +18,3 @@ public class AppException : Exception
     public string Code { get; }
     public IDictionary<string, string[]>? Details { get; }
 }
-
-public sealed class NotFoundException(string code, string message)
-    : AppException(404, code, message);
-
-public sealed class ForbiddenException(string message = "You do not have permission to perform this action.")
-    : AppException(403, "forbidden", message);
-
-public sealed class ConflictException(string code, string message)
-    : AppException(409, code, message);
-
-public sealed class UnauthorizedException(string code, string message)
-    : AppException(401, code, message);
-
-public sealed class ValidationException(IDictionary<string, string[]> errors, string message = "The submitted data is invalid.")
-    : AppException(400, "validation_failed", message, errors);
