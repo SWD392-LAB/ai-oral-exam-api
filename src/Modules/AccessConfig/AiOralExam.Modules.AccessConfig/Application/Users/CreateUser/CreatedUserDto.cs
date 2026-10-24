@@ -1,4 +1,4 @@
-namespace AiOralExam.Modules.AccessConfig.Application.Users;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
 
 public sealed record CreatedUserDto(
     Guid Id,

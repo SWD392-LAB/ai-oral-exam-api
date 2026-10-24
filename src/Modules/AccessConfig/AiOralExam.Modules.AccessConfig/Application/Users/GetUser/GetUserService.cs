@@ -1,9 +1,10 @@
+using AiOralExam.Modules.AccessConfig.Application.Users;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
 using Microsoft.EntityFrameworkCore;
 
-namespace AiOralExam.Modules.AccessConfig.Application.Users;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.GetUser;
 
 public sealed class GetUserService(AccessConfigDbContext db)
 {

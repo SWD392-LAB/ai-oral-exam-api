@@ -1,3 +1,4 @@
+using AiOralExam.Modules.AccessConfig.Application.Users.UpdateOwnProfile;
 using AiOralExam.Modules.AccessConfig.Domain;
 
 namespace AiOralExam.Modules.AccessConfig.Application.Users;

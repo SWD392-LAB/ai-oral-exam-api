@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using AiOralExam.Modules.AccessConfig.Domain;
 
-namespace AiOralExam.Modules.AccessConfig.Application.Users;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
 
 public sealed record CreateUserRequest(
     [Required, StringLength(150)] string FullName,

@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text.Json;
 using AiOralExam.Modules.AccessConfig.Application.Auth;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;

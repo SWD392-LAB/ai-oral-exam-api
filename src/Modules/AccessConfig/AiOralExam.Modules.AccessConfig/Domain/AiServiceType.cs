@@ -6,9 +6,3 @@ public enum AiServiceType
     TTS,
     LLM
 }
-
-public enum SpeechLanguage
-{
-    Vietnamese,
-    English
-}

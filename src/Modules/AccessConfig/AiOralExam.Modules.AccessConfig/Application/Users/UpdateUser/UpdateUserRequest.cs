@@ -1,7 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using AiOralExam.Modules.AccessConfig.Domain;
 
-namespace AiOralExam.Modules.AccessConfig.Application.Users;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.UpdateUser;
 
 public sealed record UpdateUserRequest(
     [Required] string FullName,

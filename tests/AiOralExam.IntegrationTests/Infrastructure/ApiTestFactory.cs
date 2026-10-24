@@ -15,7 +15,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using IKeycloakAdminClient = AiOralExam.Modules.AccessConfig.Application.Keycloak.IKeycloakAdminClient;
+using IKeycloakAdminClient = AiOralExam.Modules.AccessConfig.Application.Users.Keycloak.IKeycloakAdminClient;
 
 namespace AiOralExam.IntegrationTests.Infrastructure;
 

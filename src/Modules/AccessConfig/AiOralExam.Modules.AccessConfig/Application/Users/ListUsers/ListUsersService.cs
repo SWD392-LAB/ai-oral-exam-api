@@ -1,10 +1,11 @@
 using System.Collections.Generic;
 using System.Linq;
+using AiOralExam.Modules.AccessConfig.Application.Users;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 
-namespace AiOralExam.Modules.AccessConfig.Application.Users;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.ListUsers;
 
 public sealed class ListUsersService(AccessConfigDbContext db)
 {

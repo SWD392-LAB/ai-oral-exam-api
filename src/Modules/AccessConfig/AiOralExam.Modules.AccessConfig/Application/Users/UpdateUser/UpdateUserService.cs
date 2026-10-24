@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Linq;
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Courses;
+using AiOralExam.Modules.AccessConfig.Application.Users;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
@@ -9,14 +10,7 @@ using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 
-namespace AiOralExam.Modules.AccessConfig.Application.Users;
-
-internal sealed record UserUpdateValues(
-    string FullName,
-    UserRole Role,
-    string? StudentCode,
-    string? LecturerCode,
-    bool IsActive);
+namespace AiOralExam.Modules.AccessConfig.Application.Users.UpdateUser;
 
 public sealed class UpdateUserService(AccessConfigDbContext db, ICurrentUser me)
 {

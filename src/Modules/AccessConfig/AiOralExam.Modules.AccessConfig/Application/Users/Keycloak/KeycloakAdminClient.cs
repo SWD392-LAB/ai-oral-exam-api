@@ -7,7 +7,7 @@ using AiOralExam.SharedKernel.Errors;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
-namespace AiOralExam.Modules.AccessConfig.Application.Keycloak;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.Keycloak;
 
 internal sealed class KeycloakAdminClient(
     IHttpClientFactory httpClientFactory,

@@ -2,7 +2,8 @@ using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Courses;
-using AiOralExam.Modules.AccessConfig.Application.Keycloak;
+using AiOralExam.Modules.AccessConfig.Application.Users;
+using AiOralExam.Modules.AccessConfig.Application.Users.Keycloak;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
@@ -12,7 +13,7 @@ using Microsoft.Extensions.Logging;
 using Npgsql;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
 
-namespace AiOralExam.Modules.AccessConfig.Application.Users;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
 
 public sealed class CreateUserService(
     AccessConfigDbContext db,

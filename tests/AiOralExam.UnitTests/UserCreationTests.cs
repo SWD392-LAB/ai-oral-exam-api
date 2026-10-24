@@ -1,5 +1,8 @@
-using AiOralExam.Modules.AccessConfig.Application.Keycloak;
 using AiOralExam.Modules.AccessConfig.Application.Users;
+using AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
+using AiOralExam.Modules.AccessConfig.Application.Users.GetUser;
+using AiOralExam.Modules.AccessConfig.Application.Users.Keycloak;
+using AiOralExam.Modules.AccessConfig.Application.Users.UpdateOwnProfile;
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;

@@ -2,7 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using AiOralExam.Modules.AccessConfig;
-using AiOralExam.Modules.AccessConfig.Application.Keycloak;
+using AiOralExam.Modules.AccessConfig.Application.Users.Keycloak;
 using AiOralExam.SharedKernel.Errors;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;

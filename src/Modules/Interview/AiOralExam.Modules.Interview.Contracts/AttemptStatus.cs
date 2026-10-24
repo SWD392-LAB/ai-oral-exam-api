@@ -12,9 +12,3 @@ public enum AttemptStatus
     /// <summary>The lecturer has confirmed the final score - only now can the student see the report.</summary>
     Finalized
 }
-
-public enum ReviewStatus
-{
-    Pending,
-    Approved
-}

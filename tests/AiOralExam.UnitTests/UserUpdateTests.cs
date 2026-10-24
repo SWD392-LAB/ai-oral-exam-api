@@ -1,5 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Users;
+using AiOralExam.Modules.AccessConfig.Application.Users.UpdateUser;
 using AiOralExam.Modules.AccessConfig.Controllers;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;

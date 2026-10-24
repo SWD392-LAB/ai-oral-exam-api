@@ -1,4 +1,4 @@
-namespace AiOralExam.Modules.AccessConfig.Application.Keycloak;
+namespace AiOralExam.Modules.AccessConfig.Application.Users.Keycloak;
 
 public sealed class KeycloakAdminOptions
 {

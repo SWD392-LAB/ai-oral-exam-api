@@ -1,5 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Application.Auth;
 using AiOralExam.Modules.AccessConfig.Application.Users;
+using AiOralExam.Modules.AccessConfig.Application.Users.UpdateOwnProfile;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;

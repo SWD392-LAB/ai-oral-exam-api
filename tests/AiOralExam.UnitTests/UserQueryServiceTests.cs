@@ -1,4 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Application.Users;
+using AiOralExam.Modules.AccessConfig.Application.Users.GetUser;
+using AiOralExam.Modules.AccessConfig.Application.Users.ListUsers;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
