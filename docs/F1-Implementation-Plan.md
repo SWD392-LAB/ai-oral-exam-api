@@ -72,13 +72,22 @@ cần gán người và ngày lịch cụ thể trước khi nhận PR.
 
 | PR đề xuất | Phụ trách theo vai trò | Ước lượng sơ bộ | Deadline |
 | --- | --- | --- | --- |
-| F1-A1: platform rubric version, migration/contract F3/F7, seed và khóa ghi rubric lecturer | BE AccessConfig + Interview | 3–5 ngày làm việc | Đề xuất T0 + 5 ngày làm việc |
-| F1-A2: bank Draft/revision, review, attach câu vào session | BE AccessConfig | 3–5 ngày làm việc | Đề xuất T0 + 10 ngày làm việc |
-| F1-B: import JSON với lỗi theo dòng và transaction | BE AccessConfig | 1–2 ngày làm việc | Đề xuất T0 + 12 ngày làm việc |
-| F1-C demo: mock generation từ câu mẫu + rubric chung | BE AI/AccessConfig | 1–2 ngày làm việc | Đề xuất T0 + 14 ngày làm việc |
-| F1-C production: material storage/ingest/RAG/provider thật | BE AI + hạ tầng | Ước lượng sau spike provider/tài liệu | Cần chốt sau spike |
+| F1-A1 BE: platform rubric version, schema/legacy migration, contract F3/F7, seed, khóa ghi rubric lecturer, PostgreSQL regression | BE AccessConfig + Interview | **8–12 ngày làm việc**; chốt lại sau spike dữ liệu lịch sử | Đề xuất T0 + 12 ngày làm việc |
+| F1-A1 FE: bỏ bước nhập/sửa rubric, thêm màn xem rubric chỉ đọc | FE exam setup | 2–3 ngày làm việc | Sau khi contract F1-A1 ổn định + 3 ngày |
+| F1-A2 BE: bank Draft/revision, review, attach câu vào session | BE AccessConfig | 3–5 ngày làm việc | Sau F1-A1 BE + 5 ngày |
+| F1-A2 FE: bank list/edit, xem nguồn, duyệt/loại AI Draft, chọn câu Approved cho phiên | FE question bank | 3–5 ngày làm việc | Sau API F1-A2 + 5 ngày |
+| F1-B BE: import JSON với lỗi theo dòng và transaction | BE AccessConfig | 1–2 ngày làm việc | Sau F1-A2 BE + 2 ngày |
+| F1-B FE: form import, hiển thị lỗi theo dòng và trạng thái Draft | FE question bank | 1–2 ngày làm việc | Sau API F1-B + 2 ngày |
+| F1-C demo BE: mock generation từ câu mẫu + rubric chung | BE AI/AccessConfig | 1–2 ngày làm việc | Sau F1-B BE + 2 ngày |
+| F1-C demo FE: yêu cầu sinh câu, xem/chỉnh/duyệt Draft được tạo | FE question bank | 1–2 ngày làm việc | Sau API demo + 2 ngày |
+| F1-C production BE/FE: material storage/ingest/RAG/provider thật và UI tài liệu/citation | BE AI + hạ tầng + FE | Ước lượng sau spike provider/tài liệu và contract UI | Cần chốt sau spike |
 
-Ước lượng là đề xuất để lập sprint, chưa phải cam kết của người được phân công. **Demo tối thiểu:** F1-A1/A2, F1-B và F1-C mock; giảng viên duyệt trước attach. **Hoàn chỉnh:** RAG thật, citation kiểm chứng, migration/bảo mật và test PostgreSQL. CI dùng fake storage/LLM; smoke test provider/tài liệu riêng. Không chạy lại `database/01_schema.sql` trên DB đang có dữ liệu.
+Ước lượng là đề xuất để lập sprint, chưa phải cam kết của người được phân công.
+**Demo tối thiểu (BE + FE):** rubric chỉ đọc, bank/import, mock generation và
+màn giảng viên sửa/duyệt trước attach. **Hoàn chỉnh:** RAG thật, citation kiểm
+chứng, bảo mật tài liệu và test PostgreSQL. CI dùng fake storage/LLM; smoke
+test provider/tài liệu riêng. Không chạy lại `database/01_schema.sql` trên DB
+đang có dữ liệu.
 
 ## 8. Quyết định còn mở
 

@@ -198,8 +198,10 @@ Branch đề xuất: `feat/f3-session-lifecycle`.
 - Nếu câu trả lời đã nhận đang chờ AI, cho phép xử lý điểm tiếp nhưng không tạo
   câu hỏi mới. PR 01 phải từ chối duyệt với `409 evaluation_pending` cho tới khi
   xử lý xong; failure không được biến thành điểm 0.
-- AccessConfig đã có worker đóng các session Published quá hạn. F3 không ghi
-  trực tiếp `exam_sessions`; chỉ bổ sung contract đọc/batch nếu worker F3 cần.
+- AccessConfig đã có worker đóng các session Published quá hạn **và**
+  `ExamSessionCommands.CloseAsync` cho lecturer đóng thủ công; diagram F7 giữ
+  cả hai nhánh. F3 phải ngừng hỏi/nhận khi status đã Closed hoặc `EndTime` tới.
+  F3 không ghi trực tiếp `exam_sessions`; chỉ bổ sung contract đọc/batch nếu cần.
 - Serialize các mutation cùng attempt bằng transaction ngắn/row lock ở DB;
   thử race submit–submit, submit–timeout và start–start trên PostgreSQL thật.
 
@@ -342,9 +344,10 @@ Branch đề xuất: `test/f3-f6-integration`.
   mở review → lưu/chỉnh draft → confirm → `Finalized` → thông báo student.
   Thử thêm đường PUT một bước hiện có và trường hợp event đến sau commit.
 - Theo [diagram giảng viên](SequenceDiagram-F3-Lecturer-Results.drawio), kiểm
-  tra list attempt → mở review → confirmed-only statistics → CSV. Controller
-  và service thống kê/xuất file vẫn thuộc Reporting trong code; diagram được
-  đặt dưới F3 vì đây là luồng nghiệp vụ sau khi giảng viên chốt bài.
+  tra **sau Finalized**: danh sách kết quả → confirmed-only statistics → CSV.
+  Việc mở, lưu nháp và xác nhận review chỉ nằm trong diagram F3 chính.
+  Controller/service thống kê và xuất file vẫn thuộc Reporting trong code;
+  diagram này được đặt dưới F3 vì là luồng giảng viên sau khi chốt bài.
 - Theo [diagram F6](SequenceDiagram-F6-Feedback-Reporting.drawio), chỉ nghiệm
   thu luồng sinh viên xem feedback: chưa duyệt chỉ có metadata, Approved mới
   có hội thoại/điểm. Không suy ra rằng các API lecturer Reporting bị xóa.
@@ -368,17 +371,24 @@ session theo quy tắc mới. Sau đó: `PR 03 → PR 04 → PR 05 → PR 06`.
 | PR | Phụ trách theo vai trò | Ước lượng sơ bộ | Deadline |
 | --- | --- | --- | --- |
 | PR 01: review Draft/confirm, quyền riêng tư | BE Interview | 2–3 ngày làm việc | Đề xuất T0 + 3 ngày làm việc |
+| PR 01 FE: màn lưu nháp/chỉnh/xác nhận điểm; ẩn điểm AI với student trước duyệt | FE review/interview | 1–2 ngày làm việc | Sau contract PR 01 + 2 ngày |
 | PR 02: lifecycle/idempotency/worker | BE Interview + AccessConfig | 3–5 ngày làm việc | Đề xuất T0 + 8 ngày làm việc |
+| PR 02 FE: gửi `turnId`, hiển thị deadline server, resume/retry đúng turn | FE interview | 2–3 ngày làm việc | Sau contract PR 02 + 3 ngày |
 | PR 03: LLM thật + scoring theo rubric đã pin | BE AI/Interview | Ước lượng sau spike provider | Chốt sau spike |
+| PR 03 FE: hiển thị follow-up và trạng thái AI đang xử lý/lỗi có thể retry | FE interview | 1–2 ngày làm việc | Sau contract PR 03 + 2 ngày |
 | PR 04: voice theo lượt/storage/STT/TTS | BE AI + hạ tầng | Ước lượng sau spike codec/storage | Chốt sau spike |
-| PR 05: streaming/SignalR/reconnect | BE Interview + FE | Ước lượng sau contract FE | Chốt sau contract |
+| PR 04 FE: ghi âm, upload, phát TTS/audio với giới hạn codec/duration | FE interview | 3–5 ngày làm việc | Chốt sau contract audio |
+| PR 05: streaming/SignalR/reconnect | BE Interview | Ước lượng sau contract FE | Chốt sau contract |
+| PR 05 FE: partial transcript, chunk sequence, reconnect và phục hồi GET | FE interview | Ước lượng sau thử streaming | Chốt sau thử streaming |
 | PR 06: PostgreSQL E2E/CI/tài liệu | BE + QA | 2–4 ngày làm việc sau PR 05 | Đề xuất PR 05 + 4 ngày làm việc |
+| PR 06 FE: E2E Keycloak → voice → review → feedback/stats và sửa UI theo kết quả | FE + QA | 1–2 ngày làm việc sau tích hợp | Đề xuất PR 05 + 4 ngày làm việc |
 
 T0 là ngày bắt đầu sprint do team chốt. Các owner là **vai trò đề xuất**, chưa
 phân công cá nhân; mốc tương đối và thời lượng không phải cam kết. PO/tech lead
 cần chuyển chúng thành ngày lịch và người phụ trách trước khi nhận PR.
-**Demo tối thiểu:** F1-A1, PR 01–02 với text/mock, giảng viên duyệt,
-sinh viên xem feedback F6 và lecturer xem statistics/CSV đã duyệt. **Hoàn chỉnh:**
+**Demo tối thiểu (BE + FE):** F1-A1, PR 01–02 với text/mock; FE gửi `turnId`,
+resume đúng bài, lưu nháp/xác nhận điểm và chỉ hiện feedback student sau duyệt;
+lecturer xem statistics/CSV đã duyệt. **Hoàn chỉnh:**
 PR 03–06 với provider thật, voice/streaming và kiểm thử PostgreSQL E2E.
 
 Mỗi PR có test phù hợp và build pass trước khi sang mốc tiếp theo. Các regression

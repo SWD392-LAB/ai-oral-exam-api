@@ -119,7 +119,7 @@
           <mxGeometry x="1805" y="2038" width="10" height="218" as="geometry" />
         </mxCell>
         <mxCell id="seq1_v94" parent="1" style="html=1;points=[];fillColor=#FFEBEE;strokeColor=#E53935;" value="" vertex="1">
-          <mxGeometry x="1635" y="2384" width="10" height="32" as="geometry" />
+          <mxGeometry x="1635" y="2424" width="10" height="24" as="geometry" />
         </mxCell>
         <mxCell id="seq1_v96" parent="1" style="html=1;points=[];fillColor=#EDE7F6;strokeColor=#5E35B1;" value="" vertex="1">
           <mxGeometry x="445" y="2352" width="10" height="96" as="geometry" />
