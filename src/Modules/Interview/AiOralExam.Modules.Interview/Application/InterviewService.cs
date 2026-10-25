@@ -11,19 +11,6 @@ using Microsoft.Extensions.Options;
 
 namespace AiOralExam.Modules.Interview.Application;
 
-public interface IInterviewService
-{
-    Task<IReadOnlyList<MySessionDto>> GetMySessionsAsync(CancellationToken ct = default);
-
-    /// <summary>POST /api/interview-attempts (BE-PLAT-04). Returns (state, created).</summary>
-    Task<(AttemptStateDto State, bool Created)> StartAttemptAsync(StartAttemptRequest request, CancellationToken ct = default);
-
-    /// <summary>POST /api/interview-attempts/{id}/responses (BE-AI-05).</summary>
-    Task<SubmitAnswerResponse> SubmitAnswerAsync(Guid attemptId, SubmitAnswerRequest request, CancellationToken ct = default);
-
-    Task<AttemptStateDto> GetAttemptStateAsync(Guid attemptId, CancellationToken ct = default);
-}
-
 /// <summary>
 /// Orchestrates the exam flow:
 ///   Start  -> create InterviewAttempt + QuestionResponse for question 1 + a Main turn
@@ -120,7 +107,6 @@ internal sealed class InterviewService(
         participant.Attempts.Add(attempt);
         db.InterviewAttempts.Add(attempt);
         participant.Status = ParticipantStatus.InProgress;
-
         AskMainQuestion(attempt, session.Questions[0], now);
 
         await db.SaveChangesAsync(ct);
@@ -161,7 +147,6 @@ internal sealed class InterviewService(
         var dialogue = response.Turns.OrderBy(t => t.TurnNo)
             .Select(t => new DialogueTurn(t.QuestionText, t.AnswerTranscript, t.Type == TurnType.FollowUp))
             .ToList();
-
         // 2) Analyze -> follow-up?
         var analysis = await analyzer.AnalyzeAsync(new AnswerAnalysisRequest(
             question.Content, question.Criteria, dialogue,

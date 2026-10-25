@@ -156,6 +156,9 @@ public class ReportServiceTests
 
         public Task<AttemptResult?> GetAttemptResultAsync(Guid attemptId, CancellationToken ct = default) =>
             Task.FromResult(attemptId == Attempt.AttemptId ? Attempt : null);
+        public Task<IReadOnlyList<AttemptCounts>> GetAttemptCountsAsync(
+            IReadOnlyCollection<Guid> sessionIds, CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<AttemptCounts>>([]);
         public Task<IReadOnlyList<AttemptResult>> GetSessionResultsAsync(Guid examSessionId, CancellationToken ct = default) =>
             Task.FromResult<IReadOnlyList<AttemptResult>>(examSessionId == Session.Id ? [Attempt] : []);
         public Task<ExamSessionInfo?> GetSessionAsync(Guid examSessionId, CancellationToken ct = default) =>

@@ -55,39 +55,3 @@ public class QuestionResponse
         IsFinished = true;
     }
 }
-
-/// <summary>ERD: INTERVIEW TURN - one question/answer exchange. The turns together are the transcript.</summary>
-public class InterviewTurn
-{
-    public Guid Id { get; set; }
-    public Guid QuestionResponseId { get; set; }
-    public int TurnNo { get; set; }
-    public TurnType Type { get; set; }
-    public string QuestionText { get; set; } = null!;
-    public string? AnswerTranscript { get; set; }
-    public string? AudioUrl { get; set; }
-    public DateTime AskedAt { get; set; }
-    public DateTime? AnsweredAt { get; set; }
-}
-
-/// <summary>ERD: CRITERION SCORE - the points the AI gives one rubric criterion for one question response.</summary>
-public class CriterionScore
-{
-    public Guid Id { get; set; }
-    public Guid QuestionResponseId { get; set; }
-    public Guid RubricCriterionId { get; set; }   // FK to rubric_criteria (module F7) - id only
-    public decimal Points { get; set; }
-    public string? Comment { get; set; }
-}
-
-/// <summary>ERD: SCORE REVIEW - the FINAL score the lecturer confirms for the whole attempt.</summary>
-public class ScoreReview
-{
-    public Guid Id { get; set; }
-    public Guid AttemptId { get; set; }
-    public Guid ReviewerId { get; set; }
-    public decimal FinalScore { get; set; }
-    public string? Comment { get; set; }
-    public ReviewStatus Status { get; set; } = ReviewStatus.Pending;
-    public DateTime? ReviewedAt { get; set; }
-}

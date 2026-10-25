@@ -30,11 +30,3 @@ internal sealed class MockRubricScorer : IRubricScorer
         return Task.FromResult(new RubricScore(scores, feedback));
     }
 }
-
-internal static class MockText
-{
-    public static int CountWords(string? text) =>
-        string.IsNullOrWhiteSpace(text)
-            ? 0
-            : text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length;
-}

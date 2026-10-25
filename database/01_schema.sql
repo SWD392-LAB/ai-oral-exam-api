@@ -40,6 +40,47 @@ CREATE TABLE users (
     is_active      BOOLEAN      NOT NULL DEFAULT TRUE,
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
+
+CREATE OR REPLACE FUNCTION fn_users_check_role_codes() RETURNS TRIGGER AS $$
+DECLARE
+    v_role_name roles.name%TYPE;
+BEGIN
+    SELECT r.name INTO v_role_name
+    FROM roles r
+    WHERE r.id = NEW.role_id;
+
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+
+    IF v_role_name = 'Student' THEN
+        IF NEW.student_code IS NULL OR btrim(NEW.student_code) = '' OR NEW.lecturer_code IS NOT NULL THEN
+            RAISE EXCEPTION 'Student user % must have a non-blank student_code and no lecturer_code.', NEW.id
+                USING ERRCODE = 'check_violation', CONSTRAINT = 'ck_users_role_codes';
+        END IF;
+    ELSIF v_role_name = 'Lecturer' THEN
+        IF NEW.lecturer_code IS NULL OR btrim(NEW.lecturer_code) = '' OR NEW.student_code IS NOT NULL THEN
+            RAISE EXCEPTION 'Lecturer user % must have a non-blank lecturer_code and no student_code.', NEW.id
+                USING ERRCODE = 'check_violation', CONSTRAINT = 'ck_users_role_codes';
+        END IF;
+    ELSIF v_role_name = 'Administrator' THEN
+        IF NEW.student_code IS NOT NULL OR NEW.lecturer_code IS NOT NULL THEN
+            RAISE EXCEPTION 'Administrator user % must not have student_code or lecturer_code.', NEW.id
+                USING ERRCODE = 'check_violation', CONSTRAINT = 'ck_users_role_codes';
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'User % has an unsupported role for role-code validation.', NEW.id
+            USING ERRCODE = 'check_violation', CONSTRAINT = 'ck_users_role_codes';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER ck_users_role_codes
+BEFORE INSERT OR UPDATE ON users
+FOR EACH ROW EXECUTE FUNCTION fn_users_check_role_codes();
+
 CREATE INDEX ix_users_role ON users(role_id);
 CREATE UNIQUE INDEX ux_users_email ON users (lower(email));
 
@@ -50,6 +91,7 @@ CREATE TABLE audit_logs (
     action         VARCHAR(100) NOT NULL,
     target_entity  VARCHAR(100) NOT NULL,
     target_id      UUID,                    -- not in the class diagram; kept so a log points at the exact row
+    description    VARCHAR(500),
     created_at     TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_audit_user ON audit_logs(user_id);
@@ -138,6 +180,65 @@ CREATE TABLE rubric_criteria (
     UNIQUE (rubric_id, order_no)
 );
 
+CREATE OR REPLACE FUNCTION assert_rubric_has_criteria(p_rubric_id UUID) RETURNS VOID AS $$
+DECLARE
+    criterion_count BIGINT;
+    calculated_max_score NUMERIC;
+    stored_max_score NUMERIC(5,2);
+BEGIN
+    SELECT max_score INTO stored_max_score FROM rubrics WHERE id = p_rubric_id;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+
+    SELECT COUNT(*), COALESCE(SUM(max_points), 0)
+    INTO criterion_count, calculated_max_score
+    FROM rubric_criteria
+    WHERE rubric_id = p_rubric_id;
+
+    IF criterion_count = 0 THEN
+        RAISE EXCEPTION 'Rubric % must have at least one criterion.', p_rubric_id
+            USING ERRCODE = '23514';
+    END IF;
+    IF calculated_max_score <= 0 THEN
+        RAISE EXCEPTION 'Rubric % must have a positive total max score.', p_rubric_id
+            USING ERRCODE = '23514';
+    END IF;
+    IF stored_max_score IS DISTINCT FROM calculated_max_score THEN
+        RAISE EXCEPTION 'Rubric % max_score does not match its criteria.', p_rubric_id
+            USING ERRCODE = '23514';
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION check_rubric_criteria_constraints() RETURNS TRIGGER AS $$
+BEGIN
+    IF TG_TABLE_NAME = 'rubrics' THEN
+        IF TG_OP <> 'DELETE' THEN
+            PERFORM assert_rubric_has_criteria(NEW.id);
+        END IF;
+    ELSE
+        IF TG_OP <> 'INSERT' THEN
+            PERFORM assert_rubric_has_criteria(OLD.rubric_id);
+        END IF;
+        IF TG_OP <> 'DELETE' THEN
+            PERFORM assert_rubric_has_criteria(NEW.rubric_id);
+        END IF;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE CONSTRAINT TRIGGER trg_rubrics_require_criteria
+AFTER INSERT OR UPDATE OR DELETE ON rubrics
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION check_rubric_criteria_constraints();
+
+CREATE CONSTRAINT TRIGGER trg_rubric_criteria_require_parent
+AFTER INSERT OR UPDATE OR DELETE ON rubric_criteria
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION check_rubric_criteria_constraints();
+
 -- ---------------------------------------------------------------------
 -- F3 - AI Viva Interview
 -- ---------------------------------------------------------------------
@@ -157,16 +258,17 @@ CREATE TABLE participants (
 CREATE INDEX ix_participants_student ON participants(student_id);
 
 -- ERD: INTERVIEW ATTEMPT  (PARTICIPANT 1 --< 0..* "makes")
--- Business rule (diagram note): one attempt per participant -> UNIQUE (participant_id).
+-- A participant may have multiple attempts.
 CREATE TABLE interview_attempts (
     id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    participant_id  UUID        NOT NULL UNIQUE REFERENCES participants(id) ON DELETE CASCADE,
+    participant_id  UUID        NOT NULL REFERENCES participants(id) ON DELETE CASCADE,
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     status          VARCHAR(20) NOT NULL DEFAULT 'InProgress'
                     CHECK (status IN ('InProgress', 'PendingReview', 'Finalized')),
     CHECK (completed_at IS NULL OR completed_at >= started_at)
 );
+CREATE INDEX ix_interview_attempts_participant ON interview_attempts(participant_id);
 
 -- ERD: QUESTION RESPONSE  (ATTEMPT 1 --< 0..* "contains", QUESTION 1 --< 0..* "is answered in")
 -- A question not reached before the session closes has no row here and counts as 0.

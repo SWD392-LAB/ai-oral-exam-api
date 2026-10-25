@@ -1,0 +1,14 @@
+namespace AiOralExam.Modules.Interview.Contracts;
+
+// Matches the CHECK constraints in database/01_schema.sql
+
+/// <summary>Attempt status (interview_attempts.status).</summary>
+public enum AttemptStatus
+{
+    /// <summary>The student is taking the exam.</summary>
+    InProgress,
+    /// <summary>Finished; the AI has suggested scores and the lecturer has to review them.</summary>
+    PendingReview,
+    /// <summary>The lecturer has confirmed the final score - only now can the student see the report.</summary>
+    Finalized
+}

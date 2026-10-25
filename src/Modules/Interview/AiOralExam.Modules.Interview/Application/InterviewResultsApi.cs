@@ -22,6 +22,28 @@ internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewRes
         return attempts.Select(ToResult).ToList();
     }
 
+    public async Task<IReadOnlyList<AttemptCounts>> GetAttemptCountsAsync(
+        IReadOnlyCollection<Guid> sessionIds, CancellationToken ct = default)
+    {
+        if (sessionIds.Count == 0)
+            return [];
+
+        var groupedCounts = await db.InterviewAttempts.AsNoTracking()
+            .Where(a => sessionIds.Contains(a.Participant.ExamSessionId))
+            .GroupBy(a => a.Participant.ExamSessionId)
+            .Select(g => new AttemptCounts(
+                g.Key,
+                g.Count(a => a.Status == AttemptStatus.PendingReview || a.Status == AttemptStatus.Finalized),
+                g.Count(a => a.Status == AttemptStatus.PendingReview),
+                g.Count(a => a.Status == AttemptStatus.InProgress)))
+            .ToListAsync(ct);
+        var countsBySession = groupedCounts.ToDictionary(x => x.ExamSessionId);
+
+        return sessionIds.Select(id => countsBySession.TryGetValue(id, out var counts)
+            ? counts
+            : new AttemptCounts(id, 0, 0, 0)).ToList();
+    }
+
     private IQueryable<InterviewAttempt> Query() => db.InterviewAttempts.AsNoTracking()
         .Include(a => a.Participant)
         .Include(a => a.Review)

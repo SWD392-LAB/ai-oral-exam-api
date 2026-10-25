@@ -11,6 +11,13 @@
 GET {{host}}/api/interview/my-sessions
 Authorization: Bearer {{token}}
 
+### Update my profile (own account)
+PATCH {{host}}/api/auth/me
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "fullName": "Updated Full Name" }
+
 ### Start an attempt (SWD392 session, currently open)
 POST {{host}}/api/interview-attempts
 Authorization: Bearer {{token}}
@@ -27,3 +34,20 @@ Content-Type: application/json
 
 ### Health check
 GET {{host}}/health
+
+### Create a user (administrator)
+POST {{host}}/api/admin/users
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "fullName": "Han Hoang Giang",
+  "email": "new.student@aives.edu.vn",
+  "role": "Student",
+  "studentCode": "SE180099",
+  "lecturerCode": null
+}
+
+### Resend a user's password setup email (administrator; replace USER_ID)
+POST {{host}}/api/admin/users/USER_ID/setup-link
+Authorization: Bearer {{token}}
