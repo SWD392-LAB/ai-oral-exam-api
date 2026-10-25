@@ -1,94 +1,87 @@
-# Plan triển khai BE Feature 1 — Ngân hàng câu hỏi và rubric
+# Plan triển khai BE Feature 1 — Ngân hàng câu hỏi và rubric nền tảng
 
-Cập nhật: 2026-10-25; đối chiếu repo tại commit `05d7ef3`. Đây là plan, các mục chưa có code được ghi rõ là dự kiến.
-Sequence diagram đề xuất: [F1 – Question Bank and RAG](SequenceDiagram-F1-Question-Bank-RAG.drawio).
+Cập nhật: 2026-10-25; đối chiếu repo tại `793cd73` và feedback của nhóm cho PR #7. Đây là **thiết kế dự kiến**; code/schema hiện tại vẫn dùng rubric theo từng câu hỏi.
 
-## 1. Yêu cầu và kết quả cần đạt
+Sequence diagram: [F1 – AI Question Generation and Review](SequenceDiagram-F1-Question-Bank-RAG.drawio). Luồng cấu hình và publish phiên dùng [diagram F7](SequenceDiagram-F7-Exam-Configuration.drawio).
 
-Giảng viên tạo, nhập hàng loạt hoặc dùng AI sinh câu hỏi vấn đáp theo môn học/chủ đề từ giáo trình và slide bài giảng (RAG trên tài liệu môn học). Mỗi câu có nhãn mức độ nhận thức Bloom: `Remember` (nhớ), `Understand` (hiểu), `Apply` (vận dụng), `Analyze` (phân tích), và một rubric gồm tiêu chí + điểm tối đa. Câu AI sinh là **bản nháp**: giảng viên xem nguồn, sửa, duyệt hoặc loại bỏ trước khi đưa vào ngân hàng chính thức. Câu chính thức mới được chọn cho phiên thi; AI F3 chấm dựa trên rubric đã gắn vào phiên.
+## 1. Yêu cầu đã chốt theo feedback
 
-Phạm vi F1 là ngân hàng, tài liệu học phần, RAG, luồng duyệt và đưa câu hỏi vào phiên thi. F3 xử lý vấn đáp/chấm gợi ý; F6 đọc kết quả. Quyền tạo/quản lý thuộc lecturer được phân công course hoặc administrator theo chính sách hiện có.
+Hệ thống có **một rubric dùng chung do platform sở hữu**, tồn tại trước khi tạo câu hỏi và áp dụng cho mọi môn/câu. Giảng viên không tạo, sửa, import tiêu chí hoặc điểm rubric. Bản rubric hiệu lực được seed hoặc administrator quản lý; mỗi lần thay đổi tạo **phiên bản bất biến** để bài thi cũ giữ nguyên cách chấm.
 
-## 2. Repo hiện có và khoảng trống
+Giảng viên cung cấp tài liệu môn học hoặc một số câu hỏi mẫu, chọn course/chủ đề/mức Bloom (`Remember`, `Understand`, `Apply`, `Analyze`). AI dùng nội dung nguồn **và rubric chung** để đề xuất câu hỏi. Câu AI sinh là Draft; giảng viên sửa, duyệt hoặc loại bỏ trước khi đưa vào ngân hàng chính thức. Câu Approved mới được chọn cho phiên thi Draft. F3 chấm bằng phiên bản rubric đã chốt cho phiên, không đọc rubric mới nhất giữa bài thi.
 
-| Thành phần | Hiện trạng | Khoảng trống so với F1 |
+F1 sở hữu ngân hàng, nguồn tài liệu, RAG và duyệt câu. AccessConfig quản lý phiên thi và rubric nền tảng; Interview (F3) chấm; Reporting (F6) hiển thị kết quả đã lưu.
+
+## 2. Repo hiện tại và migration cần làm
+
+| Thành phần hiện có | Sự thật trong repo | Thay đổi cần thiết |
 | --- | --- | --- |
-| `questions`, `rubrics`, `rubric_criteria` trong `database/01_schema.sql` | `questions.exam_session_id` bắt buộc; rubric gắn một câu hỏi trong phiên; max score được trigger tính từ criteria | Chưa có câu hỏi ở cấp course để tái sử dụng, chủ đề, Bloom, trạng thái duyệt, nguồn tài liệu hoặc lịch sử revision |
-| `QuestionsController`/`QuestionService` | CRUD và `POST /api/exam-sessions/{sessionId}/questions/import` nhận danh sách JSON `{orderNo, content}`; chỉ sửa phiên Draft | Import này chỉ nhập vào **một phiên**, không phải ngân hàng; không nhập rubric/Bloom/chủ đề; không có file import |
-| `RubricsController`/`RubricService` | CRUD rubric cho câu trong phiên Draft; mỗi criterion có `description`, `maxPoints`, `orderNo` | Chưa có rubric ở ngân hàng để dùng lại; không có quy trình duyệt câu AI |
-| `ExamSessionCommands.PublishAsync` | Yêu cầu ít nhất một câu, mọi câu có rubric hợp lệ và có participant | Chưa có thao tác chọn câu chính thức từ ngân hàng |
-| `IExamConfigurationApi` | F3 nhận câu hỏi + criterion theo thứ tự của phiên, có ID riêng | Cần giữ contract này ổn định; F3 không đọc bank draft/RAG trực tiếp |
-| AI/config/storage | Có AI settings ở AccessConfig; F3 chỉ đăng ký mock; Docker chưa có object storage/vector service | Chưa có ingest tài liệu, retrieval, generation adapter, storage private, bằng chứng trích nguồn |
+| `questions`, `rubrics`, `rubric_criteria` | Câu hỏi thuộc `exam_session_id`; một rubric gắn với một câu, criterion được lecturer sửa trong phiên Draft | Tạo bank thuộc course và platform rubric version độc lập; ngừng cho lecturer tạo/sửa rubric khi luồng mới sẵn sàng |
+| `QuestionsController` | CRUD/import JSON `{orderNo, content}` vào một phiên Draft | Thêm bank API theo course; import bank không nhận rubric |
+| `RubricsController`, `RubricService` | API ghi rubric theo câu đang hoạt động | Chuyển lecturer sang read-only platform rubric; lập lộ trình deprecate/khóa route ghi sau migration và cập nhật FE |
+| `ExamSessionCommands.PublishAsync` | Yêu cầu mọi câu có rubric riêng và ít nhất một participant | Yêu cầu câu + participant + **active platform rubric version**, pin version vào session khi publish |
+| `IExamConfigurationApi` và F3 | Trả `QuestionInfo.Criteria` và `MaxScore` theo từng câu; `criterion_scores` FK tới criterion cũ | Với session mới, project criteria từ rubric version đã pin; bảo toàn đường đọc dữ liệu lịch sử |
+| Storage/AI | Chưa có ingest, retrieval, object storage; F3 đang dùng mock | Thêm adapter sinh câu hỏi riêng cho F1, không dùng mock scorer của F3 làm generation |
 
-Nguồn kiểm tra: các file tương ứng ở `src/Modules/AccessConfig`, `src/Modules/Interview`, `database/01_schema.sql`, `docker-compose.yml`. CRUD question/rubric theo phiên hiện có chưa đáp ứng ngân hàng câu hỏi F1.
+Không sửa các bảng sản xuất theo giả định diagram đã triển khai. `README`, ERD và schema hiện phản ánh mô hình cũ cho đến PR migration; mọi thay đổi phải có script nâng cấp tiến lên và test với dữ liệu cũ.
 
-### Cách đọc sequence diagram F1
+## 3. Rubric chung và tương thích F3
 
-| Nhánh trong diagram | Mốc trong plan | Điều kiện chuyển bước |
-| --- | --- | --- |
-| A: tạo câu thủ công → Draft rubric/Bloom → duyệt → chọn cho phiên | F1-A | Chỉ revision Approved cùng course được copy vào phiên Draft; bản copy có ID riêng để F3 dùng |
-| B: import JSON → validate cả batch → lưu Draft | F1-B | Dòng sai trả lỗi trước transaction; không tạo dữ liệu nửa chừng; từng câu vẫn cần lecturer duyệt |
-| C: upload → ingest chunk/citation → retrieve → LLM → AI Draft → lecturer sửa/duyệt/loại | F1-C, sau đó F1-A để attach | Chỉ truy hồi tài liệu đúng course; thiếu nguồn thì dừng trước LLM; AI không tự đưa câu vào ngân hàng chính thức |
+- Tạo `platform_rubric_versions` và `platform_rubric_criteria`: chỉ một version active, tiêu chí có `order_no`, `description`, `max_points > 0`; tổng điểm một câu dương, trong giới hạn kiểu điểm. Seed version đầu tiên; chỉ administrator có quyền tạo/kích hoạt version mới. Lecturer chỉ đọc qua `GET /api/platform-rubric` (route dự kiến).
+- `exam_sessions.platform_rubric_version_id` được pin khi publish. Mọi câu trong cùng phiên dùng **cùng bộ criteria**. `QuestionInfo.Criteria` tiếp tục trả danh sách per question để không buộc F3 đổi giao diện contract, nhưng nguồn là version của session, không phải rubric do lecturer tạo cho từng câu.
+- `QuestionInfo.MaxScore = SUM(platform_rubric_criteria.max_points)` cho từng câu; `ExamSession.TotalMaxScore = số câu × MaxScore`. Kiểm tra tổng phiên nằm trong giới hạn cột `score_reviews.final_score` hiện tại hoặc nâng kiểu cột trong cùng migration.
+- `criterion_scores` hiện FK tới `rubric_criteria` cũ. Migration phải cho điểm mới tham chiếu `platform_rubric_criteria` (ví dụ cột `platform_criterion_id` và CHECK đúng một trong hai FK); điểm cũ tiếp tục đọc theo FK cũ. F3 scorer dùng ID criterion của version đã pin. Test báo cáo F6 cho cả session cũ và mới.
+- Chốt phạm vi khóa route ghi rubric theo câu ở lượt rollout cùng FE. Không để lecturer ghi rubric cũ sau khi session mới đã dùng rubric nền tảng. Không xóa rubric/criterion cũ khi attempt lịch sử còn tham chiếu.
 
-Diagram mô tả luồng **dự kiến**, không phải các API/worker đã tồn tại. Lifeline
-`BankService`, `Ingest / Retrieval` và `ObjectStorage` cần được triển khai;
-`PostgreSQL` là nơi lưu trạng thái bền vững. API cho F1 nằm trong AccessConfig,
-còn F3 tiếp tục đọc câu/rubric snapshot qua `IExamConfigurationApi`.
+## 4. F1-A — Ngân hàng thủ công, duyệt và đưa vào phiên
 
-## 3. Mô hình và quy tắc dữ liệu đề xuất
+- `question_bank_items` thuộc course, có topic, Bloom, content, origin (`Manual/Import/Ai`), trạng thái (`Draft/Approved/Rejected/Archived`), actor/timestamps. `question_bank_revisions` lưu phiên bản nội dung bất biến và provenance; **không có rubric/criteria trên item hoặc revision**.
+- API dự kiến dưới `/api/courses/{courseId}/question-bank`: GET list/detail, POST Draft, PUT Draft revision, POST `/{itemId}/approve`, POST `/{itemId}/reject`. Body chỉ có câu hỏi, topic, Bloom và metadata nguồn; không nhận điểm/criteria.
+- `POST /api/exam-sessions/{sessionId}/questions/from-bank`: kiểm tra lecturer được phân công, item Approved cùng course và session Draft; copy **nội dung câu hỏi** vào `questions`, ghi `source_bank_revision_id` nullable. Không copy rubric vào từng câu. Khi publish, F7 pin platform rubric version cho toàn phiên.
+- Route tạo/import câu trực tiếp vào phiên hiện có là đường legacy; khi FE chuyển
+  sang bank, khóa quyền lecturer trên đường đó hoặc chuyển request thành Draft
+  bank để không bỏ qua bước duyệt/chọn câu Approved. Giữ đường đọc dữ liệu cũ.
+- Câu đã publish và attempt cũ không đổi khi bank item bị sửa/archived hoặc rubric active đổi. Câu session cũ vẫn giữ dữ liệu rubric lịch sử. Quy tắc sửa bản copy trong Draft và xử lý attach trùng cần chốt trước khi code API.
+- Validate content/topic, bốn mức Bloom, trạng thái và quyền course. Audit create/edit/approve/reject/attach. Test race duyệt/attach, cross-course, cùng revision vào nhiều phiên.
 
-- Thêm `question_bank_items` thuộc `course_id` với `topic`, `bloom_level`, `content`, trạng thái `Draft/Approved/Rejected/Archived`, `origin` (`Manual/Import/Ai`), người tạo/duyệt và timestamps. Mỗi item có rubric/criteria tại bank, tổng điểm dương và không quá `999.99` như rubric hiện hành. Chỉ item `Approved` có rubric hợp lệ mới được thêm vào phiên.
-- Lưu revision hoặc bản nội dung/rubric đã duyệt bất biến (`question_bank_revisions` + criteria tương ứng); mọi lần sửa câu đã duyệt tạo bản nháp revision mới, không thay đổi revision đã được dùng. Ghi nguồn AI, model/prompt version và chứng cứ trích dẫn trong metadata nội bộ.
-- Tài liệu course (`course_materials`) lưu tên, loại, object key private, checksum, upload/ingest status và phiên bản; chunk (`material_chunks`) lưu vị trí trang/slide, đoạn văn và chỉ mục truy hồi. Chỉ tài liệu thuộc đúng course, ingest thành công và được phép dùng mới vào retrieval. Chọn định dạng PDF/PPTX trước, ghi rõ giới hạn file/scan/slide và xử lý extract lỗi.
-- Đưa bank revision đã duyệt vào phiên **Draft** bằng cách copy nội dung và rubric/criteria sang `questions`/`rubrics`/`rubric_criteria` hiện có, tạo ID mới; `questions` thêm `source_bank_revision_id` nullable để truy vết. Có thể copy topic/Bloom nếu API phiên cần hiển thị. Sau publish, sửa/loại ngân hàng không thay đổi câu, criterion ID hoặc điểm của phiên và attempt cũ. Không dùng FK cascade từ bank sang câu phiên.
-- Dữ liệu câu hỏi/rubric đang có trong các phiên được giữ nguyên. Không tự chuyển câu ở phiên Published/Closed thành bank item; nếu muốn tái sử dụng, làm thao tác “lưu vào ngân hàng” rõ ràng với kiểm tra quyền và chống trùng.
-- Mỗi thay đổi schema cập nhật `database/01_schema.sql`, entity/EF mapping và một script nâng cấp tiến lên cho DB đang có dữ liệu. Không chạy lại `01_schema.sql` hoặc reset volume trên DB hiện hữu.
+**Nghiệm thu:** lecturer tạo và duyệt câu không nhập rubric; đưa câu vào hai phiên Draft; publish pin version chung; F3 nhận cùng criteria/max cho mọi câu trong phiên; thay đổi bank/rubric active sau đó không làm đổi bài cũ.
 
-## 4. Mốc F1-A — Ngân hàng thủ công và rubric
+## 5. F1-B — Import câu hỏi vào ngân hàng
 
-API đề xuất dưới `/api/courses/{courseId}/question-bank`:
+- `POST /api/courses/{courseId}/question-bank/import` nhận JSON gồm content, topic, Bloom và tùy chọn câu mẫu/source reference; **không nhận rubric criteria**. Import vào session hiện có chỉ là API cũ, không đáp ứng bank import.
+- Validate toàn batch trước transaction: dòng rỗng, Bloom sai, trùng trong batch/bank, course không có quyền; trả lỗi theo dòng/cột. Batch hợp lệ lưu toàn bộ dưới trạng thái Draft. Nếu cần CSV/XLSX, chốt template/giới hạn file riêng.
+- Lecturer xem/sửa/duyệt từng Draft. Không auto-approve hoặc auto-attach sau import.
 
-| Method | Route | Hành vi |
-| --- | --- | --- |
-| GET | `/` và `/{itemId}` | Lọc/search theo topic, Bloom, trạng thái, origin; trả rubric và revision |
-| POST | `/` | Tạo draft thủ công cùng rubric hoặc lưu draft rồi cập nhật rubric |
-| PUT | `/{itemId}` | Sửa draft/revision draft, gồm nội dung, topic, Bloom, criteria |
-| POST | `/{itemId}/approve` | Duyệt revision hợp lệ; ghi người và giờ duyệt |
-| POST | `/{itemId}/reject` | Loại draft AI/nhập với lý do; không xóa cứng provenance |
-| POST | `/api/exam-sessions/{sessionId}/questions/from-bank` | Chọn revision Approved của cùng course, copy atomically vào phiên Draft, xác định `orderNo` |
+**Nghiệm thu:** import hợp lệ tạo Draft có Bloom/topic; import lỗi không lưu nửa chừng; lecturer course khác không thao tác được; không có ô nhập tiêu chí/điểm rubric.
 
-- Dùng role Lecturer/Admin **và** kiểm tra lecturer được phân công course ở service, giống QuestionService hiện có. Không cho cross-course attach, sửa published session, hoặc chọn draft/rejected. Audit create/update/approve/reject/attach.
-- Validate Bloom chỉ thuộc bốn mức trên; topic/content không rỗng; criterion có thứ tự duy nhất, `maxPoints > 0`, tổng điểm dương `<= 999.99`; không trả lỗi DB thô. Attach idempotent theo revision + session hoặc trả `409` rõ ràng khi trùng order/item theo policy được chốt.
-- Giữ route CRUD câu hỏi/rubric theo phiên để tương thích FE hiện tại; plan F1-A cần quyết định có cho chỉnh bản copy trong phiên Draft hay buộc chọn lại revision. Nếu cho chỉnh, bản copy trở thành snapshot riêng, vẫn không sửa bank.
+## 6. F1-C — Sinh câu hỏi bằng AI từ nguồn
 
-**Nghiệm thu:** giảng viên tạo câu theo course/chủ đề/Bloom, rubric hợp lệ, duyệt và thêm vào hai phiên Draft; sửa ngân hàng hoặc phiên thứ nhất không đổi phiên thứ hai; F3 đọc đúng nội dung/criterion qua contract cũ.
+- Demo trước: `IQuestionGenerator` mock/deterministic nhận câu mẫu, topic/Bloom và **platform rubric version** để tạo Draft cho giảng viên duyệt. Đây là demo luồng nghiệp vụ, không được trình bày như RAG thật.
+- Giai đoạn RAG thật: upload PDF/PPTX vào private storage; `course_materials` lưu checksum/version/trạng thái ingest, `material_chunks` lưu page/slide citation. Job ingest bền qua restart; retrieval filter course và material IDs. Không có bằng chứng phù hợp thì trả `insufficient_source`, không gọi LLM hoặc bịa citation.
+- `POST /api/courses/{courseId}/question-bank/generations` nhận topic, Bloom, số câu và source IDs; backend tự đọc rubric active (hoặc version được pin cho job), truy hồi nguồn rồi gọi LLM. Output có cấu trúc gồm câu hỏi/Bloom/citation; **AI không sinh hay sửa tiêu chí rubric**. Validate nội dung, citation thuộc context, trùng câu, số lượng; lưu Draft cùng model/prompt/material/rubric version cho truy vết.
+- Giảng viên sửa, approve/reject từng Draft trước khi attach. Chống prompt injection từ tài liệu; không log tài liệu private. Thay/xóa tài liệu không âm thầm sửa câu đã duyệt hoặc câu trong phiên.
 
-## 5. Mốc F1-B — Import ngân hàng
+**Nghiệm thu:** từ tài liệu đúng course có Draft kèm trang/slide trích dẫn; không lẫn course; không có nguồn thì không sinh; chỉ câu được lecturer duyệt mới attach được.
 
-- Thiết kế `POST /api/courses/{courseId}/question-bank/import` cho danh sách JSON có question, topic, Bloom và rubric criteria; nếu cần CSV/XLSX, chốt template/version, giới hạn kích thước và format ở bước này. Import hiện tại theo phiên tiếp tục hoạt động nhưng không được coi là F1 import đầy đủ.
-- Validate toàn bộ batch trước khi ghi; trả lỗi theo dòng/cột, phát hiện câu rỗng, Bloom sai, rubric thiếu/điểm sai, trùng trong batch và policy trùng với bank. Chọn transaction all-or-nothing cho batch nhỏ; nếu file lớn cần job có trạng thái và báo cáo riêng.
-- Tất cả item nhập là Draft; giảng viên xem/chỉnh/duyệt trước khi attach. Không auto-publish vào bank chính thức chỉ vì import thành công.
+## 7. Diagram, kiểm thử và thứ tự PR
 
-**Nghiệm thu:** import hợp lệ tạo draft đầy đủ rubric/Bloom; dòng lỗi chỉ rõ vị trí và không sinh dữ liệu nửa chừng; lecturer course khác không xem/sửa được.
+[Diagram F1](SequenceDiagram-F1-Question-Bank-RAG.drawio) mô tả `alt` nguồn câu mẫu/tài liệu, ingest bất đồng bộ, đọc platform rubric trước generation, `alt` thiếu/đủ bằng chứng, lecturer reject/approve và `opt` attach câu Approved. Diagram chỉ chứa workflow nghiệp vụ; CRUD list/detail nằm trong API contract.
 
-## 6. Mốc F1-C — Tài liệu và RAG sinh câu hỏi
+Mốc tương đối dưới đây lấy **T0 = ngày bắt đầu sprint do team chốt**; PO/tech lead
+cần gán người và ngày lịch cụ thể trước khi nhận PR.
 
-- API đề xuất: upload/list/delete tài liệu ở `/api/courses/{courseId}/materials`; `POST /api/courses/{courseId}/question-bank/generations` nhận topic, Bloom mục tiêu, số câu, tài liệu được phép; GET job/draft để FE hiển thị nguồn và tiến độ. Upload kiểm tra quyền, MIME/file signature, kích thước, checksum; object storage private, chỉ cấp quyền đọc có kiểm soát.
-- Ingest tách PDF/slide thành đoạn có page/slide citation, version theo checksum. Job bền vững qua restart, retry giới hạn; thay/xóa tài liệu vô hiệu chỉ mục tương ứng, giữ provenance cần thiết của câu đã duyệt theo policy lưu trữ được chốt. Retrieval luôn filter `course_id` và material IDs; test không lẫn dữ liệu course khác.
-- Chọn retrieval adapter và LLM sau thử nghiệm mẫu (chất lượng tiếng Việt, PDF/PPTX, độ trễ/quota/chi phí). Có thể bắt đầu bằng PostgreSQL full-text cho chunk; nếu cần semantic retrieval, thêm embedding/index sau khi xác nhận hạ tầng và migration. Prompt đưa đoạn trích và yêu cầu output có cấu trúc; validate câu hỏi, Bloom, rubric, tổng điểm, citation ID trỏ đúng chunk đã truy hồi. Không có nguồn phù hợp thì báo không đủ căn cứ, không tự bịa citation.
-- AI chỉ tạo Draft; giảng viên duyệt/chỉnh/loại từng câu. Lưu model/prompt version, material version, chunk IDs và trích dẫn để truy vết; không đưa nội dung tài liệu private vào log. Hạn chế prompt injection từ tài liệu và tránh sinh câu hỏi chứa nguyên đáp án/PII.
+| PR đề xuất | Phụ trách theo vai trò | Ước lượng sơ bộ | Deadline |
+| --- | --- | --- | --- |
+| F1-A1: platform rubric version, migration/contract F3/F7, seed và khóa ghi rubric lecturer | BE AccessConfig + Interview | 3–5 ngày làm việc | Đề xuất T0 + 5 ngày làm việc |
+| F1-A2: bank Draft/revision, review, attach câu vào session | BE AccessConfig | 3–5 ngày làm việc | Đề xuất T0 + 10 ngày làm việc |
+| F1-B: import JSON với lỗi theo dòng và transaction | BE AccessConfig | 1–2 ngày làm việc | Đề xuất T0 + 12 ngày làm việc |
+| F1-C demo: mock generation từ câu mẫu + rubric chung | BE AI/AccessConfig | 1–2 ngày làm việc | Đề xuất T0 + 14 ngày làm việc |
+| F1-C production: material storage/ingest/RAG/provider thật | BE AI + hạ tầng | Ước lượng sau spike provider/tài liệu | Cần chốt sau spike |
 
-**Nghiệm thu:** từ tài liệu đúng course sinh draft có citation trang/slide, Bloom và rubric hợp lệ; lecturer sửa/duyệt rồi attach; câu bị reject không dùng được; thay tài liệu không âm thầm sửa câu phiên đã phát hành.
+Ước lượng là đề xuất để lập sprint, chưa phải cam kết của người được phân công. **Demo tối thiểu:** F1-A1/A2, F1-B và F1-C mock; giảng viên duyệt trước attach. **Hoàn chỉnh:** RAG thật, citation kiểm chứng, migration/bảo mật và test PostgreSQL. CI dùng fake storage/LLM; smoke test provider/tài liệu riêng. Không chạy lại `database/01_schema.sql` trên DB đang có dữ liệu.
 
-## 7. Kiểm thử, tích hợp và thứ tự
+## 8. Quyết định còn mở
 
-- Unit: validation Bloom/rubric, quyền course, trạng thái duyệt, snapshot attach, import lỗi từng dòng, parse output AI. HTTP contract: role, route, payload/error, publish session sau attach.
-- PostgreSQL integration riêng: FK/unique/transaction, attach đồng thời, revision, publish với rubric, migration từ dữ liệu cũ. Dùng fake retrieval/LLM/storage trong CI; smoke test provider và tài liệu mẫu riêng, đo citation đúng/không lẫn course.
-- Cập nhật `AccessConfig` domain/service/controller/Contracts khi cần, SQL forward upgrade, OpenAPI/README và mẫu import cho FE. Tránh để module Interview tham chiếu implementation ngân hàng.
-- Thứ tự: **F1-A → F1-B → F1-C**. F1-A có thể làm song song F3 lifecycle; F3 provider thật chỉ cần rubric snapshot qua contract hiện tại. F1 Done khi giảng viên tạo/import/sinh bằng RAG, duyệt trước khi đưa vào ngân hàng, chọn cho phiên Draft và thi/chấm qua F3 mà dữ liệu lịch sử không đổi.
-
-## 8. Điểm cần chốt với nhóm trước khi code tương ứng
-
-- Import chỉ JSON hay cần CSV/XLSX; giới hạn batch/file và template FE.
-- Chính sách sửa bản copy trong phiên Draft; cách xử lý item/revision đã dùng khi lecturer archive hoặc yêu cầu xóa tài liệu.
-- Storage, LLM và retrieval/embedding provider, quota/ngân sách, retention tài liệu/chunk và quy định bản quyền đối với giáo trình/slide.
+- Ai seed/quản lý platform rubric sau demo; quy trình version/activate/rollback và cutover route rubric cũ.
+- JSON hay thêm CSV/XLSX, kích thước batch/file, chính sách câu trùng và sửa snapshot trong phiên Draft.
+- LLM, retrieval/embedding, storage, quota/ngân sách, retention và bản quyền giáo trình/slide. Chốt sau spike với tài liệu mẫu.

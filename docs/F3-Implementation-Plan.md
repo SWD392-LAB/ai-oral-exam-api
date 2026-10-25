@@ -1,16 +1,18 @@
 # Plan triển khai BE Feature 3 — AI Viva Interview
 
-Cập nhật: 2026-10-25. Đối chiếu repo tại commit `05d7ef3`.
+Cập nhật: 2026-10-25. Đối chiếu repo tại commit `793cd73` và feedback PR #7.
 
 Đây là kế hoạch cho phần F3 **còn thiếu**. Các mục đã có trong repo được đánh dấu
 rõ ở dưới; chưa khẳng định E2E với provider thật. F1 có [plan riêng](F1-Implementation-Plan.md).
-Sequence diagram gốc: [F3 – AI Viva Interview](SequenceDiagram-F3-AI-Viva-Interview.drawio).
-Các PR dưới đây bám theo thứ tự thông điệp trong diagram.
+Sequence diagrams: [thi và duyệt điểm](SequenceDiagram-F3-AI-Viva-Interview.drawio),
+[giảng viên xem kết quả/thống kê/xuất bảng điểm](SequenceDiagram-F3-Lecturer-Results.drawio).
+Các PR dưới đây bám theo thứ tự thông điệp trong hai diagram.
 
 ## 1. Mục tiêu và phạm vi
 
 F3 hoàn thành khi sinh viên thi vấn đáp bằng microphone, AI đọc câu hỏi và hỏi phụ,
-BE lưu audio/hội thoại, đề xuất điểm theo rubric, giảng viên xác nhận điểm cuối,
+BE lưu audio/hội thoại, đề xuất điểm theo **rubric chung của platform đã pin cho
+phiên thi**, giảng viên xác nhận điểm cuối,
 và F6 đọc được kết quả của bài thi mới.
 
 Các hành vi bắt buộc:
@@ -29,7 +31,7 @@ Các hành vi bắt buộc:
 - Sinh viên không nhận điểm AI trước khi giảng viên xác nhận.
 
 BE dùng modular monolith hiện tại. F3 ghi các bảng Interview; AccessConfig sở
-hữu cấu hình phiên thi/câu hỏi/rubric và AI settings; F6 chỉ đọc kết quả. Giao
+hữu cấu hình phiên thi/câu hỏi và rubric nền tảng, AI settings; F6 chỉ đọc kết quả. Giao
 tiếp giữa modules qua Contracts. F1 đưa câu đã duyệt vào phiên bằng snapshot;
 F3 không đọc bản nháp AI hay tài liệu RAG trong lúc thi.
 
@@ -55,19 +57,25 @@ hết giờ câu chỉ chạy khi submit, chưa kiểm tra `EndTime` trong submi
 `ShowAiScoreToStudent` ở default options và `appsettings.json` vẫn là `true`, có
 thể lộ điểm AI trong submit trước khi lecturer duyệt.
 
+**Độ lệch schema với yêu cầu mới:** hiện `rubrics.question_id` và
+`rubric_criteria` là dữ liệu theo câu, lecturer có thể sửa trong phiên Draft.
+F1-A1 sẽ đưa vào platform rubric version do administrator quản lý, pin version
+khi publish và chuyển F3 sang criterion IDs của version đó. Session/attempt cũ
+vẫn đọc rubric cũ; xem mục 3 trong [plan F1](F1-Implementation-Plan.md).
+
 ### Đối chiếu sequence diagram → PR
 
 | Bước trong diagram F3 | PR chịu trách nhiệm | Điều chỉnh khi triển khai |
 | --- | --- | --- |
-| Student bắt đầu; kiểm tra danh sách, giờ phiên; tạo attempt hoặc trả lý do | PR 02 | Diagram ghi “no attempt yet”; giữ resume attempt `InProgress` và `AllowRetake` của repo, chống start đồng thời |
+| Student bắt đầu; kiểm tra danh sách, giờ phiên; tạo attempt hoặc trả lý do | PR 02 | Diagram đã thể hiện resume/retake; chống start đồng thời trên PostgreSQL |
 | Tải câu tiếp theo, tạo `QuestionResponse`/turn | PR 02 | Persist câu hỏi trước khi trả UI/push event; không tạo câu mới sau `EndTime` |
 | TTS câu chính/câu hỏi phụ, phát âm thanh | PR 04, PR 05 | PR 04 phát theo lượt; PR 05 đẩy sự kiện realtime |
 | Ghi âm; dừng bởi submit/deadline/EndTime; gửi audio | PR 02, PR 04, PR 05 | PR 02 chốt deadline/idempotency; PR 04 upload/storage; PR 05 stream/chunk/reconnect |
 | STT → transcript → lưu turn | PR 04, PR 05 | Lưu audio và marker nhận trước STT; partial transcript chỉ ở PR 05 |
-| Analyzer kiểm tra câu trả lời, quota → LLM hỏi phụ hoặc scorer chấm rubric | PR 03 | Không gọi AI trên partial; lỗi/invalid output có trạng thái retry, không chấm 0 |
+| Analyzer kiểm tra câu trả lời, quota → LLM hỏi phụ hoặc scorer chấm rubric | F1-A1, PR 03 | Criteria của session mới lấy từ platform rubric version đã pin; không gọi AI trên partial, lỗi có trạng thái retry |
 | Hết bài/hết phiên → `PendingReview`; câu chưa tới được tính 0 | PR 02, PR 03 | Không tạo response giả cho câu chưa hỏi; tổng chỉ cộng response đã có |
-| Lecturer mở review, chỉnh điểm/ghi chú rồi xác nhận | PR 01 | Diagram có `ScoreReview Pending` trước confirm; thêm draft API, giữ GET read-only và PUT một bước hiện có |
-| `Approved` + `Finalized`, báo sinh viên điểm đã xác nhận | PR 01, PR 05, PR 06 | Persist trước sự kiện; F6 quyết định nội dung được xem; PR 05 thêm thông báo realtime |
+| Lecturer mở review, chỉnh điểm/ghi chú rồi xác nhận | PR 01 | GET chỉ đọc; tạo `ScoreReview Pending` ở lần lưu Draft đầu tiên, giữ PUT một bước hiện có |
+| `Approved` + `Finalized`, báo sinh viên điểm đã xác nhận | PR 01, PR 05, PR 06 | Persist trước sự kiện; F6 chỉ mô tả luồng feedback của sinh viên; PR 05 thêm thông báo realtime |
 
 Diagram mô tả happy path. Resume/retake, lỗi AI/storage, bảo mật, idempotency,
 worker offline và PostgreSQL concurrency là phần mở rộng bắt buộc của plan;
@@ -207,13 +215,20 @@ deadline; retry không nhân đôi turn/criterion scores; mọi check dùng gi�
 Branch đề xuất: `feat/f3-ai-adapters`.
 
 - Cài provider adapter cho `ILlmService`; triển khai analyzer/scorer dùng adapter.
+- PR này phụ thuộc F1-A1: session mới phải pin một platform rubric version.
+  `IExamConfigurationApi` vẫn trả `QuestionInfo.Criteria` cho mỗi câu nhưng
+  project cùng bộ criteria từ version đã pin; session cũ tiếp tục đọc rubric
+  lịch sử theo câu. Lecturer không truyền/chỉnh rubric ở F3.
 - Analyzer nhận câu chính, rubric, lịch sử lượt hỏi và hạn mức follow-up;
   yêu cầu output có cấu trúc theo `AnswerAnalysis`.
 - Theo hai nhánh `alt` của diagram: chỉ tạo hỏi phụ khi câu trả lời chưa đủ,
   còn quota **và** phiên còn mở; câu đủ hoặc hết quota/hết phiên thì chấm câu
   đã nhận và không tạo hỏi phụ mới. TTS của hỏi phụ thuộc PR 04.
 - Scorer nhận toàn bộ dialogue của một câu chính, trả điểm/nhận xét từng criterion.
-  BE tính tổng; provider không quyết định điểm cuối của attempt.
+  Với session mới, criterion IDs thuộc platform rubric version đã pin. BE tính
+  điểm tối đa một câu bằng tổng `max_points` của version đó, cùng giá trị cho
+  mọi câu; tổng điểm tối đa phiên bằng số câu nhân điểm tối đa một câu. Provider
+  không quyết định điểm cuối của attempt.
 - Validate criterion ID, thiếu/thừa/trùng criterion, range điểm, JSON sai và
   follow-up rỗng. Kết quả không hợp lệ là lỗi cần retry, không âm thầm chấm 0.
 - Lưu câu trả lời trước khi gọi AI. Persist kết quả xử lý một lần; re-check trạng
@@ -229,7 +244,7 @@ Branch đề xuất: `feat/f3-ai-adapters`.
 - Giữ mock để chạy test deterministic; cấu hình triển khai chỉ dùng adapter thật
   sau khi health/config check thành công.
 
-File dự kiến: `Application/Ai/` adapters/analyzer/scorer mới, `AiContracts.cs`,
+File dự kiến: `Application/Ai/` adapters/analyzer/scorer và interfaces tương ứng,
 `InterviewService.cs`, `InterviewModule.cs`, options/config, SQL và F7 contract.
 
 **Nghiệm thu:** một bài text hoàn chỉnh với LLM thật, có câu hỏi phụ đúng quota,
@@ -326,6 +341,16 @@ Branch đề xuất: `test/f3-f6-integration`.
   câu chính → TTS → audio/STT → hỏi phụ hoặc chấm; hoàn thành `PendingReview`;
   mở review → lưu/chỉnh draft → confirm → `Finalized` → thông báo student.
   Thử thêm đường PUT một bước hiện có và trường hợp event đến sau commit.
+- Theo [diagram giảng viên](SequenceDiagram-F3-Lecturer-Results.drawio), kiểm
+  tra list attempt → mở review → confirmed-only statistics → CSV. Controller
+  và service thống kê/xuất file vẫn thuộc Reporting trong code; diagram được
+  đặt dưới F3 vì đây là luồng nghiệp vụ sau khi giảng viên chốt bài.
+- Theo [diagram F6](SequenceDiagram-F6-Feedback-Reporting.drawio), chỉ nghiệm
+  thu luồng sinh viên xem feedback: chưa duyệt chỉ có metadata, Approved mới
+  có hội thoại/điểm. Không suy ra rằng các API lecturer Reporting bị xóa.
+- Test session mới dùng cùng criterion IDs/max của platform rubric version,
+  session cũ vẫn đọc đúng điểm theo rubric cũ; kích hoạt rubric version mới
+  không đổi điểm/giới hạn của attempt lịch sử.
 - E2E nghiệm thu: đăng nhập Keycloak → nhận câu hỏi/TTS → trả lời microphone →
   thấy partial transcript → hỏi phụ → hoàn thành → giảng viên nghe/đọc và duyệt →
   sinh viên xem F6 → lecturer tải CSV và xem statistics.
@@ -337,7 +362,24 @@ Branch đề xuất: `test/f3-f6-integration`.
 ## 10. Thứ tự thực hiện và Definition of Done
 
 `Provider/storage readiness` chạy song song `PR 01 → PR 02` (PR 01 là hardening
-API đã có). Sau đó: `PR 03 → PR 04 → PR 05 → PR 06`.
+API đã có). F1-A1 migration rubric phải xong trước PR 03 và trước khi publish
+session theo quy tắc mới. Sau đó: `PR 03 → PR 04 → PR 05 → PR 06`.
+
+| PR | Phụ trách theo vai trò | Ước lượng sơ bộ | Deadline |
+| --- | --- | --- | --- |
+| PR 01: review Draft/confirm, quyền riêng tư | BE Interview | 2–3 ngày làm việc | Đề xuất T0 + 3 ngày làm việc |
+| PR 02: lifecycle/idempotency/worker | BE Interview + AccessConfig | 3–5 ngày làm việc | Đề xuất T0 + 8 ngày làm việc |
+| PR 03: LLM thật + scoring theo rubric đã pin | BE AI/Interview | Ước lượng sau spike provider | Chốt sau spike |
+| PR 04: voice theo lượt/storage/STT/TTS | BE AI + hạ tầng | Ước lượng sau spike codec/storage | Chốt sau spike |
+| PR 05: streaming/SignalR/reconnect | BE Interview + FE | Ước lượng sau contract FE | Chốt sau contract |
+| PR 06: PostgreSQL E2E/CI/tài liệu | BE + QA | 2–4 ngày làm việc sau PR 05 | Đề xuất PR 05 + 4 ngày làm việc |
+
+T0 là ngày bắt đầu sprint do team chốt. Các owner là **vai trò đề xuất**, chưa
+phân công cá nhân; mốc tương đối và thời lượng không phải cam kết. PO/tech lead
+cần chuyển chúng thành ngày lịch và người phụ trách trước khi nhận PR.
+**Demo tối thiểu:** F1-A1, PR 01–02 với text/mock, giảng viên duyệt,
+sinh viên xem feedback F6 và lecturer xem statistics/CSV đã duyệt. **Hoàn chỉnh:**
+PR 03–06 với provider thật, voice/streaming và kiểm thử PostgreSQL E2E.
 
 Mỗi PR có test phù hợp và build pass trước khi sang mốc tiếp theo. Các regression
 tests của F6 và HTTP contract tests duyệt điểm hiện có phải tiếp tục pass;
