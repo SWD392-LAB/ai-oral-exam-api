@@ -280,7 +280,7 @@
         <mxCell id="seq1_e92" parent="1" style="html=1;verticalAlign=bottom;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;strokeColor=#263238;fontSize=11;fontFamily=Helvetica;" value="44. adjustScore(attemptId, score, comment)" edge="1">
           <mxGeometry relative="1" as="geometry"><mxPoint x="1805" y="2352" as="sourcePoint" /><mxPoint x="455" y="2352" as="targetPoint" /></mxGeometry>
         </mxCell>
-        <mxCell id="seq1_e93" parent="1" style="html=1;verticalAlign=bottom;labelBackgroundColor=#FFFFFF;endArrow=block;endFill=1;strokeColor=#263238;fontSize=11;fontFamily=Helvetica;" value="45. «create» Pending review on first draft save" edge="1">
+        <mxCell id="seq1_e93" parent="1" style="html=1;verticalAlign=bottom;labelBackgroundColor=#FFFFFF;endArrow=open;endSize=8;dashed=1;strokeColor=#2E7D32;fontColor=#2E7D32;fontStyle=1;fontSize=11;fontFamily=Helvetica;" value="45. «create» Pending review on first draft save" edge="1">
           <mxGeometry relative="1" as="geometry"><mxPoint x="455" y="2384" as="sourcePoint" /><mxPoint x="1635" y="2384" as="targetPoint" /></mxGeometry>
         </mxCell>
         <mxCell id="seq1_e97" parent="1" style="html=1;verticalAlign=bottom;labelBackgroundColor=#FFFFFF;endArrow=open;endSize=8;dashed=1;strokeColor=#78909C;fontColor=#455A64;fontSize=11;fontFamily=Helvetica;" value="46. saved" edge="1">
