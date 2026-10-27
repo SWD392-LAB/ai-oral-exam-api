@@ -18,7 +18,7 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
 
     public async Task<RubricTemplateDto> CreateAsync(CreateRubricTemplateRequest request, CancellationToken ct)
     {
-        EnsureManagementRole();
+        EnsureAdministrator();
         var name = ValidateName(request.Name);
         if (request.CourseId == Guid.Empty)
             throw InvalidRequest("courseId", "A course is required.");
@@ -78,6 +78,7 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
 
     public async Task<RubricTemplateDto> UpdateAsync(Guid id, UpdateRubricTemplateRequest request, CancellationToken ct)
     {
+        EnsureAdministrator();
         var name = ValidateName(request.Name);
         var template = await LoadTemplateForManagementAsync(id, ct);
         template.Name = name;
@@ -91,6 +92,7 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
 
     public async Task DeleteAsync(Guid id, CancellationToken ct)
     {
+        EnsureAdministrator();
         var template = await LoadTemplateForManagementAsync(id, ct);
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -118,7 +120,7 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
 
     private async Task<Course> LoadCourseForManagementAsync(Guid courseId, CancellationToken ct)
     {
-        EnsureManagementRole();
+        EnsureAdministrator();
         var course = await db.Courses.Include(x => x.Lecturers)
             .FirstOrDefaultAsync(x => x.Id == courseId, ct) ??
             throw new NotFoundException("course_not_found", "Course not found.");
@@ -174,7 +176,15 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
         if (!currentUser.IsAuthenticated)
             throw new UnauthorizedException("unauthenticated", "You need to sign in.");
         if (!IsAdmin && !currentUser.IsInRole(Roles.Lecturer))
-            throw new ForbiddenException("Only lecturers and administrators can manage rubric templates.");
+            throw new ForbiddenException("Only lecturers and administrators can read rubric templates.");
+    }
+
+    private void EnsureAdministrator()
+    {
+        if (!currentUser.IsAuthenticated)
+            throw new UnauthorizedException("unauthenticated", "You need to sign in.");
+        if (!IsAdmin)
+            throw new ForbiddenException("Only administrators can manage platform rubric templates.");
     }
 
     private static string ValidateName(string name)

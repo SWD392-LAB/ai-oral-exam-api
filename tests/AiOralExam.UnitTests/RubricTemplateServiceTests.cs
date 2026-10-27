@@ -11,11 +11,11 @@ namespace AiOralExam.UnitTests;
 public sealed class RubricTemplateServiceTests
 {
     [Fact]
-    public async Task Assigned_lecturer_can_create_template_with_creator_and_timestamp()
+    public async Task Administrator_can_create_template_with_creator_and_timestamp()
     {
         await using var db = CreateDatabase();
         var (user, course) = await SeedAssignedCourseAsync(db);
-        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id));
+        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id, Roles.Administrator));
 
         var created = await service.CreateAsync(new CreateRubricTemplateRequest("  Oral rubric  ", course.Id),
             CancellationToken.None);
@@ -27,6 +27,26 @@ public sealed class RubricTemplateServiceTests
         Assert.Equal(course.Code, created.CourseCode);
         Assert.Equal("RubricTemplate", Assert.Single(db.AuditLogs).TargetEntity);
         Assert.Single(db.RubricTemplates);
+    }
+
+    [Fact]
+    public async Task Assigned_lecturer_is_read_only_for_rubric_templates()
+    {
+        await using var db = CreateDatabase();
+        var (user, course) = await SeedAssignedCourseAsync(db);
+        var template = NewTemplate(user.Id, course, "Existing");
+        db.RubricTemplates.Add(template);
+        await db.SaveChangesAsync();
+        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id));
+
+        Assert.Single(await service.ListAsync(course.Id, CancellationToken.None));
+        Assert.Equal(template.Id, (await service.GetAsync(template.Id, CancellationToken.None)).Id);
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.CreateAsync(
+            new CreateRubricTemplateRequest("No write", course.Id), CancellationToken.None));
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.UpdateAsync(template.Id,
+            new UpdateRubricTemplateRequest("Changed"), CancellationToken.None));
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.DeleteAsync(template.Id, CancellationToken.None));
+        Assert.Equal("Existing", template.Name);
     }
 
     [Fact]
@@ -151,7 +171,7 @@ public sealed class RubricTemplateServiceTests
     public async Task Create_rejects_blank_names(string name)
     {
         await using var db = CreateDatabase();
-        var service = new RubricTemplateService(db, new TestCurrentUser(Guid.NewGuid()));
+        var service = new RubricTemplateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Administrator));
 
         var exception = await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(
             new CreateRubricTemplateRequest(name, Guid.NewGuid()), CancellationToken.None));
@@ -164,7 +184,7 @@ public sealed class RubricTemplateServiceTests
     public async Task Create_rejects_name_longer_than_schema_limit()
     {
         await using var db = CreateDatabase();
-        var service = new RubricTemplateService(db, new TestCurrentUser(Guid.NewGuid()));
+        var service = new RubricTemplateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Administrator));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(
             new CreateRubricTemplateRequest(new string('x', 201), Guid.NewGuid()), CancellationToken.None));
@@ -195,7 +215,7 @@ public sealed class RubricTemplateServiceTests
         await db.SaveChangesAsync();
         var originalCreator = template.CreatedBy;
         var originalCreatedAt = template.CreatedAt;
-        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id));
+        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id, Roles.Administrator));
 
         var updated = await service.UpdateAsync(template.Id, new UpdateRubricTemplateRequest("Renamed"),
             CancellationToken.None);
@@ -234,7 +254,7 @@ public sealed class RubricTemplateServiceTests
             CreatedAt = DateTime.UtcNow
         });
         await db.SaveChangesAsync();
-        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id));
+        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id, Roles.Administrator));
 
         await Assert.ThrowsAsync<ConflictException>(() => service.DeleteAsync(retained.Id, CancellationToken.None));
         Assert.Empty(await db.AuditLogs.ToListAsync());

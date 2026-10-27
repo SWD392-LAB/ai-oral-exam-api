@@ -21,7 +21,7 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
     public async Task<RubricVersionDetailDto> CreateAsync(
         Guid templateId, CreateRubricVersionRequest request, CancellationToken ct)
     {
-        EnsureManagementRole();
+        EnsureAdministrator();
         var criteria = Validate(request);
         var template = await LoadTemplateForManagementAsync(templateId, ct);
 
@@ -120,7 +120,15 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
         if (!currentUser.IsAuthenticated)
             throw new UnauthorizedException("unauthenticated", "You need to sign in.");
         if (!IsAdmin && !currentUser.IsInRole(Roles.Lecturer))
-            throw new ForbiddenException("Only lecturers and administrators can manage rubric versions.");
+            throw new ForbiddenException("Only lecturers and administrators can read rubric versions.");
+    }
+
+    private void EnsureAdministrator()
+    {
+        if (!currentUser.IsAuthenticated)
+            throw new UnauthorizedException("unauthenticated", "You need to sign in.");
+        if (!IsAdmin)
+            throw new ForbiddenException("Only administrators can manage platform rubric versions.");
     }
 
     private async Task LockTemplateRowAsync(Guid templateId, CancellationToken ct)

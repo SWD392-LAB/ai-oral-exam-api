@@ -242,7 +242,7 @@ public class InterviewScoreReviewTests
     }
 
     [Fact]
-    public async Task Submit_score_review_rejects_a_duplicate_review()
+    public async Task Submit_score_review_returns_the_stored_result_for_an_identical_finalized_retry()
     {
         await using var db = CreateDbContext();
         var sessionId = Guid.NewGuid();
@@ -251,10 +251,31 @@ public class InterviewScoreReviewTests
             new TestExamConfigurationApi(sessionId, assigned: true));
         var request = new SubmitScoreReviewRequest(5m, null);
 
-        await service.SubmitScoreReviewAsync(attempt.Id, request);
+        var submitted = await service.SubmitScoreReviewAsync(attempt.Id, request);
 
-        await Assert.ThrowsAsync<ConflictException>(() => service.SubmitScoreReviewAsync(attempt.Id, request));
+        var retry = await service.SubmitScoreReviewAsync(attempt.Id, request);
+
+        Assert.Equal(submitted, retry);
         Assert.Single(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Finalized_review_rejects_a_different_reviewer_or_changed_payload()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview);
+        var configuration = new TestExamConfigurationApi(sessionId, assigned: true);
+        var firstReviewer = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer), configuration);
+        var secondReviewer = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer), configuration);
+        var request = new SubmitScoreReviewRequest(5m, "Approved");
+        await firstReviewer.SubmitScoreReviewAsync(attempt.Id, request);
+
+        await Assert.ThrowsAsync<ConflictException>(() => firstReviewer.SubmitScoreReviewAsync(attempt.Id,
+            new SubmitScoreReviewRequest(6m, "Approved")));
+        await Assert.ThrowsAsync<ConflictException>(() => secondReviewer.SubmitScoreReviewAsync(attempt.Id, request));
+        Assert.Single(db.ScoreReviews);
+        Assert.Equal(5m, (await db.ScoreReviews.SingleAsync()).FinalScore);
     }
 
     private static InterviewReviewService CreateService(

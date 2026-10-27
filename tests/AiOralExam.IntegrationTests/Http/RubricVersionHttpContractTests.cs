@@ -16,7 +16,7 @@ public sealed class RubricVersionHttpContractTests
     private static readonly Guid OtherLecturerId = Guid.Parse("d115d5a8-63f7-49f3-9492-222222222242");
 
     [Fact]
-    public async Task Assigned_lecturer_can_create_list_and_get_sealed_version()
+    public async Task Administrator_can_create_list_and_get_sealed_version()
     {
         using var factory = NewFactory();
         var seeded = await SeedAsync(factory, assignedToActor: true);
@@ -50,7 +50,7 @@ public sealed class RubricVersionHttpContractTests
     [Fact]
     public async Task Unassigned_lecturer_cannot_create_or_read_versions()
     {
-        using var factory = NewFactory();
+        using var factory = new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
         var seeded = await SeedAsync(factory, assignedToActor: false, addVersion: true);
         using var client = factory.CreateClient();
 
@@ -92,7 +92,7 @@ public sealed class RubricVersionHttpContractTests
         Assert.Equal(HttpStatusCode.NotFound, mismatchResponse.StatusCode);
     }
 
-    private static ApiTestFactory NewFactory() => new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
+    private static ApiTestFactory NewFactory() => new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Administrator);
 
     private static CreateRubricVersionRequest ValidRequest() => new(
     [

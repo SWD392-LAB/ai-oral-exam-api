@@ -233,8 +233,8 @@ public sealed class RubricConcurrencyPostgresTests
     {
         public bool IsAuthenticated => true;
         public Guid Id => id;
-        public string? Role => Roles.Lecturer;
-        public bool IsInRole(string requestedRole) => requestedRole == Roles.Lecturer;
+        public string? Role => Roles.Administrator;
+        public bool IsInRole(string requestedRole) => requestedRole == Roles.Administrator;
     }
 }
 

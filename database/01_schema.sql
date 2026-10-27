@@ -394,6 +394,12 @@ CREATE TABLE interview_turns (
     audio_url             VARCHAR(500),            -- the audio file lives in object storage
     asked_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     answered_at           TIMESTAMPTZ,
+    is_timed_out          BOOLEAN      NOT NULL DEFAULT FALSE,
+    processing_status     VARCHAR(20)  NOT NULL DEFAULT 'AwaitingAnswer',
+    processing_started_at TIMESTAMPTZ,
+    submission_result     JSONB,
+    CONSTRAINT ck_interview_turns_processing_status
+        CHECK (processing_status IN ('AwaitingAnswer', 'Processing', 'Retry', 'Completed')),
     UNIQUE (question_response_id, turn_no)
 );
 

@@ -10,4 +10,4 @@ public sealed record CurrentTurnDto(
     string QuestionText,
     DateTime AskedAt,
     DateTime DeadlineAt,
-    Guid TurnId = default);
+    Guid TurnId);

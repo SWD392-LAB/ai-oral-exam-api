@@ -1,5 +1,4 @@
 using AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
-using AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
 using AiOralExam.Modules.AccessConfig.Application.RubricVersions;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -17,6 +16,7 @@ public sealed class RubricTemplatesController(
     IRubricVersionService versions) : ControllerBase
 {
     [HttpPost]
+    [Authorize(Roles = Roles.Administrator)]
     public async Task<ActionResult<RubricTemplateDto>> Create(CreateRubricTemplateRequest request, CancellationToken ct)
     {
         var template = await templates.CreateAsync(request, ct);
@@ -32,10 +32,12 @@ public sealed class RubricTemplatesController(
         templates.GetAsync(id, ct);
 
     [HttpPatch("{id:guid}")]
+    [Authorize(Roles = Roles.Administrator)]
     public Task<RubricTemplateDto> Update(Guid id, UpdateRubricTemplateRequest request, CancellationToken ct) =>
         templates.UpdateAsync(id, request, ct);
 
     [HttpPost("{templateId:guid}/versions")]
+    [Authorize(Roles = Roles.Administrator)]
     public async Task<ActionResult<RubricVersionDetailDto>> CreateVersion(
         Guid templateId, CreateRubricVersionRequest request, CancellationToken ct)
     {
@@ -52,6 +54,7 @@ public sealed class RubricTemplatesController(
         versions.GetAsync(templateId, versionId, ct);
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Roles = Roles.Administrator)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         await templates.DeleteAsync(id, ct);

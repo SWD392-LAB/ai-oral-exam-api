@@ -123,6 +123,16 @@ internal sealed class InterviewReviewService(
         var result = await WithAttemptLockAsync(attemptId, async () =>
         {
             var attempt = await LoadReviewAttemptAsync(attemptId, ct);
+            if (attempt.Status == AttemptStatus.Finalized && attempt.Review is { Status: ReviewStatus.Approved } finalized)
+            {
+                if (finalized.ReviewerId == currentUser.Id
+                    && finalized.FinalScore == request.FinalScore
+                    && string.Equals(finalized.Comment, request.Comment, StringComparison.Ordinal))
+                    return ToResult(finalized);
+
+                throw new ConflictException("score_review_already_submitted",
+                    "The finalized score review cannot be changed or submitted by another reviewer.");
+            }
             if (attempt.Status != AttemptStatus.PendingReview)
                 throw new ConflictException("attempt_not_pending_review", "Only attempts pending review can be finalized.");
             if (attempt.Review is { Status: not ReviewStatus.Pending })
@@ -264,8 +274,11 @@ internal sealed class InterviewReviewService(
     private InterviewAttemptEvent CreateFinalizedEvent(InterviewAttempt attempt, Guid sessionId)
     {
         var turnCount = attempt.Responses.Sum(response => response.Turns.Count);
+        var sequence = InterviewEventSequence.AttemptCompleted(turnCount) + 1;
+        var turnId = attempt.Responses.SelectMany(response => response.Turns)
+            .MaxBy(turn => turn.AskedAt)?.Id;
         return new InterviewAttemptEvent(Guid.NewGuid(), attempt.Id, sessionId,
-            InterviewEventSequence.AttemptCompleted(turnCount) + 1, "review.finalized", UtcNow);
+            sequence, turnId, sequence, "review.finalized", UtcNow);
     }
 
     private static ScoreReviewResult ToResult(ScoreReviewEntity review) =>

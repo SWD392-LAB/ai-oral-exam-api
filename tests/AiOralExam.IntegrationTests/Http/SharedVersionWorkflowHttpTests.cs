@@ -29,7 +29,7 @@ public sealed class SharedVersionWorkflowHttpTests
     [Fact]
     public async Task Shared_version_workflow_reaches_interview_scoring_and_reporting()
     {
-        using var factory = new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
+        using var factory = new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Administrator);
         var seeded = await SeedAsync(factory);
         using var client = factory.CreateClient();
 
@@ -149,8 +149,16 @@ public sealed class SharedVersionWorkflowHttpTests
         Assert.Equal(1, attempt.CurrentTurn?.QuestionOrderNo);
 
         var answer = string.Join(' ', Enumerable.Repeat("explanation", 60));
-        using var firstAnswerResponse = await client.PostAsJsonAsync(
+        using var missingTurnIdResponse = await client.PostAsJsonAsync(
             $"/api/interview-attempts/{attempt.AttemptId}/responses", new { answerText = answer });
+        Assert.Equal(HttpStatusCode.BadRequest, missingTurnIdResponse.StatusCode);
+
+        using var firstAnswerResponse = await client.PostAsJsonAsync(
+            $"/api/interview-attempts/{attempt.AttemptId}/responses", new
+            {
+                answerText = answer,
+                turnId = attempt.CurrentTurn!.TurnId
+            });
         Assert.Equal(HttpStatusCode.OK, firstAnswerResponse.StatusCode);
         var firstAnswer = await firstAnswerResponse.Content.ReadFromJsonAsync<SubmitAnswerResponse>();
         Assert.NotNull(firstAnswer);
@@ -158,7 +166,11 @@ public sealed class SharedVersionWorkflowHttpTests
         Assert.Equal(2, firstAnswer.Attempt.CurrentTurn?.QuestionOrderNo);
 
         using var secondAnswerResponse = await client.PostAsJsonAsync(
-            $"/api/interview-attempts/{attempt.AttemptId}/responses", new { answerText = answer });
+            $"/api/interview-attempts/{attempt.AttemptId}/responses", new
+            {
+                answerText = answer,
+                turnId = firstAnswer.Attempt.CurrentTurn!.TurnId
+            });
         Assert.Equal(HttpStatusCode.OK, secondAnswerResponse.StatusCode);
         var secondAnswer = await secondAnswerResponse.Content.ReadFromJsonAsync<SubmitAnswerResponse>();
         Assert.NotNull(secondAnswer);

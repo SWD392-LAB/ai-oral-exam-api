@@ -14,6 +14,15 @@ public sealed class InterviewUpdatesHub(
         await Groups.AddToGroupAsync(Context.ConnectionId, InterviewHubGroups.Attempt(attemptId), Context.ConnectionAborted);
     }
 
+    public Task JoinAttempt(Guid attemptId) => SubscribeAttempt(attemptId);
+
+    public async Task<SubmitAnswerResponse> CompleteAnswer(Guid attemptId, Guid turnId, string? answerText)
+    {
+        await interview.AuthorizeAttemptSubscriptionAsync(attemptId, Context.ConnectionAborted);
+        return await interview.SubmitAnswerAsync(attemptId,
+            new SubmitAnswerRequest(answerText, turnId), Context.ConnectionAborted);
+    }
+
     public async Task SubscribeSession(Guid examSessionId)
     {
         await interview.AuthorizeSessionSubscriptionAsync(examSessionId, Context.ConnectionAborted);

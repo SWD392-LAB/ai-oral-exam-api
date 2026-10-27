@@ -16,7 +16,7 @@ public sealed class RubricTemplateHttpContractTests
     private static readonly Guid OtherLecturerId = Guid.Parse("d115d5a8-63f7-49f3-9492-222222222232");
 
     [Fact]
-    public async Task Assigned_lecturer_can_create_list_get_update_and_delete_template_without_versions()
+    public async Task Administrator_can_create_update_and_delete_templates_while_reading_metadata()
     {
         using var factory = NewFactory();
         var course = await SeedAsync(factory, assignedToActor: true);
@@ -63,7 +63,7 @@ public sealed class RubricTemplateHttpContractTests
     [Fact]
     public async Task Lecturer_cannot_access_templates_for_unassigned_course()
     {
-        using var factory = NewFactory();
+        using var factory = new ApiTestFactory().AuthenticateAs(ActorId, Roles.Lecturer);
         var course = await SeedAsync(factory, assignedToActor: false, addTemplate: true);
         using var client = factory.CreateClient();
 
@@ -142,7 +142,7 @@ public sealed class RubricTemplateHttpContractTests
         Assert.Empty(await db.AuditLogs.ToListAsync());
     }
 
-    private static ApiTestFactory NewFactory() => new ApiTestFactory().AuthenticateAs(ActorId, Roles.Lecturer);
+    private static ApiTestFactory NewFactory() => new ApiTestFactory().AuthenticateAs(ActorId, Roles.Administrator);
 
     private static async Task<SeededCourse> SeedAsync(
         ApiTestFactory factory,

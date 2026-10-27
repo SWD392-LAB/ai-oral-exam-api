@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.Interview.Application.Ai;
 using AiOralExam.Modules.Interview.Application.Events;
@@ -17,7 +18,7 @@ namespace AiOralExam.Modules.Interview.Application;
 ///   Start  -> create InterviewAttempt + QuestionResponse for question 1 + a Main turn
 ///   Submit -> store the transcript -> analyze (IAnswerAnalyzer) -> follow-up OR score (IRubricScorer)
 ///          -> next question OR finish the attempt (PendingReview)
-/// All changes of one Submit are saved in one transaction (a single SaveChanges).
+/// Answer acceptance/checkpoints and AI results are committed in separate short transactions.
 /// </summary>
 internal sealed class InterviewService(
     InterviewDbContext db,
@@ -142,8 +143,13 @@ internal sealed class InterviewService(
         SubmitAnswerRequest request,
         CancellationToken ct = default)
     {
-        var events = new List<InterviewAttemptEvent>();
-        var result = await WithAttemptLockAsync(attemptId, async () =>
+        if (request.TurnId == Guid.Empty)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(request.TurnId)] = ["turnId is required and must be a non-empty GUID."]
+            });
+
+        var claim = await WithAttemptLockAsync(attemptId, async () =>
         {
             var attempt = await LoadAttemptAsync(attemptId, ct);
             if (attempt.Participant.StudentId != currentUser.Id)
@@ -151,23 +157,31 @@ internal sealed class InterviewService(
 
             var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
             var allTurns = attempt.Responses.SelectMany(r => r.Turns).ToList();
-            var submittedTurn = request.TurnId is Guid turnId
-                ? allTurns.FirstOrDefault(t => t.Id == turnId)
-                  ?? throw new ConflictException("turn_not_found", "The submitted turn does not belong to this attempt.")
-                : attempt.CurrentResponse?.CurrentTurn;
+            var submittedTurn = allTurns.FirstOrDefault(t => t.Id == request.TurnId)
+                ?? throw new ConflictException("turn_not_found", "The submitted turn does not belong to this attempt.");
 
-            if (request.TurnId is not null && submittedTurn is { AnsweredAt: not null })
+            if (submittedTurn.AnsweredAt is not null || submittedTurn.IsTimedOut)
             {
+                if (submittedTurn.IsTimedOut)
+                    throw new ConflictException("answer_deadline_passed", "The turn expired without a submitted answer.");
                 if (!string.Equals(NormalizeAnswer(request.AnswerText), submittedTurn.AnswerTranscript, StringComparison.Ordinal))
                 {
-                    var retryTime = UtcNow;
-                    if (!session.IsOpenAt(retryTime) || retryTime > GetTurnDeadline(submittedTurn, session))
-                        throw new ConflictException("answer_deadline_passed", "The answer deadline has passed.");
                     throw new ConflictException("turn_submission_conflict", "This turn was already submitted with a different answer.");
                 }
                 var previousResponse = attempt.Responses.Single(r => r.Turns.Any(t => t.Id == submittedTurn.Id));
-                events.Add(CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow));
-                return DuplicateResponse(attempt, previousResponse, submittedTurn, session);
+                if (submittedTurn.ProcessingStatus == TurnProcessingStatus.AwaitingAnswer)
+                    submittedTurn.ProcessingStatus = TurnProcessingStatus.Completed;
+                if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Processing)
+                    return new TurnSubmissionClaim(null, DuplicateResponse(attempt, previousResponse, submittedTurn, session),
+                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow));
+                if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Completed)
+                    return new TurnSubmissionClaim(null, GetOriginalResponse(attempt, previousResponse, submittedTurn, session),
+                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow));
+
+                submittedTurn.ProcessingStatus = TurnProcessingStatus.Processing;
+                submittedTurn.ProcessingStartedAt = UtcNow;
+                return new TurnSubmissionClaim(new TurnProcessingClaim(attempt, previousResponse, submittedTurn,
+                    session, NormalizeAnswer(request.AnswerText), UtcNow, TimedOut: false, SessionOpen: session.IsOpenAt(UtcNow)), null, null);
             }
 
             attempt.EnsureInProgress();
@@ -182,12 +196,22 @@ internal sealed class InterviewService(
             if (!session.IsOpenAt(now) || now > GetTurnDeadline(turn, session))
                 throw new ConflictException("answer_deadline_passed", "The answer deadline has passed.");
 
-            return await ProcessTurnAsync(attempt, response, turn, session, NormalizeAnswer(request.AnswerText), now,
-                timedOut: false, sessionOpen: true, events: events, ct: ct);
+            turn.AnswerTranscript = NormalizeAnswer(request.AnswerText);
+            turn.AnsweredAt = now;
+            turn.ProcessingStatus = TurnProcessingStatus.Processing;
+            turn.ProcessingStartedAt = now;
+            return new TurnSubmissionClaim(new TurnProcessingClaim(attempt, response, turn, session,
+                turn.AnswerTranscript, now, TimedOut: false, SessionOpen: true), null, null);
         }, ct);
 
-        await PublishEventsAsync(events, ct);
-        return result;
+        if (claim.Response is not null)
+        {
+            if (claim.Event is not null)
+                await eventPublisher.PublishAsync(claim.Event, ct);
+            return claim.Response;
+        }
+
+        return await ProcessClaimedTurnAsync(attemptId, claim.Processing!, ct);
     }
 
     public async Task<int> ExpireOverdueAttemptsAsync(CancellationToken ct = default)
@@ -200,33 +224,50 @@ internal sealed class InterviewService(
         var expiredCount = 0;
         foreach (var attemptId in attemptIds)
         {
-            var attemptEvents = new List<InterviewAttemptEvent>();
-            var expired = await WithAttemptLockAsync(attemptId, async () =>
+            var claim = await WithAttemptLockAsync(attemptId, async () =>
             {
                 var attempt = await LoadAttemptAsync(attemptId, ct);
                 if (attempt.Status != AttemptStatus.InProgress)
-                    return false;
+                    return null;
+
+                var now = UtcNow;
+                var pendingTurn = attempt.Responses.SelectMany(r => r.Turns)
+                    .Where(t => t.ProcessingStatus == TurnProcessingStatus.Retry
+                        || t.ProcessingStatus == TurnProcessingStatus.Processing
+                           && t.ProcessingStartedAt < now.AddMinutes(-2))
+                    .OrderBy(t => t.ProcessingStartedAt)
+                    .FirstOrDefault();
+                if (pendingTurn is not null)
+                {
+                    pendingTurn.ProcessingStatus = TurnProcessingStatus.Processing;
+                    pendingTurn.ProcessingStartedAt = now;
+                    var pendingResponse = attempt.Responses.Single(r => r.Id == pendingTurn.QuestionResponseId);
+                    var pendingSession = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+                    return new TurnProcessingClaim(attempt, pendingResponse, pendingTurn, pendingSession,
+                        pendingTurn.AnswerTranscript, now, pendingTurn.IsTimedOut, pendingSession.IsOpenAt(now));
+                }
 
                 var response = attempt.CurrentResponse;
                 var turn = response?.CurrentTurn;
                 if (response is null || turn is null)
-                    return false;
+                    return null;
 
                 var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
-                var now = UtcNow;
                 var sessionOpen = session.IsOpenAt(now);
                 if (sessionOpen && now <= GetTurnDeadline(turn, session))
-                    return false;
+                    return null;
 
-                await ProcessTurnAsync(attempt, response, turn, session, answer: null, now: now,
-                    timedOut: true, sessionOpen: sessionOpen, events: attemptEvents, ct: ct);
-                return true;
+                turn.IsTimedOut = true;
+                turn.ProcessingStatus = TurnProcessingStatus.Processing;
+                turn.ProcessingStartedAt = now;
+                return new TurnProcessingClaim(attempt, response, turn, session, Answer: null, now,
+                    TimedOut: true, SessionOpen: sessionOpen);
             }, ct);
 
-            if (expired)
+            if (claim is not null)
             {
                 expiredCount++;
-                await PublishEventsAsync(attemptEvents, ct);
+                await ProcessClaimedTurnAsync(attemptId, claim, ct);
             }
         }
 
@@ -239,6 +280,16 @@ internal sealed class InterviewService(
         var attempt = await LoadOwnAttemptAsync(attemptId, ct);
         var session = await examConfig.GetSessionAsync(attempt.Participant.ExamSessionId, ct)
                       ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
+        var currentTurn = attempt.CurrentResponse?.CurrentTurn;
+        var processingNeedsRecovery = attempt.Responses.SelectMany(r => r.Turns).Any(t =>
+            t.ProcessingStatus == TurnProcessingStatus.Retry
+            || t.ProcessingStatus == TurnProcessingStatus.Processing && t.ProcessingStartedAt < UtcNow.AddMinutes(-2));
+        if (processingNeedsRecovery || currentTurn is not null
+            && (!session.IsOpenAt(UtcNow) || UtcNow > GetTurnDeadline(currentTurn, session)))
+        {
+            await ExpireOverdueAttemptsAsync(ct);
+            attempt = await LoadOwnAttemptAsync(attemptId, ct);
+        }
         return ToState(attempt, session);
     }
 
@@ -310,8 +361,6 @@ internal sealed class InterviewService(
         var question = session.Questions.FirstOrDefault(q => q.Id == response.QuestionId)
                        ?? throw new ConflictException("attempt_question_not_found", "The attempt question is not in its exam session.");
 
-        turn.AnswerTranscript = timedOut ? null : answer;
-        turn.AnsweredAt = now;
         var turnCount = attempt.Responses.Sum(item => item.Turns.Count);
         var deadlineReached = now > GetTurnDeadline(turn, session);
         events.Add(CreateEvent(attempt, session.Id,
@@ -326,7 +375,7 @@ internal sealed class InterviewService(
             response.FollowUpCount, session.MaxFollowUps, DefaultLanguage), ct);
 
         var followUpOpenedAt = UtcNow;
-        if (sessionOpen && session.IsOpenAt(followUpOpenedAt)
+        if (!timedOut && sessionOpen && session.IsOpenAt(followUpOpenedAt)
             && analysis.NeedsFollowUp && response.FollowUpCount < session.MaxFollowUps
             && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
         {
@@ -381,6 +430,50 @@ internal sealed class InterviewService(
         return new SubmitAnswerResponse(outcome, timedOut, null, ToState(attempt, session));
     }
 
+    private async Task<SubmitAnswerResponse> ProcessClaimedTurnAsync(
+        Guid attemptId, TurnProcessingClaim claim, CancellationToken ct)
+    {
+        var events = new List<InterviewAttemptEvent>();
+        SubmitAnswerResponse result;
+        try
+        {
+            result = await ProcessTurnAsync(claim.Attempt, claim.Response, claim.Turn, claim.Session,
+                claim.Answer, claim.Now, claim.TimedOut, claim.SessionOpen, events, ct);
+            claim.Turn.ProcessingStatus = TurnProcessingStatus.Completed;
+            claim.Turn.ProcessingStartedAt = null;
+            claim.Turn.SubmissionResultJson = JsonSerializer.Serialize(result);
+            await WithAttemptLockAsync(attemptId, () => Task.FromResult(result), ct);
+        }
+        catch
+        {
+            claim.Turn.ProcessingStatus = TurnProcessingStatus.Retry;
+            claim.Turn.ProcessingStartedAt = null;
+            await WithAttemptLockAsync(attemptId, () => Task.FromResult(true), CancellationToken.None);
+            var sequence = InterviewEventSequence.Current(claim.Attempt);
+            await eventPublisher.PublishAsync(new InterviewAttemptEvent(Guid.NewGuid(), attemptId,
+                claim.Session.Id, sequence, claim.Turn.Id, sequence, "InterviewError", UtcNow), CancellationToken.None);
+            throw;
+        }
+
+        await PublishEventsAsync(events, ct);
+        return result;
+    }
+
+    private sealed record TurnProcessingClaim(
+        InterviewAttempt Attempt,
+        QuestionResponse Response,
+        InterviewTurn Turn,
+        ExamSessionInfo Session,
+        string? Answer,
+        DateTime Now,
+        bool TimedOut,
+        bool SessionOpen);
+
+    private sealed record TurnSubmissionClaim(
+        TurnProcessingClaim? Processing,
+        SubmitAnswerResponse? Response,
+        InterviewAttemptEvent? Event = null);
+
     private SubmitAnswerResponse DuplicateResponse(
         InterviewAttempt attempt,
         QuestionResponse submittedResponse,
@@ -398,12 +491,32 @@ internal sealed class InterviewService(
         return new SubmitAnswerResponse(outcome, false, null, ToState(attempt, session), Duplicate: true);
     }
 
-    private string? NormalizeAnswer(string? answer) =>
-        string.IsNullOrWhiteSpace(answer) ? null : answer.Trim();
+    private SubmitAnswerResponse GetOriginalResponse(
+        InterviewAttempt attempt,
+        QuestionResponse submittedResponse,
+        InterviewTurn submittedTurn,
+        ExamSessionInfo session)
+    {
+        if (submittedTurn.SubmissionResultJson is { Length: > 0 } resultJson)
+        {
+            var original = JsonSerializer.Deserialize<SubmitAnswerResponse>(resultJson);
+            if (original is not null)
+                return original with { Duplicate = true };
+        }
+
+        return DuplicateResponse(attempt, submittedResponse, submittedTurn, session);
+    }
+
+    private static string? NormalizeAnswer(string? answer) => answer?.Trim();
 
     private static InterviewAttemptEvent CreateEvent(
-        InterviewAttempt attempt, Guid sessionId, string type, long sequence, DateTime occurredAt) =>
-        new(Guid.NewGuid(), attempt.Id, sessionId, sequence, type, occurredAt);
+        InterviewAttempt attempt, Guid sessionId, string type, long sequence, DateTime occurredAt)
+    {
+        var turnId = attempt.Responses.SelectMany(response => response.Turns)
+            .MaxBy(turn => turn.AskedAt)?.Id;
+        return new InterviewAttemptEvent(Guid.NewGuid(), attempt.Id, sessionId, sequence,
+            turnId, sequence, type, occurredAt);
+    }
 
     private async Task PublishEventsAsync(IEnumerable<InterviewAttemptEvent> events, CancellationToken ct)
     {
@@ -470,8 +583,12 @@ internal sealed class InterviewService(
     private AttemptStateDto ToState(InterviewAttempt attempt, ExamSessionInfo session)
     {
         CurrentTurnDto? current = null;
-        var response = attempt.Status == AttemptStatus.InProgress ? attempt.CurrentResponse : null;
+        var response = attempt.Status == AttemptStatus.InProgress && session.IsOpenAt(UtcNow)
+            ? attempt.CurrentResponse
+            : null;
         var turn = response?.CurrentTurn;
+        if (turn is not null && UtcNow > GetTurnDeadline(turn, session))
+            turn = null;
         if (response is not null && turn is not null)
         {
             var q = session.Questions.First(x => x.Id == response.QuestionId);
@@ -484,6 +601,6 @@ internal sealed class InterviewService(
             attempt.Id, session.Id, session.Title, attempt.Status.ToString(),
             session.TimeLimitPerAnswerSeconds, session.MaxFollowUps, session.Questions.Count,
             attempt.Responses.Count(r => r.IsFinished),
-            attempt.StartedAt, attempt.CompletedAt, current);
+            attempt.StartedAt, attempt.CompletedAt, current, InterviewEventSequence.Current(attempt));
     }
 }

@@ -44,8 +44,136 @@ public sealed class InterviewTurnWorkflowTests
             fixture.Events.Events.Select(interviewEvent => interviewEvent.Type));
         Assert.Equal([1L, 2L, 3L, 4L, 4L], fixture.Events.Events.Select(interviewEvent => interviewEvent.Sequence));
         Assert.All(fixture.Events.Events, interviewEvent =>
-            Assert.Equal(new[] { "AttemptId", "EventId", "ExamSessionId", "OccurredAt", "Sequence", "Type" },
+            Assert.Equal(new[] { "AttemptId", "EventId", "ExamSessionId", "OccurredAt", "Sequence", "StateVersion", "TurnId", "Type" },
                 typeof(InterviewAttemptEvent).GetProperties().Select(property => property.Name).OrderBy(name => name)));
+        Assert.DoesNotContain("AnswerTranscript", typeof(InterviewAttemptEvent).GetProperties().Select(property => property.Name));
+        Assert.DoesNotContain("AiSuggestedScore", typeof(InterviewAttemptEvent).GetProperties().Select(property => property.Name));
+        Assert.All(fixture.Events.Events.Where(interviewEvent => interviewEvent.Type != "review.finalized"),
+            interviewEvent => Assert.Equal(interviewEvent.Sequence, interviewEvent.StateVersion));
+    }
+
+    [Fact]
+    public async Task Delayed_identical_retry_returns_the_original_turn_result_after_the_attempt_advances()
+    {
+        await using var fixture = await CreateFixtureAsync(maxFollowUps: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var mainTurnId = started.State.CurrentTurn!.TurnId;
+        fixture.Analyzer.NeedsFollowUp = true;
+
+        var original = await fixture.Service.SubmitAnswerAsync(started.State.AttemptId,
+            new SubmitAnswerRequest("Main answer", mainTurnId));
+        Assert.Equal(SubmitOutcome.FollowUp, original.Outcome);
+        var originalFollowUpId = original.Attempt.CurrentTurn!.TurnId;
+
+        fixture.Analyzer.NeedsFollowUp = false;
+        await fixture.Service.SubmitAnswerAsync(started.State.AttemptId,
+            new SubmitAnswerRequest("Follow-up answer", originalFollowUpId));
+        var retry = await fixture.Service.SubmitAnswerAsync(started.State.AttemptId,
+            new SubmitAnswerRequest("Main answer", mainTurnId));
+
+        Assert.True(retry.Duplicate);
+        Assert.Equal(original.Outcome, retry.Outcome);
+        Assert.Equal(original.Attempt.CurrentTurn?.TurnId, retry.Attempt.CurrentTurn?.TurnId);
+        Assert.Equal(2, fixture.Analyzer.CallCount);
+        Assert.Single(fixture.Db.CriterionScores);
+    }
+
+    [Fact]
+    public async Task Scorer_failure_is_recovered_by_the_worker_without_losing_the_answer()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Persist before score", started.State.CurrentTurn!.TurnId)));
+
+        Assert.Equal("Persist before score", fixture.Db.InterviewTurns.Single().AnswerTranscript);
+        Assert.Equal(TurnProcessingStatus.Retry, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+        Assert.Empty(fixture.Db.CriterionScores);
+
+        Assert.Equal(1, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+        Assert.Single(fixture.Db.CriterionScores);
+        Assert.Equal(2, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
+    public async Task Missing_or_empty_turn_id_is_rejected_without_falling_back_to_current_turn()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var error = await Assert.ThrowsAsync<ValidationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Answer", Guid.Empty)));
+
+        Assert.Contains(nameof(SubmitAnswerRequest.TurnId), error.Details!.Keys);
+        Assert.Null(fixture.Db.InterviewTurns.Single().AnsweredAt);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+    }
+
+    [Fact]
+    public async Task Get_state_reconciles_an_expired_turn_when_the_worker_has_not_run()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+
+        var state = await fixture.Service.GetAttemptStateAsync(started.State.AttemptId);
+
+        Assert.Null(state.CurrentTurn);
+        Assert.Equal(AttemptStatus.PendingReview.ToString(), state.Status);
+        Assert.True(fixture.Db.InterviewTurns.Single().IsTimedOut);
+        Assert.Null(fixture.Db.InterviewTurns.Single().AnsweredAt);
+    }
+
+    [Fact]
+    public async Task Analyzer_failure_keeps_answer_and_identical_retry_recovers_processing()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        fixture.Analyzer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Durable answer", turnId)));
+
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        Assert.Equal("Durable answer", turn.AnswerTranscript);
+        Assert.NotNull(turn.AnsweredAt);
+        Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
+        Assert.Empty(fixture.Db.CriterionScores);
+
+        var retry = await fixture.Service.SubmitAnswerAsync(started.State.AttemptId,
+            new SubmitAnswerRequest("Durable answer", turnId));
+
+        Assert.Equal(SubmitOutcome.Completed, retry.Outcome);
+        Assert.Equal(TurnProcessingStatus.Completed, turn.ProcessingStatus);
+        Assert.Single(fixture.Db.CriterionScores);
+        Assert.Equal(2, fixture.Analyzer.CallCount);
+        Assert.Equal(1, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
+    public async Task Explicitly_empty_answer_is_distinct_from_unanswered_timeout()
+    {
+        await using var submitted = await CreateFixtureAsync();
+        var started = await submitted.Service.StartAttemptAsync(new StartAttemptRequest(submitted.Session.Id));
+        await submitted.Service.SubmitAnswerAsync(started.State.AttemptId,
+            new SubmitAnswerRequest("", started.State.CurrentTurn!.TurnId));
+        Assert.Equal(string.Empty, submitted.Db.InterviewTurns.Single().AnswerTranscript);
+        Assert.NotNull(submitted.Db.InterviewTurns.Single().AnsweredAt);
+        Assert.False(submitted.Db.InterviewTurns.Single().IsTimedOut);
+
+        await using var timedOut = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var timedOutStart = await timedOut.Service.StartAttemptAsync(new StartAttemptRequest(timedOut.Session.Id));
+        timedOut.Clock.Set(StartTime.AddSeconds(2));
+        await timedOut.Service.ExpireOverdueAttemptsAsync();
+        var expiredTurn = Assert.Single(timedOut.Db.InterviewTurns);
+        Assert.Null(expiredTurn.AnswerTranscript);
+        Assert.Null(expiredTurn.AnsweredAt);
+        Assert.True(expiredTurn.IsTimedOut);
+        Assert.Null((await timedOut.Service.GetAttemptStateAsync(timedOutStart.State.AttemptId)).CurrentTurn);
     }
 
     [Fact]
@@ -209,7 +337,8 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Equal(1, processed);
         Assert.Equal(0, repeatedSweep);
         Assert.Equal(AttemptStatus.PendingReview, fixture.Db.InterviewAttempts.Single().Status);
-        Assert.True(fixture.Db.InterviewTurns.Single().AnsweredAt.HasValue);
+        Assert.False(fixture.Db.InterviewTurns.Single().AnsweredAt.HasValue);
+        Assert.True(fixture.Db.InterviewTurns.Single().IsTimedOut);
         Assert.Null(fixture.Db.InterviewTurns.Single().AnswerTranscript);
         Assert.Single(fixture.Db.CriterionScores);
         Assert.Equal(1, fixture.Scorer.CallCount);
@@ -297,7 +426,8 @@ public sealed class InterviewTurnWorkflowTests
     private static async Task<Fixture> CreateFixtureAsync(
         int timeLimitSeconds = 60,
         bool allowRetake = false,
-        int questionCount = 1)
+        int questionCount = 1,
+        int maxFollowUps = 0)
     {
         var now = StartTime;
         var clock = new TestClock(now);
@@ -308,7 +438,7 @@ public sealed class InterviewTurnWorkflowTests
             .ToList();
         var session = new ExamSessionInfo(
             Guid.NewGuid(), Guid.NewGuid(), "TEST", "Test course", "Test exam",
-            StartTime.AddHours(-1), StartTime.AddHours(1), timeLimitSeconds, 0,
+            StartTime.AddHours(-1), StartTime.AddHours(1), timeLimitSeconds, maxFollowUps,
             ExamSessionStatus.Published,
             questions);
         var studentId = Guid.NewGuid();
@@ -369,8 +499,10 @@ public sealed class InterviewTurnWorkflowTests
             var attempt = Assert.Single(db.InterviewAttempts.Where(item => item.Id == interviewEvent.AttemptId));
             if (interviewEvent.Type == "turn.opened")
                 Assert.NotEmpty(db.InterviewTurns);
-            if (interviewEvent.Type is "answer.accepted" or "turn.deadline_reached" or "turn.closed")
+            if (interviewEvent.Type == "answer.accepted")
                 Assert.Contains(db.InterviewTurns, turn => turn.AnsweredAt.HasValue);
+            if (interviewEvent.Type is "turn.deadline_reached" or "turn.closed")
+                Assert.Contains(db.InterviewTurns, turn => turn.IsTimedOut && turn.AnsweredAt is null);
             if (interviewEvent.Type == "review.finalized")
                 Assert.Equal(AttemptStatus.Finalized, attempt.Status);
             Events.Add(interviewEvent);
@@ -398,17 +530,24 @@ public sealed class InterviewTurnWorkflowTests
         private TaskCompletionSource? _started;
         private TaskCompletionSource? _release;
         public int CallCount { get; private set; }
+        public bool FailNext { get; set; }
+        public bool NeedsFollowUp { get; set; }
 
         public async Task<AnswerAnalysis> AnalyzeAsync(AnswerAnalysisRequest request, CancellationToken ct = default)
         {
             CallCount++;
+            if (FailNext)
+            {
+                FailNext = false;
+                throw new InvalidOperationException("Analyzer failure.");
+            }
             if (_release is { } release)
             {
                 _started!.TrySetResult();
                 await release.Task.WaitAsync(ct);
                 _release = null;
             }
-            return new AnswerAnalysis(true, [], false, null);
+            return new AnswerAnalysis(true, [], NeedsFollowUp, NeedsFollowUp ? "Follow-up question" : null);
         }
 
         public void PauseNextCall()
@@ -424,10 +563,16 @@ public sealed class InterviewTurnWorkflowTests
     private sealed class TestScorer(Guid criterionId) : IRubricScorer
     {
         public int CallCount { get; private set; }
+        public bool FailNext { get; set; }
 
         public Task<RubricScore> ScoreAsync(RubricScoringRequest request, CancellationToken ct = default)
         {
             CallCount++;
+            if (FailNext)
+            {
+                FailNext = false;
+                throw new InvalidOperationException("Scorer failure.");
+            }
             return Task.FromResult(new RubricScore([new CriterionPoints(criterionId, 8m, "Good")], "Good answer."));
         }
     }

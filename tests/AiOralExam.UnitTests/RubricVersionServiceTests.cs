@@ -15,7 +15,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
         var request = new CreateRubricVersionRequest(
         [
             new(2, "  Clarity  ", 5m),
@@ -48,7 +48,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
         var request = ValidRequest();
 
         var first = await service.CreateAsync(seed.TemplateId, request, CancellationToken.None);
@@ -67,7 +67,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(seed.TemplateId,
             new CreateRubricVersionRequest([]), CancellationToken.None));
@@ -83,7 +83,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(seed.TemplateId,
             new CreateRubricVersionRequest([new(1, "Criterion", maxPoints)]), CancellationToken.None));
@@ -97,7 +97,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(seed.TemplateId,
             new CreateRubricVersionRequest([new(1, description, 5m)]), CancellationToken.None));
@@ -109,7 +109,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(seed.TemplateId,
             new CreateRubricVersionRequest([new(1, "A", 5m), new(1, "B", 5m)]), CancellationToken.None));
@@ -123,7 +123,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
 
         await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(seed.TemplateId,
             new CreateRubricVersionRequest([new(1, "A", 600m), new(2, "B", 400m)]), CancellationToken.None));
@@ -147,7 +147,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var lecturerService = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var lecturerService = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
         var existing = await lecturerService.CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
         var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Student));
         var auditCount = await db.AuditLogs.CountAsync();
@@ -166,7 +166,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var existing = await new RubricVersionService(db, new TestCurrentUser(seed.LecturerId))
+        var existing = await new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator))
             .CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
         var service = new RubricVersionService(db,
             new TestCurrentUser(seed.LecturerId, Roles.Lecturer, isAuthenticated: false));
@@ -202,6 +202,24 @@ public sealed class RubricVersionServiceTests
     }
 
     [Fact]
+    public async Task Assigned_lecturer_can_read_but_cannot_manage_versions()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var adminService = new RubricVersionService(db,
+            new TestCurrentUser(seed.LecturerId, Roles.Administrator));
+        var version = await adminService.CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
+        var lecturerService = new RubricVersionService(db,
+            new TestCurrentUser(seed.LecturerId, Roles.Lecturer));
+
+        Assert.Single(await lecturerService.ListAsync(seed.TemplateId, CancellationToken.None));
+        Assert.Equal(version.Id,
+            (await lecturerService.GetAsync(seed.TemplateId, version.Id, CancellationToken.None)).Id);
+        await Assert.ThrowsAsync<ForbiddenException>(() => lecturerService.CreateAsync(
+            seed.TemplateId, ValidRequest(), CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Version_must_match_template_for_detail_lookup()
     {
         await using var db = CreateDatabase();
@@ -213,7 +231,7 @@ public sealed class RubricVersionServiceTests
         };
         db.RubricTemplates.Add(otherTemplate);
         await db.SaveChangesAsync();
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
         var version = await service.CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
 
         await Assert.ThrowsAsync<NotFoundException>(() => service.GetAsync(otherTemplate.Id, version.Id, CancellationToken.None));
@@ -224,7 +242,7 @@ public sealed class RubricVersionServiceTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
         var original = await service.CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
         var originalCriteria = original.Criteria.ToArray();
 

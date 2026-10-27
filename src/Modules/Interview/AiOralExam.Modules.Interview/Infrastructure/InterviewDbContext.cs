@@ -22,6 +22,7 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
         builder.Properties<ParticipantStatus>().HaveConversion<string>();
         builder.Properties<AttemptStatus>().HaveConversion<string>();
         builder.Properties<TurnType>().HaveConversion<string>();
+        builder.Properties<TurnProcessingStatus>().HaveConversion<string>();
         builder.Properties<ReviewStatus>().HaveConversion<string>();
     }
 
@@ -58,6 +59,8 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
         {
             e.ToTable("interview_turns");
             e.HasKey(x => x.Id);
+            e.Property(x => x.ProcessingStatus).HasDefaultValue(TurnProcessingStatus.AwaitingAnswer);
+            e.Property(x => x.SubmissionResultJson).HasColumnName("submission_result").HasColumnType("jsonb");
         });
 
         b.Entity<CriterionScore>(e =>

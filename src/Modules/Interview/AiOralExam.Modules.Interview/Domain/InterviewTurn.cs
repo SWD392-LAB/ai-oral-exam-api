@@ -14,4 +14,16 @@ public class InterviewTurn
     public string? AudioUrl { get; set; }
     public DateTime AskedAt { get; set; }
     public DateTime? AnsweredAt { get; set; }
+    public bool IsTimedOut { get; set; }
+    public TurnProcessingStatus ProcessingStatus { get; set; } = TurnProcessingStatus.AwaitingAnswer;
+    public DateTime? ProcessingStartedAt { get; set; }
+    public string? SubmissionResultJson { get; set; }
+}
+
+public enum TurnProcessingStatus
+{
+    AwaitingAnswer,
+    Processing,
+    Retry,
+    Completed
 }
