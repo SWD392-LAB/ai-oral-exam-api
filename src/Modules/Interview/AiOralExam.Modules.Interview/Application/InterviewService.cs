@@ -16,7 +16,9 @@ namespace AiOralExam.Modules.Interview.Application;
 ///   Start  -> create InterviewAttempt + QuestionResponse for question 1 + a Main turn
 ///   Submit -> store the transcript -> analyze (IAnswerAnalyzer) -> follow-up OR score (IRubricScorer)
 ///          -> next question OR finish the attempt (PendingReview)
-/// All changes of one Submit are saved in one transaction (a single SaveChanges).
+/// The received transcript is persisted before the provider call. Evaluation and
+/// state transitions are saved afterwards so a provider failure never discards
+/// the answer and can be retried.
 /// </summary>
 internal sealed class InterviewService(
     InterviewDbContext db,
@@ -28,7 +30,6 @@ internal sealed class InterviewService(
     IOptions<InterviewOptions> options,
     ILogger<InterviewService> logger) : IInterviewService
 {
-    private const string DefaultLanguage = "Vietnamese"; // TODO (M2): read from AiServiceConfig through the F7 contract
     private readonly InterviewOptions _options = options.Value;
 
     private DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
@@ -129,6 +130,10 @@ internal sealed class InterviewService(
                        ?? throw new ConflictException("no_open_question", "There is no question waiting for an answer.");
         var turn = response.CurrentTurn
                    ?? throw new ConflictException("no_open_turn", "The current question has already been answered.");
+        if (request.TurnId == Guid.Empty)
+            throw new ValidationException(new Dictionary<string, string[]> { ["turnId"] = ["turnId is required."] });
+        if (request.TurnId != turn.Id)
+            throw new ConflictException("turn_not_current", "The submitted answer does not belong to the current turn.");
         var question = session.Questions.First(q => q.Id == response.QuestionId);
 
         // 1) Store the answer. Past the time limit + grace => timed out, the transcript is not stored.
@@ -144,68 +149,93 @@ internal sealed class InterviewService(
         }
         // timed out / empty: keep AnswerTranscript = null, AnsweredAt = null (same as the seed data)
 
+        // Persist the received answer before waiting on an external provider. If
+        // evaluation fails, the catch below reopens the same turn while keeping
+        // this transcript for a safe retry.
+        await db.SaveChangesAsync(ct);
+        response.AiEvaluationState = AiEvaluationState.Pending;
+        response.AiEvaluationError = null;
+        await db.SaveChangesAsync(ct);
+
         var dialogue = response.Turns.OrderBy(t => t.TurnNo)
             .Select(t => new DialogueTurn(t.QuestionText, t.AnswerTranscript, t.Type == TurnType.FollowUp))
             .ToList();
-        // 2) Analyze -> follow-up?
-        var analysis = await analyzer.AnalyzeAsync(new AnswerAnalysisRequest(
-            question.Content, question.Criteria, dialogue,
-            response.FollowUpCount, session.MaxFollowUps, DefaultLanguage), ct);
-
-        if (analysis.NeedsFollowUp && response.FollowUpCount < session.MaxFollowUps
-                                   && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
+        try
         {
-            response.AddTurn(TurnType.FollowUp, analysis.FollowUpQuestion!, now);
-            await db.SaveChangesAsync(ct);
-            logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
-                attempt.Id, response.FollowUpCount, question.Id);
-            return new SubmitAnswerResponse(SubmitOutcome.FollowUp, timedOut, null, ToState(attempt, session));
-        }
+            // 2) Analyze -> follow-up?
+            var analysis = await analyzer.AnalyzeAsync(new AnswerAnalysisRequest(
+                question.Content, question.Criteria, dialogue,
+                response.FollowUpCount, session.MaxFollowUps, _options.Language), ct);
 
-        // 3) Main question done -> score against the rubric (stored once, Reporting only reads it)
-        var score = await scorer.ScoreAsync(new RubricScoringRequest(
-            question.Content, question.Criteria, dialogue, DefaultLanguage), ct);
-
-        // One CriterionScore per rubric criterion, clamped to 0..MaxPoints (a missing criterion counts as 0)
-        var criterionScores = question.Criteria.Select(c =>
-        {
-            var given = score.Scores.FirstOrDefault(s => s.CriterionId == c.Id);
-            return new CriterionScore
+            if (analysis.NeedsFollowUp && response.FollowUpCount < session.MaxFollowUps
+                                       && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
             {
-                Id = Guid.NewGuid(),
-                QuestionResponseId = response.Id,
-                RubricCriterionId = c.Id,
-                Points = Math.Clamp(given?.Points ?? 0, 0, c.MaxPoints),
-                Comment = given?.Comment,
-            };
-        }).ToList();
-        response.RecordAiEvaluation(criterionScores, score.Feedback, now);
-        db.CriterionScores.AddRange(criterionScores);
-        var suggested = response.AiSuggestedScore!.Value;
+                response.AddTurn(TurnType.FollowUp, analysis.FollowUpQuestion!, now);
+                response.AiEvaluationState = AiEvaluationState.Completed;
+                response.AiEvaluationError = null;
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
+                    attempt.Id, response.FollowUpCount, question.Id);
+                return new SubmitAnswerResponse(SubmitOutcome.FollowUp, timedOut, null, ToState(attempt, session));
+            }
 
-        // 4) Next question or finish
-        var next = session.Questions.FirstOrDefault(q => q.OrderNo > question.OrderNo);
-        string outcome;
-        if (next is not null)
-        {
-            AskMainQuestion(attempt, next, now);
-            outcome = SubmitOutcome.NextQuestion;
+            // 3) Main question done -> score against the rubric (stored once, Reporting only reads it)
+            var score = await scorer.ScoreAsync(new RubricScoringRequest(
+                question.Content, question.Criteria, dialogue, _options.Language), ct);
+
+            // One CriterionScore per rubric criterion, clamped to 0..MaxPoints (a missing criterion counts as 0)
+            var criterionScores = question.Criteria.Select(c =>
+            {
+                var given = score.Scores.FirstOrDefault(s => s.CriterionId == c.Id);
+                return new CriterionScore
+                {
+                    Id = Guid.NewGuid(),
+                    QuestionResponseId = response.Id,
+                    RubricCriterionId = c.Id,
+                    Points = Math.Clamp(given?.Points ?? 0, 0, c.MaxPoints),
+                    Comment = given?.Comment,
+                };
+            }).ToList();
+            response.RecordAiEvaluation(criterionScores, score.Feedback, now);
+            db.CriterionScores.AddRange(criterionScores);
+            var suggested = response.AiSuggestedScore!.Value;
+
+            // 4) Next question or finish
+            var next = session.Questions.FirstOrDefault(q => q.OrderNo > question.OrderNo);
+            string outcome;
+            if (next is not null)
+            {
+                AskMainQuestion(attempt, next, now);
+                outcome = SubmitOutcome.NextQuestion;
+            }
+            else
+            {
+                attempt.Complete(now);
+                attempt.Participant.Status = ParticipantStatus.Completed;
+                outcome = SubmitOutcome.Completed;
+            }
+
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Attempt {AttemptId}: question {QuestionId} scored {Score}/{Max}, outcome {Outcome}",
+                attempt.Id, question.Id, suggested, question.MaxScore, outcome);
+
+            var evaluation = _options.ShowAiScoreToStudent
+                ? new EvaluationDto(question.Id, suggested, question.MaxScore, score.Feedback)
+                : null;
+            return new SubmitAnswerResponse(outcome, timedOut, evaluation, ToState(attempt, session));
         }
-        else
+        catch (AiEvaluationException)
         {
-            attempt.Complete(now);
-            attempt.Participant.Status = ParticipantStatus.Completed;
-            outcome = SubmitOutcome.Completed;
+            // Keep the transcript/audio reference, but reopen the turn so a
+            // retry can run the provider again instead of silently scoring zero.
+            turn.AnsweredAt = null;
+            response.AiEvaluationState = AiEvaluationState.Failed;
+            response.AiEvaluationError = "AI evaluation failed. Retry is available.";
+            await db.SaveChangesAsync(ct);
+            logger.LogWarning("Attempt {AttemptId}: AI evaluation failed for question {QuestionId}; answer kept for retry",
+                attempt.Id, question.Id);
+            throw;
         }
-
-        await db.SaveChangesAsync(ct);
-        logger.LogInformation("Attempt {AttemptId}: question {QuestionId} scored {Score}/{Max}, outcome {Outcome}",
-            attempt.Id, question.Id, suggested, question.MaxScore, outcome);
-
-        var evaluation = _options.ShowAiScoreToStudent
-            ? new EvaluationDto(question.Id, suggested, question.MaxScore, score.Feedback)
-            : null;
-        return new SubmitAnswerResponse(outcome, timedOut, evaluation, ToState(attempt, session));
     }
 
     // ------------------------------------------------------------------
@@ -256,7 +286,7 @@ internal sealed class InterviewService(
         {
             var q = session.Questions.First(x => x.Id == response.QuestionId);
             current = new CurrentTurnDto(
-                response.Id, q.Id, q.OrderNo, turn.TurnNo, turn.Type.ToString(), turn.QuestionText,
+                response.Id, turn.Id, q.Id, q.OrderNo, turn.TurnNo, turn.Type.ToString(), turn.QuestionText,
                 turn.AskedAt, turn.AskedAt.AddSeconds(session.TimeLimitPerAnswerSeconds));
         }
 
