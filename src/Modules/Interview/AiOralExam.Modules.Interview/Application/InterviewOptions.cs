@@ -9,13 +9,16 @@ public sealed class InterviewOptions
     public int TimeLimitGraceSeconds { get; set; } = 15;
 
     /// <summary>
-    /// M1: the student sees the AI score right after each question (M1 gate).
-    /// From M3 on, set to false: students only see scores after the lecturer confirms them.
+    /// Students only see scores after the lecturer confirms them. A mock-only
+    /// demo may explicitly enable this setting in a local override.
     /// </summary>
-    public bool ShowAiScoreToStudent { get; set; } = true;
+    public bool ShowAiScoreToStudent { get; set; }
 
     /// <summary>Allow another attempt after a finished one (open point - off by default).</summary>
     public bool AllowRetake { get; set; }
+
+    /// <summary>Language passed to the analyzer/scorer; F7 can override this in deployment config.</summary>
+    public string Language { get; set; } = "Vietnamese";
 
     public MockOptions Mock { get; set; } = new();
 
