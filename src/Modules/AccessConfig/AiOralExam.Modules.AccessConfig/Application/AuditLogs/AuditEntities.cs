@@ -8,4 +8,6 @@ internal static class AuditEntities
     public const string Question = "Question";
     public const string Rubric = "Rubric";
     public const string AiServiceConfig = "AiServiceConfig";
+    public const string QuestionBankItem = "QuestionBankItem";
+    public const string CourseMaterial = "CourseMaterial";
 }
