@@ -23,6 +23,7 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
         builder.Properties<AttemptStatus>().HaveConversion<string>();
         builder.Properties<TurnType>().HaveConversion<string>();
         builder.Properties<ReviewStatus>().HaveConversion<string>();
+        builder.Properties<AiEvaluationState>().HaveConversion<string>();
     }
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -50,6 +51,8 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.HasKey(x => x.Id);
             e.Ignore(x => x.CurrentTurn);
             e.Property(x => x.AiSuggestedScore).HasPrecision(5, 2);
+            e.Property(x => x.AiEvaluationState).HasMaxLength(20);
+            e.Property(x => x.AiEvaluationError).HasMaxLength(500);
             e.HasMany(x => x.Turns).WithOne().HasForeignKey(t => t.QuestionResponseId);
             e.HasMany(x => x.CriterionScores).WithOne().HasForeignKey(s => s.QuestionResponseId);
         });
