@@ -11,20 +11,20 @@ namespace AiOralExam.UnitTests;
 public sealed class RubricTemplateServiceTests
 {
     [Fact]
-    public async Task Administrator_can_create_template_with_creator_and_timestamp()
+    public async Task Administrator_can_create_platform_template_with_creator_and_timestamp()
     {
         await using var db = CreateDatabase();
-        var (user, course) = await SeedAssignedCourseAsync(db);
+        var (user, _) = await SeedAssignedCourseAsync(db);
         var service = new RubricTemplateService(db, new TestCurrentUser(user.Id, Roles.Administrator));
 
-        var created = await service.CreateAsync(new CreateRubricTemplateRequest("  Oral rubric  ", course.Id),
+        var created = await service.CreateAsync(new CreateRubricTemplateRequest("  Oral rubric  "),
             CancellationToken.None);
 
-        Assert.Equal(course.Id, created.CourseId);
+        Assert.Null(created.CourseId);
         Assert.Equal("Oral rubric", created.Name);
         Assert.Equal(user.Id, created.CreatedBy);
         Assert.NotEqual(default, created.CreatedAt);
-        Assert.Equal(course.Code, created.CourseCode);
+        Assert.Null(created.CourseCode);
         Assert.Equal("RubricTemplate", Assert.Single(db.AuditLogs).TargetEntity);
         Assert.Single(db.RubricTemplates);
     }
@@ -88,7 +88,7 @@ public sealed class RubricTemplateServiceTests
     }
 
     [Fact]
-    public async Task Administrator_can_manage_templates_in_courses_without_an_assignment()
+    public async Task Administrator_can_create_platform_templates_independent_of_course_assignments()
     {
         await using var db = CreateDatabase();
         await SeedAssignedCourseAsync(db, "OWNED");
@@ -107,12 +107,26 @@ public sealed class RubricTemplateServiceTests
         var service = new RubricTemplateService(db, new TestCurrentUser(admin.Id, Roles.Administrator));
 
         var created = await service.CreateAsync(
-            new CreateRubricTemplateRequest("Admin template", otherCourse.Id), CancellationToken.None);
+            new CreateRubricTemplateRequest("Admin template"), CancellationToken.None);
         var listed = await service.ListAsync(otherCourse.Id, CancellationToken.None);
 
-        Assert.Equal(otherCourse.Id, created.CourseId);
+        Assert.Null(created.CourseId);
         Assert.Equal(admin.Id, created.CreatedBy);
         Assert.Equal(created.Id, Assert.Single(listed).Id);
+    }
+
+    [Fact]
+    public async Task Administrator_cannot_create_a_new_course_scoped_template()
+    {
+        await using var db = CreateDatabase();
+        var (user, course) = await SeedAssignedCourseAsync(db);
+        var service = new RubricTemplateService(db, new TestCurrentUser(user.Id, Roles.Administrator));
+
+        var exception = await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(
+            new CreateRubricTemplateRequest("Course-only", course.Id), CancellationToken.None));
+
+        Assert.Contains("courseId", exception.Details!.Keys);
+        Assert.Empty(db.RubricTemplates);
     }
 
     [Fact]

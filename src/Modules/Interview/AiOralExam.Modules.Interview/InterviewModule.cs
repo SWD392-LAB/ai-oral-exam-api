@@ -1,5 +1,6 @@
 using AiOralExam.Modules.Interview.Application;
 using AiOralExam.Modules.Interview.Application.Ai;
+using AiOralExam.Modules.Interview.Application.Audio;
 using AiOralExam.Modules.Interview.Application.Ai.Mock;
 using AiOralExam.Modules.Interview.Application.Events;
 using AiOralExam.Modules.Interview.Application.Features.ScoreReview;
@@ -23,6 +24,8 @@ public static class InterviewModule
         services.Configure<InterviewOptions>(configuration.GetSection(InterviewOptions.SectionName));
 
         services.AddScoped<IInterviewService, InterviewService>();
+        services.AddScoped<IInterviewAudioSubmissionService, InterviewAudioSubmissionService>();
+        services.AddScoped<IAudioChunkStore, UnavailableAudioChunkStore>();
         services.AddScoped<IInterviewReviewService, InterviewReviewService>();
         services.AddScoped<IInterviewResultsApi, InterviewResultsApi>();
         services.AddSingleton<IInterviewEventPublisher, SignalRInterviewEventPublisher>();
@@ -32,7 +35,7 @@ public static class InterviewModule
         services.AddSingleton<IAnswerAnalyzer>(sp =>
             new MockAnswerAnalyzer(sp.GetRequiredService<IOptions<InterviewOptions>>().Value.Mock.EnableFollowUps));
         services.AddSingleton<IRubricScorer, MockRubricScorer>();
-        services.AddSingleton<ISpeechToTextService, MockSpeechToTextService>();
+        services.AddSingleton<ISpeechToTextService, UnavailableSpeechToTextService>();
         services.AddSingleton<ITextToSpeechService, MockTextToSpeechService>();
         services.AddSingleton<ILlmService, MockLlmService>();
 

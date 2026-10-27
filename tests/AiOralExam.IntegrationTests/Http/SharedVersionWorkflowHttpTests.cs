@@ -35,7 +35,6 @@ public sealed class SharedVersionWorkflowHttpTests
 
         using var templateResponse = await client.PostAsJsonAsync("/api/rubric-templates", new
         {
-            courseId = seeded.CourseId,
             name = "End-to-end rubric"
         });
         Assert.Equal(HttpStatusCode.Created, templateResponse.StatusCode);
@@ -66,6 +65,13 @@ public sealed class SharedVersionWorkflowHttpTests
             storedVersion.MaxScore = version.MaxScore;
             await db.SaveChangesAsync();
         }
+
+        using var activationResponse = await client.PostAsync(
+            $"/api/rubric-templates/{template.Id}/versions/{version.Id}/activate", null);
+        Assert.Equal(HttpStatusCode.OK, activationResponse.StatusCode);
+        version = await activationResponse.Content.ReadFromJsonAsync<RubricVersionDetailDto>();
+        Assert.NotNull(version);
+        Assert.True(version.IsActive);
 
         var start = DateTime.UtcNow.AddMinutes(-2);
         var end = DateTime.UtcNow.AddHours(1);

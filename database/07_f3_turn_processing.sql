@@ -40,11 +40,17 @@ ALTER TABLE interview_turns
 ALTER TABLE interview_turns
     ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMPTZ;
 ALTER TABLE interview_turns
+    ADD COLUMN IF NOT EXISTS processing_token UUID;
+ALTER TABLE interview_turns
     ADD COLUMN IF NOT EXISTS submission_result JSONB;
 
 UPDATE interview_turns
 SET processing_status = 'Completed'
 WHERE answered_at IS NOT NULL AND processing_status = 'AwaitingAnswer';
+
+UPDATE interview_turns
+SET processing_token = gen_random_uuid()
+WHERE processing_status = 'Processing' AND processing_token IS NULL;
 
 DO $$
 BEGIN
@@ -62,5 +68,26 @@ $$;
 
 ALTER TABLE interview_turns
     VALIDATE CONSTRAINT ck_interview_turns_processing_status;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conname = 'ck_interview_turns_processing_token'
+          AND conrelid = 'interview_turns'::regclass
+    ) THEN
+        ALTER TABLE interview_turns
+            ADD CONSTRAINT ck_interview_turns_processing_token
+            CHECK ((processing_status = 'Processing') = (processing_token IS NOT NULL)) NOT VALID;
+    END IF;
+END;
+$$;
+
+ALTER TABLE interview_turns
+    VALIDATE CONSTRAINT ck_interview_turns_processing_token;
+
+CREATE INDEX IF NOT EXISTS ix_interview_turns_processing_recovery
+    ON interview_turns(processing_status, processing_started_at)
+    WHERE processing_status IN ('Processing', 'Retry');
 
 COMMIT;

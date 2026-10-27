@@ -24,7 +24,6 @@ public sealed class RubricTemplateHttpContractTests
 
         using var createResponse = await client.PostAsJsonAsync("/api/rubric-templates", new
         {
-            courseId = course.Id,
             name = "Oral rubric"
         });
 
@@ -32,7 +31,7 @@ public sealed class RubricTemplateHttpContractTests
         var created = await createResponse.Content.ReadFromJsonAsync<RubricTemplateDto>();
         Assert.NotNull(created);
         Assert.Equal(ActorId, created.CreatedBy);
-        Assert.Equal(course.Id, created.CourseId);
+        Assert.Null(created.CourseId);
         Assert.EndsWith($"/api/rubric-templates/{created.Id}", createResponse.Headers.Location?.OriginalString);
 
         var list = await client.GetFromJsonAsync<List<RubricTemplateDto>>(

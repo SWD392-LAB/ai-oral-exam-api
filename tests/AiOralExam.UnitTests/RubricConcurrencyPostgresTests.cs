@@ -68,6 +68,63 @@ public sealed class RubricConcurrencyPostgresTests
     }
 
     [PostgreSqlConcurrencyFact]
+    public async Task Concurrent_activation_across_templates_leaves_exactly_one_active_platform_version()
+    {
+        var connectionString = GetDedicatedConnectionString();
+        var fixture = await SeedTemplateAsync(connectionString);
+        RubricVersionDetailDto first;
+        RubricVersionDetailDto second;
+        RubricVersionDetailDto otherTemplateVersion;
+        var otherTemplateId = Guid.NewGuid();
+        await using (var db = CreateDatabase(connectionString))
+        {
+            var service = new RubricVersionService(db, new TestCurrentUser(fixture.LecturerId));
+            first = await service.CreateAsync(fixture.TemplateId, ValidRequest(), CancellationToken.None);
+            second = await service.CreateAsync(fixture.TemplateId, ValidRequest(), CancellationToken.None);
+            db.RubricTemplates.Add(new RubricTemplate
+            {
+                Id = otherTemplateId,
+                Name = $"F1A1 concurrency {otherTemplateId:N}",
+                CreatedBy = fixture.LecturerId,
+                CreatedAt = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+            otherTemplateVersion = await service.CreateAsync(otherTemplateId, ValidRequest(), CancellationToken.None);
+            await service.ActivateAsync(fixture.TemplateId, first.Id, CancellationToken.None);
+        }
+
+        var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        async Task ActivateAsync(Guid versionId)
+        {
+            await gate.Task;
+            await using var db = CreateDatabase(connectionString);
+            await new RubricVersionService(db, new TestCurrentUser(fixture.LecturerId))
+                .ActivateAsync(fixture.TemplateId, versionId, CancellationToken.None);
+        }
+
+        var firstActivation = ActivateAsync(first.Id);
+        async Task ActivateOtherTemplateAsync()
+        {
+            await gate.Task;
+            await using var db = CreateDatabase(connectionString);
+            await new RubricVersionService(db, new TestCurrentUser(fixture.LecturerId))
+                .ActivateAsync(otherTemplateId, otherTemplateVersion.Id, CancellationToken.None);
+        }
+
+        var secondActivation = ActivateAsync(second.Id);
+        var otherTemplateActivation = ActivateOtherTemplateAsync();
+        gate.SetResult();
+        await Task.WhenAll(firstActivation, secondActivation, otherTemplateActivation);
+
+        await using var verifyDb = CreateDatabase(connectionString);
+        var active = await verifyDb.RubricVersions.AsNoTracking()
+            .Where(x => x.IsActive)
+            .ToListAsync();
+        var winner = Assert.Single(active);
+        Assert.Contains(winner.Id, new[] { first.Id, second.Id, otherTemplateVersion.Id });
+    }
+
+    [PostgreSqlConcurrencyFact]
     public async Task Template_deletion_racing_version_creation_has_one_consistent_winner()
     {
         var connectionString = GetDedicatedConnectionString();
@@ -184,8 +241,6 @@ public sealed class RubricConcurrencyPostgresTests
         var template = new RubricTemplate
         {
             Id = ids.TemplateId,
-            CourseId = course.Id,
-            Course = course,
             Name = $"F1A1 concurrency {ids.TemplateId:N}",
             CreatedBy = lecturer.Id,
             CreatedAt = DateTime.UtcNow

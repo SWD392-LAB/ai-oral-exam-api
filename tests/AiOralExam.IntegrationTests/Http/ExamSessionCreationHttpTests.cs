@@ -99,8 +99,6 @@ public sealed class ExamSessionCreationHttpTests
         var template = new RubricTemplate
         {
             Id = Guid.NewGuid(),
-            CourseId = course.Id,
-            Course = course,
             Name = "Shared rubric",
             CreatedBy = lecturer.Id,
             CreatedAt = DateTime.UtcNow
@@ -110,10 +108,11 @@ public sealed class ExamSessionCreationHttpTests
             Id = Guid.NewGuid(),
             TemplateId = template.Id,
             Template = template,
-            CourseId = course.Id,
+            CourseId = null,
             VersionNo = 1,
             MaxScore = 5m,
             IsSealed = true,
+            IsActive = true,
             CreatedBy = lecturer.Id,
             CreatedAt = DateTime.UtcNow
         };

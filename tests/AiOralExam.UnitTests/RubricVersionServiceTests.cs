@@ -26,6 +26,7 @@ public sealed class RubricVersionServiceTests
 
         Assert.Equal(1, created.VersionNo);
         Assert.True(created.IsSealed);
+        Assert.False(created.IsActive);
         Assert.Equal(10m, created.MaxScore);
         Assert.Equal(new[] { 1, 2 }, created.Criteria.Select(x => x.OrderNo));
         Assert.All(created.Criteria, x => Assert.NotEqual(Guid.Empty, x.Id));
@@ -131,15 +132,20 @@ public sealed class RubricVersionServiceTests
     }
 
     [Fact]
-    public async Task Unassigned_lecturer_cannot_create_or_read_versions()
+    public async Task Lecturer_can_read_global_versions_without_course_assignment_but_cannot_create()
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
+        var adminService = new RubricVersionService(db,
+            new TestCurrentUser(seed.LecturerId, Roles.Administrator));
+        var version = await adminService.CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
         var service = new RubricVersionService(db, new TestCurrentUser(Guid.NewGuid()));
 
         await Assert.ThrowsAsync<ForbiddenException>(() => service.CreateAsync(seed.TemplateId,
             ValidRequest(), CancellationToken.None));
-        await Assert.ThrowsAsync<ForbiddenException>(() => service.ListAsync(seed.TemplateId, CancellationToken.None));
+        Assert.Single(await service.ListAsync(seed.TemplateId, CancellationToken.None));
+        Assert.Equal(version.Id,
+            (await service.GetAsync(seed.TemplateId, version.Id, CancellationToken.None)).Id);
     }
 
     [Fact]
@@ -179,7 +185,7 @@ public sealed class RubricVersionServiceTests
     }
 
     [Fact]
-    public async Task Administrator_can_create_a_version_for_a_course_without_an_assignment()
+    public async Task Administrator_can_create_a_platform_version_independent_of_course_assignment()
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
@@ -199,6 +205,28 @@ public sealed class RubricVersionServiceTests
 
         Assert.Equal(1, created.VersionNo);
         Assert.True(created.IsSealed);
+    }
+
+    [Fact]
+    public async Task Administrator_cannot_extend_a_historical_course_scoped_template()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var legacyTemplate = new RubricTemplate
+        {
+            Id = Guid.NewGuid(), CourseId = seed.CourseId, Course = seed.Course,
+            Name = "Historical course template", CreatedBy = seed.LecturerId, CreatedAt = DateTime.UtcNow
+        };
+        db.RubricTemplates.Add(legacyTemplate);
+        await db.SaveChangesAsync();
+        var service = new RubricVersionService(db,
+            new TestCurrentUser(seed.LecturerId, Roles.Administrator));
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => service.CreateAsync(
+            legacyTemplate.Id, ValidRequest(), CancellationToken.None));
+
+        Assert.Equal("rubric_template_not_platform_owned", exception.Code);
+        Assert.Empty(db.RubricVersions);
     }
 
     [Fact]
@@ -254,6 +282,60 @@ public sealed class RubricVersionServiceTests
         Assert.Equal(originalCriteria, unchanged.Criteria);
     }
 
+    [Fact]
+    public async Task Platform_version_activation_is_admin_only_and_switches_the_active_immutable_version()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var template = await db.RubricTemplates.SingleAsync(x => x.Id == seed.TemplateId);
+        template.CourseId = null;
+        template.Course = null;
+        await db.SaveChangesAsync();
+
+        var admin = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
+        var first = await admin.CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
+        var activatedFirst = await admin.ActivateAsync(seed.TemplateId, first.Id, CancellationToken.None);
+        Assert.True(activatedFirst.IsActive);
+
+        var second = await admin.CreateAsync(seed.TemplateId,
+            new CreateRubricVersionRequest([new(1, "Updated criterion", 7m)]), CancellationToken.None);
+        var activatedSecond = await admin.ActivateAsync(seed.TemplateId, second.Id, CancellationToken.None);
+
+        Assert.True(activatedSecond.IsActive);
+        Assert.False((await admin.GetAsync(seed.TemplateId, first.Id, CancellationToken.None)).IsActive);
+        Assert.Equal(first.Criteria, (await admin.GetAsync(seed.TemplateId, first.Id, CancellationToken.None)).Criteria);
+
+        var lecturer = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Lecturer));
+        Assert.Equal(second.Id, (await lecturer.GetAsync(seed.TemplateId, second.Id, CancellationToken.None)).Id);
+        await Assert.ThrowsAsync<ForbiddenException>(() => lecturer.ActivateAsync(
+            seed.TemplateId, first.Id, CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Platform_version_activation_switches_the_global_active_version_across_templates()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var secondTemplate = new RubricTemplate
+        {
+            Id = Guid.NewGuid(), Name = "Second platform template", CreatedBy = seed.LecturerId,
+            CreatedAt = DateTime.UtcNow
+        };
+        db.RubricTemplates.Add(secondTemplate);
+        await db.SaveChangesAsync();
+        var admin = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator));
+        var first = await admin.CreateAsync(seed.TemplateId, ValidRequest(), CancellationToken.None);
+        var second = await admin.CreateAsync(secondTemplate.Id, ValidRequest(), CancellationToken.None);
+
+        await admin.ActivateAsync(seed.TemplateId, first.Id, CancellationToken.None);
+        await admin.ActivateAsync(secondTemplate.Id, second.Id, CancellationToken.None);
+
+        Assert.False((await admin.GetAsync(seed.TemplateId, first.Id, CancellationToken.None)).IsActive);
+        Assert.True((await admin.GetAsync(secondTemplate.Id, second.Id, CancellationToken.None)).IsActive);
+        Assert.Equal(new[] { second.Id }, await db.RubricVersions.AsNoTracking()
+            .Where(x => x.IsActive).Select(x => x.Id).ToArrayAsync());
+    }
+
     private static CreateRubricVersionRequest ValidRequest() =>
         new([new(1, "Accuracy", 5m), new(2, "Clarity", 5m)]);
 
@@ -280,7 +362,7 @@ public sealed class RubricVersionServiceTests
         });
         var template = new RubricTemplate
         {
-            Id = Guid.NewGuid(), CourseId = course.Id, Course = course, Name = "Template",
+            Id = Guid.NewGuid(), Name = "Template",
             CreatedBy = lecturer.Id, CreatedAt = DateTime.UtcNow
         };
         db.Roles.Add(role);

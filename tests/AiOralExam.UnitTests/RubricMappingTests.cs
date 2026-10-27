@@ -51,7 +51,7 @@ public sealed class RubricMappingTests
     }
 
     [Fact]
-    public void Course_ownership_foreign_keys_are_composite()
+    public void Platform_version_identity_is_course_independent_and_has_one_global_active_version()
     {
         using var db = CreateContext();
         var version = db.Model.FindEntityType(typeof(RubricVersion))!;
@@ -59,25 +59,25 @@ public sealed class RubricMappingTests
         var templateFk = version.GetForeignKeys().Single(x => x.PrincipalEntityType.ClrType == typeof(RubricTemplate));
         var sessionVersionFk = session.GetForeignKeys().Single(x => x.PrincipalEntityType.ClrType == typeof(RubricVersion));
 
-        Assert.Equal(new[] { nameof(RubricVersion.TemplateId), nameof(RubricVersion.CourseId) },
+        Assert.Equal(new[] { nameof(RubricVersion.TemplateId) },
             templateFk.Properties.Select(x => x.Name));
-        Assert.Equal(new[] { nameof(RubricTemplate.Id), nameof(RubricTemplate.CourseId) },
+        Assert.Equal(new[] { nameof(RubricTemplate.Id) },
             templateFk.PrincipalKey.Properties.Select(x => x.Name));
-        Assert.Equal(new[] { nameof(ExamSession.RubricVersionId), nameof(ExamSession.CourseId) },
+        Assert.Equal(new[] { nameof(ExamSession.RubricVersionId) },
             sessionVersionFk.Properties.Select(x => x.Name));
-        Assert.Equal(new[] { nameof(RubricVersion.Id), nameof(RubricVersion.CourseId) },
+        Assert.Equal(new[] { nameof(RubricVersion.Id) },
             sessionVersionFk.PrincipalKey.Properties.Select(x => x.Name));
         Assert.Equal(DeleteBehavior.Restrict, sessionVersionFk.DeleteBehavior);
-
-        Assert.Contains(version.GetKeys(), x => x != version.FindPrimaryKey() &&
-            x.Properties.Select(p => p.Name).SequenceEqual(
-                [nameof(RubricVersion.Id), nameof(RubricVersion.CourseId)]));
+        Assert.True(version.FindProperty(nameof(RubricVersion.CourseId))!.IsNullable);
+        Assert.True(db.Model.FindEntityType(typeof(RubricTemplate))!
+            .FindProperty(nameof(RubricTemplate.CourseId))!.IsNullable);
         Assert.Contains(version.GetKeys(), x => x != version.FindPrimaryKey() &&
             x.Properties.Select(p => p.Name).SequenceEqual(
                 [nameof(RubricVersion.TemplateId), nameof(RubricVersion.VersionNo)]));
-        Assert.Contains(db.Model.FindEntityType(typeof(RubricTemplate))!.GetKeys(), x =>
-            x.Properties.Select(p => p.Name).SequenceEqual(
-                [nameof(RubricTemplate.Id), nameof(RubricTemplate.CourseId)]));
+        var activeIndex = version.GetIndexes().Single(x => x.GetDatabaseName() == "ux_rubric_versions_single_active");
+        Assert.True(activeIndex.IsUnique);
+        Assert.Equal(new[] { nameof(RubricVersion.IsActive) }, activeIndex.Properties.Select(x => x.Name));
+        Assert.Equal("is_active", activeIndex.GetFilter());
     }
 
     private static AccessConfigDbContext CreateContext() =>

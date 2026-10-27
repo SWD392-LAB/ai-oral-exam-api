@@ -45,6 +45,11 @@ public sealed class RubricTemplatesController(
         return CreatedAtAction(nameof(GetVersion), new { templateId, versionId = version.Id }, version);
     }
 
+    [HttpPost("{templateId:guid}/versions/{versionId:guid}/activate")]
+    [Authorize(Roles = Roles.Administrator)]
+    public Task<RubricVersionDetailDto> ActivateVersion(Guid templateId, Guid versionId, CancellationToken ct) =>
+        versions.ActivateAsync(templateId, versionId, ct);
+
     [HttpGet("{templateId:guid}/versions")]
     public Task<IReadOnlyList<RubricVersionDto>> ListVersions(Guid templateId, CancellationToken ct) =>
         versions.ListAsync(templateId, ct);

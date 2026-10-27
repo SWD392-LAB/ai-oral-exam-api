@@ -15,6 +15,7 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
     private const decimal MaximumScore = 999.99m;
     private const string NpgsqlProvider = "Npgsql.EntityFrameworkCore.PostgreSQL";
     private const string VersionNumberConstraint = "rubric_versions_template_id_version_no_key";
+    private const long GlobalActiveRubricLockId = 0x4652413142555249;
 
     private bool IsAdmin => currentUser.IsInRole(Roles.Administrator);
 
@@ -24,6 +25,9 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
         EnsureAdministrator();
         var criteria = Validate(request);
         var template = await LoadTemplateForManagementAsync(templateId, ct);
+        if (template.CourseId is not null)
+            throw new ConflictException("rubric_template_not_platform_owned",
+                "New rubric versions can only be created for platform-owned templates.");
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
         try
@@ -79,6 +83,45 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
         }
     }
 
+    public async Task<RubricVersionDetailDto> ActivateAsync(
+        Guid templateId, Guid versionId, CancellationToken ct)
+    {
+        EnsureAdministrator();
+        var template = await LoadTemplateForManagementAsync(templateId, ct);
+        if (template.CourseId is not null)
+            throw new ConflictException("rubric_template_not_platform_owned",
+                "Only platform-owned rubric templates can activate shared versions.");
+
+        await using var transaction = await db.Database.BeginTransactionAsync(ct);
+        await LockGlobalActiveRubricAsync(ct);
+        await LockTemplateRowAsync(templateId, ct);
+        var version = await db.RubricVersions.Include(x => x.Criteria)
+            .FirstOrDefaultAsync(x => x.TemplateId == templateId && x.Id == versionId, ct)
+            ?? throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
+        if (!version.IsSealed)
+            throw new ConflictException("rubric_version_not_sealed", "Only sealed rubric versions can be activated.");
+
+        var activeVersions = await db.RubricVersions
+            .Where(x => x.IsActive && x.Id != versionId)
+            .ToListAsync(ct);
+        foreach (var activeVersion in activeVersions)
+            activeVersion.IsActive = false;
+        await db.SaveChangesAsync(ct);
+
+        version.IsActive = true;
+        await db.SaveChangesAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        return ToDetail(version, version.Criteria, version.MaxScore);
+    }
+
+    private async Task LockGlobalActiveRubricAsync(CancellationToken ct)
+    {
+        if (db.Database.ProviderName == NpgsqlProvider)
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock({GlobalActiveRubricLockId})", ct);
+    }
+
     public async Task<IReadOnlyList<RubricVersionDto>> ListAsync(Guid templateId, CancellationToken ct)
     {
         await LoadTemplateForManagementAsync(templateId, ct);
@@ -86,7 +129,8 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
             .Where(x => x.TemplateId == templateId)
             .OrderBy(x => x.VersionNo)
             .Select(x => new RubricVersionDto(
-                x.Id, x.TemplateId, x.CourseId, x.VersionNo, x.MaxScore, x.IsSealed, x.CreatedBy, x.CreatedAt))
+                x.Id, x.TemplateId, x.CourseId, x.VersionNo, x.MaxScore, x.IsSealed, x.IsActive,
+                x.CreatedBy, x.CreatedAt))
             .ToListAsync(ct);
     }
 
@@ -105,11 +149,12 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
     {
         EnsureManagementRole();
         var template = await db.RubricTemplates
-            .Include(x => x.Course).ThenInclude(x => x.Lecturers)
+            .Include(x => x.Course).ThenInclude(x => x!.Lecturers)
             .FirstOrDefaultAsync(x => x.Id == templateId, ct) ??
             throw new NotFoundException("rubric_template_not_found", "Rubric template not found.");
 
-        if (!IsAdmin && template.Course.Lecturers.All(x => x.LecturerId != currentUser.Id))
+        if (!IsAdmin && template.Course is not null
+            && template.Course.Lecturers.All(x => x.LecturerId != currentUser.Id))
             throw new ForbiddenException("You are not assigned to this course.");
 
         return template;
@@ -190,6 +235,7 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
         version.VersionNo,
         maxScore,
         version.IsSealed,
+        version.IsActive,
         version.CreatedBy,
         version.CreatedAt,
         criteria.OrderBy(x => x.OrderNo)

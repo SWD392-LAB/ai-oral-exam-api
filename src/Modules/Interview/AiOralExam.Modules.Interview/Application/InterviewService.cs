@@ -173,15 +173,19 @@ internal sealed class InterviewService(
                     submittedTurn.ProcessingStatus = TurnProcessingStatus.Completed;
                 if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Processing)
                     return new TurnSubmissionClaim(null, DuplicateResponse(attempt, previousResponse, submittedTurn, session),
-                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow));
+                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow,
+                            submittedTurn.Id));
                 if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Completed)
                     return new TurnSubmissionClaim(null, GetOriginalResponse(attempt, previousResponse, submittedTurn, session),
-                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow));
+                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow,
+                            submittedTurn.Id));
 
                 submittedTurn.ProcessingStatus = TurnProcessingStatus.Processing;
                 submittedTurn.ProcessingStartedAt = UtcNow;
+                submittedTurn.ProcessingToken = Guid.NewGuid();
                 return new TurnSubmissionClaim(new TurnProcessingClaim(attempt, previousResponse, submittedTurn,
-                    session, NormalizeAnswer(request.AnswerText), UtcNow, TimedOut: false, SessionOpen: session.IsOpenAt(UtcNow)), null, null);
+                    session, NormalizeAnswer(request.AnswerText), UtcNow, TimedOut: false, SessionOpen: session.IsOpenAt(UtcNow),
+                    ProcessingToken: submittedTurn.ProcessingToken.Value), null);
             }
 
             attempt.EnsureInProgress();
@@ -200,8 +204,10 @@ internal sealed class InterviewService(
             turn.AnsweredAt = now;
             turn.ProcessingStatus = TurnProcessingStatus.Processing;
             turn.ProcessingStartedAt = now;
+            turn.ProcessingToken = Guid.NewGuid();
             return new TurnSubmissionClaim(new TurnProcessingClaim(attempt, response, turn, session,
-                turn.AnswerTranscript, now, TimedOut: false, SessionOpen: true), null, null);
+                turn.AnswerTranscript, now, TimedOut: false, SessionOpen: true,
+                ProcessingToken: turn.ProcessingToken.Value), null, null);
         }, ct);
 
         if (claim.Response is not null)
@@ -241,10 +247,12 @@ internal sealed class InterviewService(
                 {
                     pendingTurn.ProcessingStatus = TurnProcessingStatus.Processing;
                     pendingTurn.ProcessingStartedAt = now;
+                    pendingTurn.ProcessingToken = Guid.NewGuid();
                     var pendingResponse = attempt.Responses.Single(r => r.Id == pendingTurn.QuestionResponseId);
                     var pendingSession = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
                     return new TurnProcessingClaim(attempt, pendingResponse, pendingTurn, pendingSession,
-                        pendingTurn.AnswerTranscript, now, pendingTurn.IsTimedOut, pendingSession.IsOpenAt(now));
+                        pendingTurn.AnswerTranscript, now, pendingTurn.IsTimedOut, pendingSession.IsOpenAt(now),
+                        pendingTurn.ProcessingToken.Value);
                 }
 
                 var response = attempt.CurrentResponse;
@@ -260,8 +268,9 @@ internal sealed class InterviewService(
                 turn.IsTimedOut = true;
                 turn.ProcessingStatus = TurnProcessingStatus.Processing;
                 turn.ProcessingStartedAt = now;
+                turn.ProcessingToken = Guid.NewGuid();
                 return new TurnProcessingClaim(attempt, response, turn, session, Answer: null, now,
-                    TimedOut: true, SessionOpen: sessionOpen);
+                    TimedOut: true, SessionOpen: sessionOpen, ProcessingToken: turn.ProcessingToken.Value);
             }, ct);
 
             if (claim is not null)
@@ -441,14 +450,43 @@ internal sealed class InterviewService(
                 claim.Answer, claim.Now, claim.TimedOut, claim.SessionOpen, events, ct);
             claim.Turn.ProcessingStatus = TurnProcessingStatus.Completed;
             claim.Turn.ProcessingStartedAt = null;
+            claim.Turn.ProcessingToken = null;
             claim.Turn.SubmissionResultJson = JsonSerializer.Serialize(result);
-            await WithAttemptLockAsync(attemptId, () => Task.FromResult(result), ct);
+            await WithAttemptLockAsync(attemptId, async () =>
+            {
+                await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, ct);
+                return result;
+            }, ct);
+        }
+        catch (TurnProcessingLeaseLostException)
+        {
+            db.ChangeTracker.Clear();
+            var currentAttempt = await LoadOwnAttemptAsync(attemptId, CancellationToken.None);
+            var currentTurn = currentAttempt.Responses.SelectMany(response => response.Turns)
+                .Single(turn => turn.Id == claim.Turn.Id);
+            var currentResponse = currentAttempt.Responses.Single(response => response.Id == currentTurn.QuestionResponseId);
+            var currentSession = await GetSessionAsync(currentAttempt.Participant.ExamSessionId, CancellationToken.None);
+            return GetOriginalResponse(currentAttempt, currentResponse, currentTurn, currentSession);
         }
         catch
         {
-            claim.Turn.ProcessingStatus = TurnProcessingStatus.Retry;
-            claim.Turn.ProcessingStartedAt = null;
-            await WithAttemptLockAsync(attemptId, () => Task.FromResult(true), CancellationToken.None);
+            try
+            {
+                await WithAttemptLockAsync(attemptId, async () =>
+                {
+                    await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, CancellationToken.None);
+                    claim.Turn.ProcessingStatus = TurnProcessingStatus.Retry;
+                    claim.Turn.ProcessingStartedAt = null;
+                    claim.Turn.ProcessingToken = null;
+                    return true;
+                }, CancellationToken.None);
+            }
+            catch (TurnProcessingLeaseLostException)
+            {
+                db.ChangeTracker.Clear();
+                throw new ConflictException("turn_processing_reclaimed",
+                    "Turn processing was recovered by another worker; retry the request.");
+            }
             var sequence = InterviewEventSequence.Current(claim.Attempt);
             await eventPublisher.PublishAsync(new InterviewAttemptEvent(Guid.NewGuid(), attemptId,
                 claim.Session.Id, sequence, claim.Turn.Id, sequence, "InterviewError", UtcNow), CancellationToken.None);
@@ -467,7 +505,8 @@ internal sealed class InterviewService(
         string? Answer,
         DateTime Now,
         bool TimedOut,
-        bool SessionOpen);
+        bool SessionOpen,
+        Guid ProcessingToken);
 
     private sealed record TurnSubmissionClaim(
         TurnProcessingClaim? Processing,
@@ -509,10 +548,20 @@ internal sealed class InterviewService(
 
     private static string? NormalizeAnswer(string? answer) => answer?.Trim();
 
-    private static InterviewAttemptEvent CreateEvent(
-        InterviewAttempt attempt, Guid sessionId, string type, long sequence, DateTime occurredAt)
+    private async Task EnsureProcessingLeaseAsync(Guid turnId, Guid processingToken, CancellationToken ct)
     {
-        var turnId = attempt.Responses.SelectMany(response => response.Turns)
+        var storedToken = await db.InterviewTurns.AsNoTracking()
+            .Where(turn => turn.Id == turnId)
+            .Select(turn => turn.ProcessingToken)
+            .SingleOrDefaultAsync(ct);
+        if (storedToken != processingToken)
+            throw new TurnProcessingLeaseLostException();
+    }
+
+    private static InterviewAttemptEvent CreateEvent(
+        InterviewAttempt attempt, Guid sessionId, string type, long sequence, DateTime occurredAt, Guid? turnId = null)
+    {
+        turnId ??= attempt.Responses.SelectMany(response => response.Turns)
             .MaxBy(turn => turn.AskedAt)?.Id;
         return new InterviewAttemptEvent(Guid.NewGuid(), attempt.Id, sessionId, sequence,
             turnId, sequence, type, occurredAt);
@@ -546,6 +595,10 @@ internal sealed class InterviewService(
         var inMemoryResult = await operation();
         await db.SaveChangesAsync(ct);
         return inMemoryResult;
+    }
+
+    private sealed class TurnProcessingLeaseLostException : Exception
+    {
     }
 
     private async Task<T> WithParticipantLockAsync<T>(Guid participantId, Func<Task<T>> operation, CancellationToken ct)

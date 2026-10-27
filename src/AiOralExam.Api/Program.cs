@@ -5,6 +5,7 @@ using AiOralExam.Modules.AccessConfig;
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.Modules.Interview;
+using AiOralExam.Modules.Interview.Application.Audio;
 using AiOralExam.Modules.Interview.Hubs;
 using AiOralExam.Modules.Reporting;
 using AiOralExam.SharedKernel.Errors;
@@ -23,7 +24,8 @@ var connectionString = config.GetConnectionString("Database")
 
 // ---------------------------------------------------------------- Shared
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddSignalR();
+builder.Services.AddSignalR(options =>
+    options.MaximumReceiveMessageSize = AudioChunkLimits.MaximumSignalRMessageBytes);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 

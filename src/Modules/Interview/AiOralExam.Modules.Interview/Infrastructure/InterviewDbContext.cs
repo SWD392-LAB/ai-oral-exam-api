@@ -60,7 +60,11 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.ToTable("interview_turns");
             e.HasKey(x => x.Id);
             e.Property(x => x.ProcessingStatus).HasDefaultValue(TurnProcessingStatus.AwaitingAnswer);
+            e.Property(x => x.ProcessingToken).HasColumnName("processing_token");
             e.Property(x => x.SubmissionResultJson).HasColumnName("submission_result").HasColumnType("jsonb");
+            e.HasIndex(x => new { x.ProcessingStatus, x.ProcessingStartedAt })
+                .HasFilter("processing_status IN ('Processing', 'Retry')")
+                .HasDatabaseName("ix_interview_turns_processing_recovery");
         });
 
         b.Entity<CriterionScore>(e =>

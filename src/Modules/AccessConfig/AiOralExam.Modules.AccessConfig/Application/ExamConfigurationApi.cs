@@ -110,8 +110,8 @@ internal sealed class ExamConfigurationApi(AccessConfigDbContext db) : IExamConf
         if (session.RubricVersionId is not Guid versionId
             || session.RubricVersion is not { } version
             || version.Id != versionId
-            || version.CourseId != session.CourseId)
-            throw InvalidSharedRubric("A rubric version from the session course must be selected.");
+            || version.CourseId is not null && version.CourseId != session.CourseId)
+            throw InvalidSharedRubric("The pinned rubric version does not match the session configuration.");
 
         if (!version.IsSealed)
             throw InvalidSharedRubric("The selected rubric version is not sealed.");

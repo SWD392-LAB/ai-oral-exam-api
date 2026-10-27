@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Courses;
 using AiOralExam.Modules.AccessConfig.Contracts;
@@ -10,7 +9,6 @@ using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
-
 
 namespace AiOralExam.Modules.AccessConfig.Application.ExamSessions;
 internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser me) : IExamSessionCommands
@@ -70,13 +68,15 @@ internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser
                 .FirstOrDefaultAsync(x => x.Id == versionId, ct) ??
                 throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
 
-            if (selectedVersion.CourseId != c.Id
+            if (selectedVersion.CourseId is not null
                 || selectedVersion.Template is null
                 || selectedVersion.Template.Id != selectedVersion.TemplateId
-                || selectedVersion.Template.CourseId != c.Id)
+                || selectedVersion.Template.CourseId is not null)
                 throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
-
             ValidateSelectedRubricVersion(selectedVersion);
+            if (!selectedVersion.IsActive)
+                throw new ConflictException("rubric_version_not_active",
+                    "SharedVersion sessions must pin the currently active platform rubric version.");
         }
 
         var s = new ExamSession
@@ -234,10 +234,10 @@ internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser
             .FirstOrDefaultAsync(x => x.Id == versionId, ct) ??
             throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
 
-        if (version.CourseId != session.CourseId
+        if (version.CourseId is not null && version.CourseId != session.CourseId
             || version.Template is null
             || version.Template.Id != version.TemplateId
-            || version.Template.CourseId != session.CourseId)
+            || version.Template.CourseId is not null && version.Template.CourseId != session.CourseId)
             throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
 
         ValidateSelectedRubricVersion(version);

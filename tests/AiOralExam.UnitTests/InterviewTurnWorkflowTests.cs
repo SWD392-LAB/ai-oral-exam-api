@@ -1,6 +1,7 @@
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.Interview.Application;
 using AiOralExam.Modules.Interview.Application.Ai;
+using AiOralExam.Modules.Interview.Application.Audio;
 using AiOralExam.Modules.Interview.Application.Events;
 using AiOralExam.Modules.Interview.Application.Features.ScoreReview;
 using AiOralExam.Modules.Interview.Contracts;
@@ -74,8 +75,34 @@ public sealed class InterviewTurnWorkflowTests
         Assert.True(retry.Duplicate);
         Assert.Equal(original.Outcome, retry.Outcome);
         Assert.Equal(original.Attempt.CurrentTurn?.TurnId, retry.Attempt.CurrentTurn?.TurnId);
+        Assert.Equal(mainTurnId, fixture.Events.Events[^1].TurnId);
         Assert.Equal(2, fixture.Analyzer.CallCount);
         Assert.Single(fixture.Db.CriterionScores);
+    }
+
+    [Fact]
+    public async Task Reclaimed_processing_lease_prevents_an_older_provider_result_from_committing()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Analyzer.PauseNextCall();
+        var originalProcessing = fixture.Service.SubmitAnswerAsync(started.State.AttemptId,
+            new SubmitAnswerRequest("Durable while reclaimed", started.State.CurrentTurn!.TurnId));
+        await fixture.Analyzer.WaitUntilPausedAsync();
+
+        await using var recoveryDb = fixture.CreateIndependentDb();
+        var recoveryService = fixture.CreateIndependentService(recoveryDb);
+        fixture.Clock.Set(StartTime.AddMinutes(3));
+        Assert.Equal(1, await recoveryService.ExpireOverdueAttemptsAsync());
+
+        fixture.Analyzer.Release();
+        var lateProviderResult = await originalProcessing;
+
+        Assert.True(lateProviderResult.Duplicate);
+        await using var verificationDb = fixture.CreateIndependentDb();
+        Assert.Equal(TurnProcessingStatus.Completed, (await verificationDb.InterviewTurns.SingleAsync()).ProcessingStatus);
+        Assert.Single(await verificationDb.CriterionScores.ToListAsync());
+        Assert.Equal(AttemptStatus.PendingReview, (await verificationDb.InterviewAttempts.SingleAsync()).Status);
     }
 
     [Fact]
@@ -410,6 +437,135 @@ public sealed class InterviewTurnWorkflowTests
     }
 
     [Fact]
+    public async Task Audio_chunk_submission_requires_the_attempt_owner_and_current_turn()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+
+        await Assert.ThrowsAsync<NotFoundException>(() => fixture.CreateAudioService(
+                new TestUser(Guid.NewGuid(), Roles.Student))
+            .SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1], "audio/webm"));
+        await Assert.ThrowsAsync<ForbiddenException>(() => fixture.CreateAudioService(
+                new TestUser(fixture.Db.Participants.Single().StudentId, Roles.Lecturer))
+            .SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1], "audio/webm"));
+        await Assert.ThrowsAsync<ConflictException>(() => fixture.CreateAudioService(
+                new TestUser(fixture.Db.Participants.Single().StudentId, Roles.Student))
+            .SendAudioChunkAsync(started.State.AttemptId, Guid.NewGuid(), 0, [1], "audio/webm"));
+
+        Assert.Equal(0, fixture.AudioStore.AppendCount);
+    }
+
+    [Fact]
+    public async Task Audio_chunks_are_retry_safe_and_reject_out_of_order_or_conflicting_sequences()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        var turnId = started.State.CurrentTurn!.TurnId;
+
+        var first = await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2], "audio/webm");
+        var retry = await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2], "audio/webm");
+
+        Assert.False(first.Duplicate);
+        Assert.True(retry.Duplicate);
+        Assert.Equal(1, retry.NextSequence);
+        Assert.Equal(2, retry.BytesReceived);
+        Assert.Equal("audio_chunk_out_of_order", (await Assert.ThrowsAsync<ConflictException>(() =>
+            audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 2, [3], "audio/webm"))).Code);
+        Assert.Equal("audio_chunk_duplicate_conflict", (await Assert.ThrowsAsync<ConflictException>(() =>
+            audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [9], "audio/webm"))).Code);
+    }
+
+    [Fact]
+    public async Task Audio_checkpoint_allows_upload_to_resume_after_reconnect()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var student = new TestUser(fixture.Db.Participants.Single().StudentId, Roles.Student);
+        var initialConnection = fixture.CreateAudioService(student);
+        var turnId = started.State.CurrentTurn!.TurnId;
+        await initialConnection.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1], "audio/webm");
+
+        var reconnected = fixture.CreateAudioService(student);
+        var checkpoint = await reconnected.GetAudioCheckpointAsync(started.State.AttemptId, turnId);
+        var next = await reconnected.SendAudioChunkAsync(started.State.AttemptId, turnId,
+            checkpoint!.NextSequence, [2], "audio/webm");
+
+        Assert.Equal(1, checkpoint.NextSequence);
+        Assert.Equal(2, next.NextSequence);
+        Assert.Equal(2, next.BytesReceived);
+    }
+
+    [Fact]
+    public async Task Audio_completion_transcribes_then_uses_durable_answer_submission_and_state_version()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+
+        var result = await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        var retry = await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+
+        Assert.Equal(SubmitOutcome.Completed, result.Outcome);
+        Assert.True(retry.Duplicate);
+        Assert.Equal(result.Outcome, retry.Outcome);
+        Assert.Equal("transcribed answer", fixture.Db.InterviewTurns.Single().AnswerTranscript);
+        Assert.Equal(1, fixture.SpeechToText.CallCount);
+        Assert.Equal(fixture.Events.Events[^1].StateVersion, result.Attempt.StateVersion);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+    }
+
+    [Fact]
+    public async Task Audio_chunks_are_rejected_after_the_turn_deadline()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+
+        await Assert.ThrowsAsync<ConflictException>(() => fixture.CreateAudioService(new TestUser(
+                fixture.Db.Participants.Single().StudentId, Roles.Student))
+            .SendAudioChunkAsync(started.State.AttemptId, started.State.CurrentTurn!.TurnId,
+                0, [1], "audio/webm"));
+
+        Assert.Equal(0, fixture.AudioStore.AppendCount);
+        Assert.Equal(0, fixture.SpeechToText.CallCount);
+    }
+
+    [Fact]
+    public async Task Audio_completion_does_not_start_transcription_after_the_deadline()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1], "audio/webm");
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+
+        await Assert.ThrowsAsync<ConflictException>(() =>
+            audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId));
+
+        Assert.Equal(0, fixture.AudioStore.CompleteCount);
+        Assert.Equal(0, fixture.SpeechToText.CallCount);
+    }
+
+    [Fact]
+    public async Task Unconfigured_speech_to_text_reports_unavailable_instead_of_fabricating_a_transcript()
+    {
+        var exception = await Assert.ThrowsAsync<AppException>(() =>
+            new UnavailableSpeechToTextService().TranscribeAsync(
+                new MemoryStream([1]), "audio/webm", "Vietnamese"));
+
+        Assert.Equal(503, exception.StatusCode);
+        Assert.Equal("speech_to_text_unavailable", exception.Code);
+    }
+
+    [Fact]
     public async Task Get_attempt_state_recovers_current_authoritative_state_without_event_replay()
     {
         await using var fixture = await CreateFixtureAsync();
@@ -442,8 +598,9 @@ public sealed class InterviewTurnWorkflowTests
             ExamSessionStatus.Published,
             questions);
         var studentId = Guid.NewGuid();
+        var databaseName = Guid.NewGuid().ToString();
         var db = new InterviewDbContext(new DbContextOptionsBuilder<InterviewDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
+            .UseInMemoryDatabase(databaseName)
             .Options);
         db.Participants.Add(new Participant
         {
@@ -459,11 +616,14 @@ public sealed class InterviewTurnWorkflowTests
         var scorer = new TestScorer(criterionId);
         var events = new TestEventPublisher(db);
         var configuration = new TestExamConfiguration(session);
+        var audioStore = new TestAudioChunkStore();
+        var speechToText = new TestSpeechToText();
         var service = new InterviewService(db, configuration, analyzer, scorer,
             events, new TestUser(studentId, Roles.Student), clock,
             Options.Create(new InterviewOptions { AllowRetake = allowRetake, TimeLimitGraceSeconds = 0 }),
             NullLogger<InterviewService>.Instance);
-        return new Fixture(db, service, clock, analyzer, scorer, configuration, session, events);
+        return new Fixture(db, service, clock, analyzer, scorer, configuration, session, events,
+            audioStore, speechToText, databaseName);
     }
 
     private sealed class Fixture(
@@ -474,7 +634,10 @@ public sealed class InterviewTurnWorkflowTests
         TestScorer scorer,
         TestExamConfiguration configuration,
         ExamSessionInfo session,
-        TestEventPublisher events) : IAsyncDisposable
+        TestEventPublisher events,
+        TestAudioChunkStore audioStore,
+        TestSpeechToText speechToText,
+        string databaseName) : IAsyncDisposable
     {
         public InterviewDbContext Db { get; } = db;
         public InterviewService Service { get; } = service;
@@ -484,10 +647,102 @@ public sealed class InterviewTurnWorkflowTests
         public TestExamConfiguration Configuration { get; } = configuration;
         public ExamSessionInfo Session { get; } = session;
         public TestEventPublisher Events { get; } = events;
+        public TestAudioChunkStore AudioStore { get; } = audioStore;
+        public TestSpeechToText SpeechToText { get; } = speechToText;
+        public InterviewDbContext CreateIndependentDb() => new(new DbContextOptionsBuilder<InterviewDbContext>()
+            .UseInMemoryDatabase(databaseName)
+            .Options);
+        public InterviewService CreateIndependentService(InterviewDbContext db) => new(db, Configuration,
+            new TestAnalyzer(), Scorer, new TestEventPublisher(db),
+            new TestUser(Db.Participants.Single().StudentId, Roles.Student), Clock,
+            Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
+            NullLogger<InterviewService>.Instance);
         public InterviewService CreateService(TestUser user) => new(Db, Configuration, Analyzer, Scorer,
             Events, user, Clock, Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
             NullLogger<InterviewService>.Instance);
+        public InterviewAudioSubmissionService CreateAudioService(TestUser user) => new(Db, Configuration,
+            user, AudioStore, SpeechToText, Service, Clock,
+            Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }));
         public ValueTask DisposeAsync() => Db.DisposeAsync();
+    }
+
+    private sealed class TestAudioChunkStore : IAudioChunkStore
+    {
+        private readonly Dictionary<(Guid AttemptId, Guid TurnId), AudioUpload> _uploads = [];
+        public int AppendCount { get; private set; }
+        public int CompleteCount { get; private set; }
+
+        public Task<AudioChunkAppendResult> AppendAsync(
+            Guid attemptId, Guid turnId, int sequence, byte[] chunk, string contentType, CancellationToken ct)
+        {
+            AppendCount++;
+            var key = (attemptId, turnId);
+            if (!_uploads.TryGetValue(key, out var upload))
+                _uploads[key] = upload = new AudioUpload(contentType);
+
+            AudioChunkAppendStatus status;
+            if (upload.IsCompleted)
+                status = AudioChunkAppendStatus.UploadCompleted;
+            else if (!string.Equals(upload.ContentType, contentType, StringComparison.OrdinalIgnoreCase))
+                status = AudioChunkAppendStatus.ContentTypeConflict;
+            else if (sequence < upload.Chunks.Count)
+                status = upload.Chunks[sequence].SequenceEqual(chunk)
+                    ? AudioChunkAppendStatus.Duplicate
+                    : AudioChunkAppendStatus.ConflictingDuplicate;
+            else if (sequence > upload.Chunks.Count)
+                status = AudioChunkAppendStatus.OutOfOrder;
+            else
+            {
+                upload.Chunks.Add(chunk.ToArray());
+                status = AudioChunkAppendStatus.Appended;
+            }
+
+            return Task.FromResult(new AudioChunkAppendResult(status, upload.ToCheckpoint()));
+        }
+
+        public Task<AudioChunkCheckpoint?> GetCheckpointAsync(Guid attemptId, Guid turnId, CancellationToken ct) =>
+            Task.FromResult(_uploads.TryGetValue((attemptId, turnId), out var upload)
+                ? upload.ToCheckpoint()
+                : null);
+
+        public Task<CompletedAudio> CompleteUploadAsync(Guid attemptId, Guid turnId, CancellationToken ct)
+        {
+            CompleteCount++;
+            if (!_uploads.TryGetValue((attemptId, turnId), out var upload) || upload.Chunks.Count == 0)
+                throw new ConflictException("audio_upload_empty", "Upload at least one audio chunk before completing.");
+            upload.IsCompleted = true;
+            var bytes = upload.Chunks.SelectMany(chunk => chunk).ToArray();
+            return Task.FromResult(new CompletedAudio(new MemoryStream(bytes, writable: false),
+                upload.ContentType, upload.Transcript));
+        }
+
+        public Task<string> SaveTranscriptIfAbsentAsync(
+            Guid attemptId, Guid turnId, string transcript, CancellationToken ct)
+        {
+            var upload = _uploads[(attemptId, turnId)];
+            upload.Transcript ??= transcript;
+            return Task.FromResult(upload.Transcript);
+        }
+
+        private sealed class AudioUpload(string contentType)
+        {
+            public string ContentType { get; } = contentType;
+            public List<byte[]> Chunks { get; } = [];
+            public bool IsCompleted { get; set; }
+            public string? Transcript { get; set; }
+            public AudioChunkCheckpoint ToCheckpoint() => new(Chunks.Count,
+                Chunks.Sum(chunk => (long)chunk.Length), ContentType, IsCompleted, Transcript);
+        }
+    }
+
+    private sealed class TestSpeechToText : ISpeechToTextService
+    {
+        public int CallCount { get; private set; }
+        public Task<string> TranscribeAsync(Stream audio, string contentType, string language, CancellationToken ct = default)
+        {
+            CallCount++;
+            return Task.FromResult("transcribed answer");
+        }
     }
 
     private sealed class TestEventPublisher(InterviewDbContext db) : IInterviewEventPublisher

@@ -17,6 +17,7 @@ public class InterviewTurn
     public bool IsTimedOut { get; set; }
     public TurnProcessingStatus ProcessingStatus { get; set; } = TurnProcessingStatus.AwaitingAnswer;
     public DateTime? ProcessingStartedAt { get; set; }
+    public Guid? ProcessingToken { get; set; }
     public string? SubmissionResultJson { get; set; }
 }
 
