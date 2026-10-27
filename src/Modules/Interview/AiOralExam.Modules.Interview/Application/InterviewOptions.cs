@@ -8,12 +8,6 @@ public sealed class InterviewOptions
     /// <summary>Extra seconds after the time limit (network delay) before an answer counts as timed out.</summary>
     public int TimeLimitGraceSeconds { get; set; } = 15;
 
-    /// <summary>
-    /// M1: the student sees the AI score right after each question (M1 gate).
-    /// From M3 on, set to false: students only see scores after the lecturer confirms them.
-    /// </summary>
-    public bool ShowAiScoreToStudent { get; set; } = true;
-
     /// <summary>Allow another attempt after a finished one (open point - off by default).</summary>
     public bool AllowRetake { get; set; }
 

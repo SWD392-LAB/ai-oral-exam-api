@@ -8,6 +8,8 @@ using AiOralExam.Modules.AccessConfig.Application.LecturerAssignments;
 using AiOralExam.Modules.AccessConfig.Application.Participants;
 using AiOralExam.Modules.AccessConfig.Application.Questions;
 using AiOralExam.Modules.AccessConfig.Application.Rubrics;
+using AiOralExam.Modules.AccessConfig.Application.RubricVersions;
+using AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
 using AiOralExam.Modules.AccessConfig.Application.Users;
 using AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
 using AiOralExam.Modules.AccessConfig.Application.Users.GetUser;
@@ -38,6 +40,8 @@ public static class AccessConfigModule
         services.AddScoped<ICourseService, CourseService>();
         services.AddScoped<IQuestionService, QuestionService>();
         services.AddScoped<IRubricService, RubricService>();
+        services.AddScoped<IRubricTemplateService, RubricTemplateService>();
+        services.AddScoped<IRubricVersionService, RubricVersionService>();
         services.AddScoped<CreateUserService>();
         services.AddScoped<UpdateUserService>();
         services.AddScoped<ListUsersService>();

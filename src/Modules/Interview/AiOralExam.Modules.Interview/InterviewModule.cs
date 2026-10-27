@@ -1,6 +1,7 @@
 using AiOralExam.Modules.Interview.Application;
 using AiOralExam.Modules.Interview.Application.Ai;
 using AiOralExam.Modules.Interview.Application.Ai.Mock;
+using AiOralExam.Modules.Interview.Application.Events;
 using AiOralExam.Modules.Interview.Application.Features.ScoreReview;
 using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.Modules.Interview.Infrastructure;
@@ -24,6 +25,8 @@ public static class InterviewModule
         services.AddScoped<IInterviewService, InterviewService>();
         services.AddScoped<IInterviewReviewService, InterviewReviewService>();
         services.AddScoped<IInterviewResultsApi, InterviewResultsApi>();
+        services.AddSingleton<IInterviewEventPublisher, SignalRInterviewEventPublisher>();
+        services.AddHostedService<InterviewAttemptDeadlineWorker>();
 
         // ---- AI: M1 uses mocks. M2: switch to real adapters here, without touching InterviewService ----
         services.AddSingleton<IAnswerAnalyzer>(sp =>

@@ -72,6 +72,7 @@ internal sealed class ExamSessionQueries(
         var s = await db.ExamSessions.AsNoTracking()
                     .Include(x => x.Course).ThenInclude(c => c.Lecturers)
                     .Include(x => x.Questions).ThenInclude(q => q.Rubric!).ThenInclude(r => r.Criteria)
+                    .Include(x => x.RubricVersion).ThenInclude(v => v!.Criteria)
                     .AsSplitQuery()
                     .FirstOrDefaultAsync(x => x.Id == id, ct)
                 ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
@@ -79,12 +80,19 @@ internal sealed class ExamSessionQueries(
         if (!IsAdmin && s.Course.Lecturers.All(l => l.LecturerId != currentUser.Id))
             throw new ForbiddenException("You are not assigned to the course of this exam session.");
 
+        ExamConfigurationApi.ValidateRubricConfiguration(s);
+
         return new ExamSessionDetailDto(
             s.Id, s.CourseId, s.Course.Code, s.Course.Name, s.Title, s.StartTime, s.EndTime,
             s.TimeLimitPerAnswerSeconds, s.MaxFollowUps, s.Status.ToString(),
             s.Questions.OrderBy(q => q.OrderNo)
-                .Select(q => new QuestionDto(q.Id, q.OrderNo, q.Content,
-                    ExamConfigurationApi.ToCriteria(q.Rubric), q.Rubric?.MaxScore ?? 0))
-                .ToList());
+                .Select(q =>
+                {
+                    var question = ExamConfigurationApi.ToQuestionInfo(s, q);
+                    return new QuestionDto(question.Id, question.OrderNo, question.Content,
+                        question.Criteria, question.MaxScore);
+                })
+                .ToList(),
+            s.RubricMode.ToString(), s.RubricVersionId);
     }
 }

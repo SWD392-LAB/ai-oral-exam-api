@@ -11,4 +11,10 @@ public interface IInterviewService
     Task<SubmitAnswerResponse> SubmitAnswerAsync(Guid attemptId, SubmitAnswerRequest request, CancellationToken ct = default);
 
     Task<AttemptStateDto> GetAttemptStateAsync(Guid attemptId, CancellationToken ct = default);
+
+    Task<Guid> AuthorizeAttemptSubscriptionAsync(Guid attemptId, CancellationToken ct = default);
+
+    Task AuthorizeSessionSubscriptionAsync(Guid examSessionId, CancellationToken ct = default);
+
+    Task<int> ExpireOverdueAttemptsAsync(CancellationToken ct = default);
 }

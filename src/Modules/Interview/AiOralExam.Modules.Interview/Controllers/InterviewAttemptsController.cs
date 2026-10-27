@@ -42,7 +42,7 @@ public sealed class InterviewAttemptsController(IInterviewService interview) : C
 
     /// <summary>
     /// Submits the answer (M1: text) to the current question. Returns a follow-up, the next question
-    /// or completion, plus the AI-suggested score (if InterviewOptions.ShowAiScoreToStudent).
+    /// or completion. AI scores are withheld until lecturer confirmation.
     /// </summary>
     [HttpPost("interview-attempts/{id:guid}/responses")]
     [ProducesResponseType<SubmitAnswerResponse>(StatusCodes.Status200OK)]

@@ -117,13 +117,13 @@ INSERT INTO course_lecturers (course_id, lecturer_id, assigned_at) VALUES
   ('22222222-0000-0000-0000-000000000004', '11111111-0000-0000-0000-000000000010', '2026-09-25 08:05+07');
 
 -- ---------- Exam sessions ----------
-INSERT INTO exam_sessions (id, course_id, created_by, title, start_time, end_time, time_limit_per_answer_seconds, max_follow_ups, status, created_at) VALUES
-  ('33333333-0000-0000-0000-000000000001', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000002', 'SWD392 Midterm Oral Exam', timestamptz '2026-10-01 08:00+07', now() + interval '30 days', 120, 2, 'Published', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000002', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000003', 'PRN232 Final Oral Exam', now() + interval '30 days', now() + interval '30 days 9 hours', 150, 1, 'Draft', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000003', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000011', 'SWD392 Midterm Oral Exam - Class SE1802', timestamptz '2026-09-15 08:00+07', timestamptz '2026-09-15 17:00+07', 120, 2, 'Closed', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000004', '22222222-0000-0000-0000-000000000003', '11111111-0000-0000-0000-000000000009', 'DBI202 Oral Exam - SQL & Normalization', now() - interval '2 days', now() + interval '14 days', 90, 2, 'Published', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000005', '22222222-0000-0000-0000-000000000004', '11111111-0000-0000-0000-000000000010', 'SWT301 Oral Test', timestamptz '2026-09-22 08:00+07', timestamptz '2026-09-22 12:00+07', 120, 1, 'Closed', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000006', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000012', 'PRN232 Midterm Oral Exam', now() + interval '3 days', now() + interval '4 days', 120, 2, 'Published', '2026-09-26 10:00+07');
+INSERT INTO exam_sessions (id, course_id, created_by, title, start_time, end_time, time_limit_per_answer_seconds, max_follow_ups, status, rubric_mode, created_at) VALUES
+  ('33333333-0000-0000-0000-000000000001', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000002', 'SWD392 Midterm Oral Exam', timestamptz '2026-10-01 08:00+07', now() + interval '30 days', 120, 2, 'Published', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000002', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000003', 'PRN232 Final Oral Exam', now() + interval '30 days', now() + interval '30 days 9 hours', 150, 1, 'Draft', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000003', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000011', 'SWD392 Midterm Oral Exam - Class SE1802', timestamptz '2026-09-15 08:00+07', timestamptz '2026-09-15 17:00+07', 120, 2, 'Closed', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000004', '22222222-0000-0000-0000-000000000003', '11111111-0000-0000-0000-000000000009', 'DBI202 Oral Exam - SQL & Normalization', now() - interval '2 days', now() + interval '14 days', 90, 2, 'Published', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000005', '22222222-0000-0000-0000-000000000004', '11111111-0000-0000-0000-000000000010', 'SWT301 Oral Test', timestamptz '2026-09-22 08:00+07', timestamptz '2026-09-22 12:00+07', 120, 1, 'Closed', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000006', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000012', 'PRN232 Midterm Oral Exam', now() + interval '3 days', now() + interval '4 days', 120, 2, 'Published', 'Legacy', '2026-09-26 10:00+07');
 
 -- ---------- Questions (1..5: original; 6..22: added) ----------
 INSERT INTO questions (id, exam_session_id, order_no, content) VALUES

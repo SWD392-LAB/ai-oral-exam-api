@@ -27,6 +27,9 @@ internal sealed class RubricService(AccessConfigDbContext db, ICurrentUser me) :
             throw new ConflictException("exam_session_locked", "Only draft exam sessions can be edited.");
         if (!me.IsInRole(Roles.Administrator) && s.Course.Lecturers.All(x => x.LecturerId != me.Id))
             throw new ForbiddenException("You are not assigned to this course.");
+        if (s.RubricMode != RubricMode.Legacy)
+            throw new ConflictException("rubric_mode_conflict",
+                "Question-specific rubrics can only be changed for Legacy sessions.");
         return s;
     }
 
@@ -147,8 +150,8 @@ internal sealed class RubricService(AccessConfigDbContext db, ICurrentUser me) :
         if (request.Criteria.Any(x => x.OrderNo <= 0)
             || request.Criteria.Select(x => x.OrderNo).Distinct().Count() != request.Criteria.Count)
             throw InvalidCriteria("Criterion order numbers must be positive and unique.");
-        if (request.Criteria.Any(x => x.MaxPoints < 0 || x.MaxPoints > MaxRubricScore))
-            throw InvalidCriteria("Criterion max points must be between 0 and 999.99.");
+        if (request.Criteria.Any(x => x.MaxPoints <= 0 || x.MaxPoints > MaxRubricScore))
+            throw InvalidCriteria("Criterion max points must be greater than 0 and no more than 999.99.");
         if (request.Criteria.Sum(x => x.MaxPoints) <= 0
             || request.Criteria.Sum(x => x.MaxPoints) > MaxRubricScore)
             throw InvalidCriteria("The total max points must be greater than 0 and no more than 999.99.");

@@ -76,6 +76,55 @@ public sealed class ScoreReviewHttpContractTests
     }
 
     [Fact]
+    public async Task Draft_and_confirm_endpoints_preserve_pending_then_approved_states()
+    {
+        using var factory = NewLecturerFactory();
+        await SeedReviewScenarioAsync(factory);
+        using var client = factory.CreateClient();
+
+        using var draftResponse = await client.PutAsJsonAsync(
+            $"/api/interview-attempts/{AttemptId}/score-review/draft",
+            new { finalScore = 85.25m, comment = "Draft comment." });
+
+        Assert.Equal(HttpStatusCode.OK, draftResponse.StatusCode);
+        var draft = await draftResponse.Content.ReadFromJsonAsync<ScoreReviewResult>(JsonOptions);
+        Assert.NotNull(draft);
+        Assert.Equal(ReviewStatus.Pending, draft.Status);
+        Assert.Null(draft.ReviewedAt);
+
+        using var detailsResponse = await client.GetAsync($"/api/interview-attempts/{AttemptId}/review");
+        var details = await detailsResponse.Content.ReadFromJsonAsync<AttemptResult>(JsonOptions);
+        Assert.NotNull(details);
+        Assert.Equal(draft, details.Review);
+        Assert.Equal(AttemptStatus.PendingReview, details.Status);
+
+        using var confirmResponse = await client.PostAsync(
+            $"/api/interview-attempts/{AttemptId}/score-review/confirm", content: null);
+        Assert.Equal(HttpStatusCode.OK, confirmResponse.StatusCode);
+        var confirmed = await confirmResponse.Content.ReadFromJsonAsync<ScoreReviewResult>(JsonOptions);
+        Assert.NotNull(confirmed);
+        Assert.Equal(ReviewStatus.Approved, confirmed.Status);
+        Assert.NotNull(confirmed.ReviewedAt);
+    }
+
+    [Fact]
+    public async Task Lecturer_can_list_submitted_attempts_for_an_assigned_session()
+    {
+        using var factory = NewLecturerFactory();
+        await SeedReviewScenarioAsync(factory);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/api/exam-sessions/{ExamSessionId}/score-reviews");
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        var attempts = await response.Content.ReadFromJsonAsync<AttemptResult[]>(JsonOptions);
+        Assert.NotNull(attempts);
+        Assert.Single(attempts);
+        Assert.Equal(AttemptId, attempts[0].AttemptId);
+        Assert.Equal(AttemptStatus.PendingReview, attempts[0].Status);
+    }
+
+    [Fact]
     public async Task Put_score_review_is_forbidden_for_student()
     {
         using var factory = new ApiTestFactory().AuthenticateAs(StudentId, Roles.Student);

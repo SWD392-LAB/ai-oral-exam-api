@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,14 +26,25 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
     private readonly string _interviewDatabase = $"interview-tests-{Guid.NewGuid():N}";
     private Guid _authenticatedUserId;
     private string _authenticatedRole = Roles.Student;
+    private bool _authenticated = true;
+    private TestAuthenticationIdentity? _testIdentity;
 
     internal Guid AuthenticatedUserId => _authenticatedUserId;
     internal string AuthenticatedRole => _authenticatedRole;
 
     internal ApiTestFactory AuthenticateAs(Guid userId, string role)
     {
+        _authenticated = true;
         _authenticatedUserId = userId;
         _authenticatedRole = role;
+        _testIdentity?.Set(userId, role);
+        return this;
+    }
+
+    internal ApiTestFactory AuthenticateAnonymously()
+    {
+        _authenticated = false;
+        _testIdentity?.SetAuthentication(false);
         return this;
     }
 
@@ -51,13 +63,15 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
 
         builder.ConfigureTestServices(services =>
         {
-            services.AddSingleton(new TestAuthenticationIdentity(_authenticatedUserId, _authenticatedRole));
+            _testIdentity = new TestAuthenticationIdentity(_authenticatedUserId, _authenticatedRole, _authenticated);
+            services.AddSingleton(_testIdentity);
 
             services.RemoveAll<AccessConfigDbContext>();
             services.RemoveAll<DbContextOptions<AccessConfigDbContext>>();
             services.AddScoped(_ => new AccessConfigDbContext(
                 new DbContextOptionsBuilder<AccessConfigDbContext>()
                     .UseInMemoryDatabase(_accessConfigDatabase)
+                    .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
                     .Options));
 
             services.RemoveAll<InterviewDbContext>();
@@ -99,6 +113,8 @@ public sealed class TestAuthenticationHandler(
     protected override Task<AuthenticateResult> HandleAuthenticateAsync()
     {
         var testIdentity = Context.RequestServices.GetRequiredService<TestAuthenticationIdentity>();
+        if (!testIdentity.IsAuthenticated)
+            return Task.FromResult(AuthenticateResult.NoResult());
         var claims = new[]
         {
             new Claim(AppClaims.UserId, testIdentity.UserId.ToString()),
@@ -126,4 +142,18 @@ public sealed class FakeKeycloakAdminClient : IKeycloakAdminClient
         Task.CompletedTask;
 }
 
-internal sealed record TestAuthenticationIdentity(Guid UserId, string Role);
+internal sealed class TestAuthenticationIdentity(Guid userId, string role, bool isAuthenticated)
+{
+    public Guid UserId { get; private set; } = userId;
+    public string Role { get; private set; } = role;
+    public bool IsAuthenticated { get; private set; } = isAuthenticated;
+
+    public void Set(Guid userId, string role)
+    {
+        UserId = userId;
+        Role = role;
+        IsAuthenticated = true;
+    }
+
+    public void SetAuthentication(bool isAuthenticated) => IsAuthenticated = isAuthenticated;
+}
