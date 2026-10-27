@@ -14,7 +14,7 @@ public sealed class AiProviderOptions
 
     public string GeminiApiKey { get; set; } = "";
     public string GeminiEndpoint { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
-    public string GeminiModel { get; set; } = "gemini-2.0-flash";
+    public string GeminiModel { get; set; } = "gemini-3.5-flash-lite";
 
     /// <summary>HTTP endpoint for a local faster-whisper service.</summary>
     public string LocalSttEndpoint { get; set; } = "http://localhost:8001/transcribe";

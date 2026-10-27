@@ -332,15 +332,18 @@ confirmed examples can be read without submitting a new review.
 ### AI provider modes and audio API
 
 The API keeps `Mock` as the default, so tests and the demo run without billing.
-For a real LLM, set `AiProviders:LlmProvider=Gemini` and store the key outside
-the repository:
+The committed `appsettings.Development.json` enables the free-demo profile:
+Gemini for LLM evaluation and local HTTP sidecars for STT/TTS. Start the API
+with `ASPNETCORE_ENVIRONMENT=Development`, run the faster-whisper and
+Piper/Coqui sidecars on ports `8001` and `8002`, and store the Gemini key
+outside the repository:
 
 ```sh
 dotnet user-secrets set "AiProviders:GeminiApiKey" "..." --project src/AiOralExam.Api
 ```
 
-For a no-billing voice demo, run local faster-whisper and Piper/Coqui HTTP
-sidecars, then set `SttProvider` and `TtsProvider` to `LocalHttp`. The STT
+For a no-billing voice demo outside the Development environment, set
+`SttProvider` and `TtsProvider` to `LocalHttp` manually. The STT
 sidecar accepts multipart field `file` plus `language` and returns
 `{"text":"..."}`. The TTS sidecar accepts JSON `{ "text": "...", "language": "..." }`
 and returns audio bytes (or `{ "audioBase64": "...", "contentType": "audio/wav" }`).
