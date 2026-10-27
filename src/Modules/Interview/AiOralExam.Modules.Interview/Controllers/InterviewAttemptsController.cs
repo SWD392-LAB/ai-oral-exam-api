@@ -50,5 +50,5 @@ public sealed class InterviewAttemptsController(IInterviewService interview) : C
     public Task<SubmitAnswerResponse> Submit(Guid id, SubmitAnswerRequest request, CancellationToken ct) =>
         interview.SubmitAnswerAsync(id, request, ct);
 
-    // TODO (M2): POST interview-attempts/{id}/audio (multipart) -> STT -> SubmitAnswer; WebSocket /hubs/interview
+    // Audio upload and question/answer audio playback live in InterviewAudioController.
 }
