@@ -2,6 +2,13 @@
 
 Cập nhật: 2026-10-25; đối chiếu repo tại `793cd73` và feedback của nhóm cho PR #7. Đây là **thiết kế dự kiến**; code/schema hiện tại vẫn dùng rubric theo từng câu hỏi.
 
+**Implementation note (Task-P):** backend đã có question-bank Draft/revision,
+course-scoped private material upload/ingest/retrieval, deterministic
+generation và citation provenance. Platform-rubric version/publish pin và FE
+read-only rubric vẫn là seam của Minh/Khang; vì vậy các đoạn bên dưới về
+`platform_rubric_*` vẫn là migration contract, chưa được giả định là đã tồn
+tại trong database hiện tại.
+
 Sequence diagram: [F1 – AI Question Generation and Review](SequenceDiagram-F1-Question-Bank-RAG.drawio). Luồng cấu hình và publish phiên dùng [diagram F7](SequenceDiagram-F7-Exam-Configuration.drawio).
 
 ## 1. Yêu cầu đã chốt theo feedback
