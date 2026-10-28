@@ -166,7 +166,7 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO rubric_criteria (id, rubric_id, rubric_version_id, order_no, description, max_points)
 VALUES
     ('aaaaaaaa-0000-0000-0000-000000000003', NULL, 'aaaaaaaa-0000-0000-0000-000000000002', 1, 'Accuracy and correctness', 5.00),
-    ('aaaaaaaa-0000-0000-0000-000000000004', NULL, 'Clarity and completeness', 5.00)
+    ('aaaaaaaa-0000-0000-0000-000000000004', NULL, 'aaaaaaaa-0000-0000-0000-000000000002', 2, 'Clarity and completeness', 5.00)
 ON CONFLICT (id) DO NOTHING;
 
 UPDATE rubric_versions

@@ -60,7 +60,7 @@ public sealed class InterviewAttemptsController(
         Guid id,
         [FromQuery] Guid turnId,
         [FromQuery] int sequence,
-        [FromForm] IFormFile chunk,
+        IFormFile chunk,
         CancellationToken ct)
     {
         if (chunk is null)
