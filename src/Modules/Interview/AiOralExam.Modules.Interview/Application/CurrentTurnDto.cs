@@ -3,6 +3,7 @@ namespace AiOralExam.Modules.Interview.Application;
 /// <summary>The question waiting for the student's answer (main or follow-up).</summary>
 public sealed record CurrentTurnDto(
     Guid QuestionResponseId,
+    Guid TurnId,
     Guid QuestionId,
     int QuestionOrderNo,
     int TurnNo,

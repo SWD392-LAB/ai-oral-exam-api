@@ -67,8 +67,6 @@ internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewRes
                 r.Turns.OrderBy(t => t.TurnNo)
                     .Select(t => new TurnResult(t.TurnNo, t.Type, t.QuestionText, t.AnswerTranscript, t.AskedAt, t.AnsweredAt))
                     .ToList(),
-                r.CriterionScores.OrderBy(s => s.RubricCriterionId)
-                    .Select(s => new CriterionScoreResult(s.RubricCriterionId, s.Points, s.Comment))
-                    .ToList()))
+                r.AiEvaluationState.ToString(), r.AiEvaluationError))
             .ToList());
 }

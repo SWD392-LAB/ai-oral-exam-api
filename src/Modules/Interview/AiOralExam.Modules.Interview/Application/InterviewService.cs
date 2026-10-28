@@ -17,7 +17,9 @@ namespace AiOralExam.Modules.Interview.Application;
 ///   Start  -> create InterviewAttempt + QuestionResponse for question 1 + a Main turn
 ///   Submit -> store the transcript -> analyze (IAnswerAnalyzer) -> follow-up OR score (IRubricScorer)
 ///          -> next question OR finish the attempt (PendingReview)
-/// All changes of one Submit are saved in one transaction (a single SaveChanges).
+/// The received transcript is persisted before the provider call. Evaluation and
+/// state transitions are saved afterwards so a provider failure never discards
+/// the answer and can be retried.
 /// </summary>
 internal sealed class InterviewService(
     InterviewDbContext db,
@@ -30,7 +32,6 @@ internal sealed class InterviewService(
     IOptions<InterviewOptions> options,
     ILogger<InterviewService> logger) : IInterviewService
 {
-    private const string DefaultLanguage = "Vietnamese"; // TODO (M2): read from AiServiceConfig through the F7 contract
     private readonly InterviewOptions _options = options.Value;
 
     private DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
@@ -239,163 +240,117 @@ internal sealed class InterviewService(
         var attempt = await LoadOwnAttemptAsync(attemptId, ct);
         var session = await examConfig.GetSessionAsync(attempt.Participant.ExamSessionId, ct)
                       ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
-        return ToState(attempt, session);
-    }
 
-    public async Task<Guid> AuthorizeAttemptSubscriptionAsync(Guid attemptId, CancellationToken ct = default)
-    {
-        var attempt = await db.InterviewAttempts.AsNoTracking()
-            .Where(a => a.Id == attemptId)
-            .Select(a => new { a.Participant.ExamSessionId, a.Participant.StudentId })
-            .FirstOrDefaultAsync(ct)
-            ?? throw new NotFoundException("attempt_not_found", "Attempt not found.");
+        var response = attempt.CurrentResponse
+                       ?? throw new ConflictException("no_open_question", "There is no question waiting for an answer.");
+        var turn = response.CurrentTurn
+                   ?? throw new ConflictException("no_open_turn", "The current question has already been answered.");
+        if (request.TurnId == Guid.Empty)
+            throw new ValidationException(new Dictionary<string, string[]> { ["turnId"] = ["turnId is required."] });
+        if (request.TurnId != turn.Id)
+            throw new ConflictException("turn_not_current", "The submitted answer does not belong to the current turn.");
+        var question = session.Questions.First(q => q.Id == response.QuestionId);
 
-        if (currentUser.IsInRole(Roles.Student))
+        // 1) Store the answer. Past the time limit + grace => timed out, the transcript is not stored.
+        var now = UtcNow;
+        var deadline = turn.AskedAt.AddSeconds(session.TimeLimitPerAnswerSeconds + _options.TimeLimitGraceSeconds);
+        var timedOut = now > deadline;
+        var answer = string.IsNullOrWhiteSpace(request.AnswerText) ? null : request.AnswerText.Trim();
+
+        if (!timedOut && answer is not null)
         {
-            if (attempt.StudentId != currentUser.Id)
-                throw new NotFoundException("attempt_not_found", "Attempt not found.");
-            return attempt.ExamSessionId;
+            turn.AnswerTranscript = answer;
+            turn.AnsweredAt = now;
         }
+        // timed out / empty: keep AnswerTranscript = null, AnsweredAt = null (same as the seed data)
 
-        if (currentUser.IsInRole(Roles.Lecturer)
-            && await examConfig.IsLecturerOfSessionAsync(currentUser.Id, attempt.ExamSessionId, ct))
-            return attempt.ExamSessionId;
-
-        throw new ForbiddenException("You are not authorized to subscribe to this interview attempt.");
-    }
-
-    public async Task AuthorizeSessionSubscriptionAsync(Guid examSessionId, CancellationToken ct = default)
-    {
-        if (!currentUser.IsInRole(Roles.Lecturer)
-            || !await examConfig.IsLecturerOfSessionAsync(currentUser.Id, examSessionId, ct))
-            throw new NotFoundException("exam_session_not_found", "Exam session not found.");
-    }
-
-    // ------------------------------------------------------------------
-    private async Task<InterviewAttempt> LoadOwnAttemptAsync(Guid attemptId, CancellationToken ct)
-    {
-        var attempt = await LoadAttemptAsync(attemptId, ct);
-
-        // Students only see their own attempts
-        if (attempt.Participant.StudentId != currentUser.Id)
-            throw new NotFoundException("attempt_not_found", "Attempt not found.");
-        return attempt;
-    }
-
-    private async Task<InterviewAttempt> LoadAttemptAsync(Guid attemptId, CancellationToken ct) =>
-        await db.InterviewAttempts
-            .Include(a => a.Participant)
-            .Include(a => a.Responses).ThenInclude(r => r.Turns)
-            .Include(a => a.Responses).ThenInclude(r => r.CriterionScores)
-            .AsSplitQuery()
-            .FirstOrDefaultAsync(a => a.Id == attemptId, ct)
-        ?? throw new NotFoundException("attempt_not_found", "Attempt not found.");
-
-    private async Task<ExamSessionInfo> GetSessionAsync(Guid sessionId, CancellationToken ct) =>
-        await examConfig.GetSessionAsync(sessionId, ct)
-        ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
-
-    private async Task<SubmitAnswerResponse> ProcessTurnAsync(
-        InterviewAttempt attempt,
-        QuestionResponse response,
-        InterviewTurn turn,
-        ExamSessionInfo session,
-        string? answer,
-        DateTime now,
-        bool timedOut,
-        bool sessionOpen,
-        List<InterviewAttemptEvent> events,
-        CancellationToken ct)
-    {
-        var question = session.Questions.FirstOrDefault(q => q.Id == response.QuestionId)
-                       ?? throw new ConflictException("attempt_question_not_found", "The attempt question is not in its exam session.");
-
-        turn.AnswerTranscript = timedOut ? null : answer;
-        turn.AnsweredAt = now;
-        var turnCount = attempt.Responses.Sum(item => item.Turns.Count);
-        var deadlineReached = now > GetTurnDeadline(turn, session);
-        events.Add(CreateEvent(attempt, session.Id,
-            timedOut ? deadlineReached ? "turn.deadline_reached" : "turn.closed" : "answer.accepted",
-            InterviewEventSequence.TurnAnswered(turnCount), now));
+        // Persist the received answer before waiting on an external provider. If
+        // evaluation fails, the catch below reopens the same turn while keeping
+        // this transcript for a safe retry.
+        await db.SaveChangesAsync(ct);
+        response.AiEvaluationState = AiEvaluationState.Pending;
+        response.AiEvaluationError = null;
+        await db.SaveChangesAsync(ct);
 
         var dialogue = response.Turns.OrderBy(t => t.TurnNo)
             .Select(t => new DialogueTurn(t.QuestionText, t.AnswerTranscript, t.Type == TurnType.FollowUp))
             .ToList();
-        var analysis = await analyzer.AnalyzeAsync(new AnswerAnalysisRequest(
-            question.Content, question.Criteria, dialogue,
-            response.FollowUpCount, session.MaxFollowUps, DefaultLanguage), ct);
-
-        var followUpOpenedAt = UtcNow;
-        if (sessionOpen && session.IsOpenAt(followUpOpenedAt)
-            && analysis.NeedsFollowUp && response.FollowUpCount < session.MaxFollowUps
-            && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
+        try
         {
-            response.AddTurn(TurnType.FollowUp, analysis.FollowUpQuestion!, followUpOpenedAt);
-            events.Add(CreateEvent(attempt, session.Id, "turn.opened", InterviewEventSequence.TurnOpened(turnCount + 1), followUpOpenedAt));
-            logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
-                attempt.Id, response.FollowUpCount, question.Id);
-            return new SubmitAnswerResponse(SubmitOutcome.FollowUp, timedOut, null, ToState(attempt, session));
-        }
+            // 2) Analyze -> follow-up?
+            var analysis = await analyzer.AnalyzeAsync(new AnswerAnalysisRequest(
+                question.Content, question.Criteria, dialogue,
+                response.FollowUpCount, session.MaxFollowUps, _options.Language), ct);
 
-        var score = await scorer.ScoreAsync(new RubricScoringRequest(
-            question.Content, question.Criteria, dialogue, DefaultLanguage), ct);
-        var criterionScores = question.Criteria.Select(c =>
-        {
-            var given = score.Scores.FirstOrDefault(s => s.CriterionId == c.Id);
-            return new CriterionScore
+            if (analysis.NeedsFollowUp && response.FollowUpCount < session.MaxFollowUps
+                                       && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
             {
-                Id = Guid.NewGuid(),
-                QuestionResponseId = response.Id,
-                RubricCriterionId = c.Id,
-                Points = Math.Clamp(given?.Points ?? 0, 0, c.MaxPoints),
-                Comment = given?.Comment,
-            };
-        }).ToList();
-        response.RecordAiEvaluation(criterionScores, score.Feedback, now);
-        db.CriterionScores.AddRange(criterionScores);
-        var suggested = response.AiSuggestedScore!.Value;
+                response.AddTurn(TurnType.FollowUp, analysis.FollowUpQuestion!, now);
+                response.AiEvaluationState = AiEvaluationState.Completed;
+                response.AiEvaluationError = null;
+                await db.SaveChangesAsync(ct);
+                logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
+                    attempt.Id, response.FollowUpCount, question.Id);
+                return new SubmitAnswerResponse(SubmitOutcome.FollowUp, timedOut, null, ToState(attempt, session));
+            }
 
-        var nextOpenedAt = UtcNow;
-        var canAskNextQuestion = sessionOpen && session.IsOpenAt(nextOpenedAt);
-        var next = canAskNextQuestion
-            ? session.Questions.FirstOrDefault(q => q.OrderNo > question.OrderNo)
-            : null;
-        string outcome;
-        if (next is not null)
-        {
-            AskMainQuestion(attempt, next, nextOpenedAt);
-            events.Add(CreateEvent(attempt, session.Id, "turn.opened", InterviewEventSequence.TurnOpened(turnCount + 1), nextOpenedAt));
-            outcome = SubmitOutcome.NextQuestion;
+            // 3) Main question done -> score against the rubric (stored once, Reporting only reads it)
+            var score = await scorer.ScoreAsync(new RubricScoringRequest(
+                question.Content, question.Criteria, dialogue, _options.Language), ct);
+
+            // One CriterionScore per rubric criterion, clamped to 0..MaxPoints (a missing criterion counts as 0)
+            var criterionScores = question.Criteria.Select(c =>
+            {
+                var given = score.Scores.FirstOrDefault(s => s.CriterionId == c.Id);
+                return new CriterionScore
+                {
+                    Id = Guid.NewGuid(),
+                    QuestionResponseId = response.Id,
+                    RubricCriterionId = c.Id,
+                    Points = Math.Clamp(given?.Points ?? 0, 0, c.MaxPoints),
+                    Comment = given?.Comment,
+                };
+            }).ToList();
+            response.RecordAiEvaluation(criterionScores, score.Feedback, now);
+            db.CriterionScores.AddRange(criterionScores);
+            var suggested = response.AiSuggestedScore!.Value;
+
+            // 4) Next question or finish
+            var next = session.Questions.FirstOrDefault(q => q.OrderNo > question.OrderNo);
+            string outcome;
+            if (next is not null)
+            {
+                AskMainQuestion(attempt, next, now);
+                outcome = SubmitOutcome.NextQuestion;
+            }
+            else
+            {
+                attempt.Complete(now);
+                attempt.Participant.Status = ParticipantStatus.Completed;
+                outcome = SubmitOutcome.Completed;
+            }
+
+            await db.SaveChangesAsync(ct);
+            logger.LogInformation("Attempt {AttemptId}: question {QuestionId} scored {Score}/{Max}, outcome {Outcome}",
+                attempt.Id, question.Id, suggested, question.MaxScore, outcome);
+
+            var evaluation = _options.ShowAiScoreToStudent
+                ? new EvaluationDto(question.Id, suggested, question.MaxScore, score.Feedback)
+                : null;
+            return new SubmitAnswerResponse(outcome, timedOut, evaluation, ToState(attempt, session));
         }
-        else
+        catch (AiEvaluationException)
         {
-            attempt.Complete(now);
-            attempt.Participant.Status = ParticipantStatus.Completed;
-            events.Add(CreateEvent(attempt, session.Id, canAskNextQuestion ? "attempt.completed" : "attempt.expired",
-                InterviewEventSequence.AttemptCompleted(turnCount), now));
-            outcome = SubmitOutcome.Completed;
+            // Keep the transcript/audio reference, but reopen the turn so a
+            // retry can run the provider again instead of silently scoring zero.
+            turn.AnsweredAt = null;
+            response.AiEvaluationState = AiEvaluationState.Failed;
+            response.AiEvaluationError = "AI evaluation failed. Retry is available.";
+            await db.SaveChangesAsync(ct);
+            logger.LogWarning("Attempt {AttemptId}: AI evaluation failed for question {QuestionId}; answer kept for retry",
+                attempt.Id, question.Id);
+            throw;
         }
-
-        logger.LogInformation("Attempt {AttemptId}: question {QuestionId} scored {Score}/{Max}, outcome {Outcome}",
-            attempt.Id, question.Id, suggested, question.MaxScore, outcome);
-        return new SubmitAnswerResponse(outcome, timedOut, null, ToState(attempt, session));
-    }
-
-    private SubmitAnswerResponse DuplicateResponse(
-        InterviewAttempt attempt,
-        QuestionResponse submittedResponse,
-        InterviewTurn submittedTurn,
-        ExamSessionInfo session)
-    {
-        var currentResponse = attempt.CurrentResponse;
-        var outcome = attempt.Status != AttemptStatus.InProgress
-            ? SubmitOutcome.Completed
-            : currentResponse?.Id == submittedResponse.Id && currentResponse.CurrentTurn is not null
-                ? SubmitOutcome.FollowUp
-                : SubmitOutcome.NextQuestion;
-        logger.LogInformation("Attempt {AttemptId}: duplicate submission for turn {TurnId} ignored",
-            attempt.Id, submittedTurn.Id);
-        return new SubmitAnswerResponse(outcome, false, null, ToState(attempt, session), Duplicate: true);
     }
 
     private string? NormalizeAnswer(string? answer) =>
@@ -476,8 +431,8 @@ internal sealed class InterviewService(
         {
             var q = session.Questions.First(x => x.Id == response.QuestionId);
             current = new CurrentTurnDto(
-                response.Id, q.Id, q.OrderNo, turn.TurnNo, turn.Type.ToString(), turn.QuestionText,
-                turn.AskedAt, GetTurnDeadline(turn, session), turn.Id);
+                response.Id, turn.Id, q.Id, q.OrderNo, turn.TurnNo, turn.Type.ToString(), turn.QuestionText,
+                turn.AskedAt, turn.AskedAt.AddSeconds(session.TimeLimitPerAnswerSeconds));
         }
 
         return new AttemptStateDto(

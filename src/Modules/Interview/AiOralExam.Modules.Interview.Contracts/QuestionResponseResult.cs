@@ -8,4 +8,5 @@ public sealed record QuestionResponseResult(
     decimal? SuggestedScore,
     string? AiFeedback,
     IReadOnlyList<TurnResult> Turns,
-    IReadOnlyList<CriterionScoreResult>? CriterionScores = null);
+    string AiEvaluationState = "Completed",
+    string? AiEvaluationError = null);

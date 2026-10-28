@@ -36,4 +36,15 @@ public class InterviewAttemptTests
         Assert.Equal(1, response.FollowUpCount);
         Assert.Same(followUp, response.CurrentTurn);
     }
+
+    [Fact]
+    public void Failed_evaluation_keeps_answered_turn_retryable()
+    {
+        var response = new QuestionResponse { Id = Guid.NewGuid(), IsFinished = false, AiEvaluationState = AiEvaluationState.Failed };
+        var turn = response.AddTurn(TurnType.Main, "Question", DateTime.UtcNow);
+        turn.AnswerTranscript = "saved transcript";
+        turn.AnsweredAt = DateTime.UtcNow;
+
+        Assert.Same(turn, response.CurrentTurn);
+    }
 }

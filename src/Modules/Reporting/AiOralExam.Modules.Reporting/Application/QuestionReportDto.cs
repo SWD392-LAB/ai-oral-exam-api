@@ -7,4 +7,6 @@ public sealed record QuestionReportDto(
     decimal? SuggestedScore,
     string? AiFeedback,
     int FollowUpCount,
-    IReadOnlyList<TurnReportDto> Turns);
+    IReadOnlyList<TurnReportDto> Turns,
+    string AiEvaluationState = "Completed",
+    string? AiEvaluationError = null);

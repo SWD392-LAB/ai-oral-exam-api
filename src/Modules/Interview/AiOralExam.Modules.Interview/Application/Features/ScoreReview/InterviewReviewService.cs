@@ -119,16 +119,15 @@ internal sealed class InterviewReviewService(
         SubmitScoreReviewRequest request,
         CancellationToken ct = default)
     {
-        InterviewAttemptEvent? interviewEvent = null;
-        var result = await WithAttemptLockAsync(attemptId, async () =>
-        {
-            var attempt = await LoadReviewAttemptAsync(attemptId, ct);
-            if (attempt.Status != AttemptStatus.PendingReview)
-                throw new ConflictException("attempt_not_pending_review", "Only attempts pending review can be finalized.");
-            if (attempt.Review is { Status: not ReviewStatus.Pending })
-                throw new ConflictException("score_review_already_submitted", "A score review has already been submitted.");
-            if (attempt.Review is { } existing && existing.ReviewerId != currentUser.Id)
-                throw new ForbiddenException("This review is assigned to another lecturer.");
+        var attempt = await LoadReviewAttemptAsync(attemptId, ct);
+        if (attempt.Status != AttemptStatus.PendingReview)
+            throw new ConflictException("attempt_not_pending_review", "Only attempts pending review can be finalized.");
+        if (attempt.Responses.Any(r => !r.IsFinished || r.AiEvaluationState != AiEvaluationState.Completed))
+            throw new ConflictException("evaluation_pending", "All question responses must finish AI evaluation before review.");
+        if (attempt.Review is { Status: not ReviewStatus.Pending })
+            throw new ConflictException("score_review_already_submitted", "A score review has already been submitted.");
+        if (attempt.Review is { } assignedReview && assignedReview.ReviewerId != currentUser.Id)
+            throw new ForbiddenException("This review is assigned to another lecturer.");
 
             var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
             ValidateScoreReviewRequest(request, session.TotalMaxScore);
@@ -177,7 +176,7 @@ internal sealed class InterviewReviewService(
         var attempt = await db.InterviewAttempts
                           .Include(a => a.Participant)
                           .Include(a => a.Review)
-                          .Include(a => a.Responses).ThenInclude(response => response.Turns)
+                          .Include(a => a.Responses)
                           .FirstOrDefaultAsync(a => a.Id == attemptId, ct)
                       ?? throw new NotFoundException("attempt_not_found", "Attempt not found.");
 
