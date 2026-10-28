@@ -145,6 +145,23 @@ internal sealed class RubricVersionService(AccessConfigDbContext db, ICurrentUse
         return ToDetail(version, version.Criteria.OrderBy(x => x.OrderNo), version.MaxScore);
     }
 
+    public async Task<RubricVersionDetailDto> GetActivePlatformAsync(CancellationToken ct)
+    {
+        EnsureManagementRole();
+        var versions = await db.RubricVersions.AsNoTracking()
+            .Include(x => x.Criteria)
+            .Where(x => x.IsActive && x.IsSealed && x.CourseId == null && x.Template.CourseId == null)
+            .ToListAsync(ct);
+
+        if (versions.Count == 0)
+            throw new NotFoundException("active_platform_rubric_not_found", "No active platform rubric exists.");
+        if (versions.Count > 1)
+            throw new ConflictException("multiple_active_platform_rubrics", "Multiple active platform rubrics were found.");
+
+        var version = versions[0];
+        return ToDetail(version, version.Criteria, version.MaxScore);
+    }
+
     private async Task<RubricTemplate> LoadTemplateForManagementAsync(Guid templateId, CancellationToken ct)
     {
         EnsureManagementRole();

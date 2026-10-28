@@ -336,6 +336,154 @@ public sealed class RubricVersionServiceTests
             .Where(x => x.IsActive).Select(x => x.Id).ToArrayAsync());
     }
 
+    [Theory]
+    [InlineData(Roles.Lecturer)]
+    [InlineData(Roles.Administrator)]
+    public async Task Lecturer_or_administrator_can_read_active_platform_version_with_ordered_criteria(string role)
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var version = NewVersion(seed.TemplateId, null, 1, isSealed: true, isActive: true, seed.LecturerId);
+        var criteria = new[]
+        {
+            new RubricCriterion { Id = Guid.NewGuid(), RubricVersionId = version.Id, RubricVersion = version,
+                OrderNo = 2, Description = "Clarity", MaxPoints = 5m },
+            new RubricCriterion { Id = Guid.NewGuid(), RubricVersionId = version.Id, RubricVersion = version,
+                OrderNo = 1, Description = "Accuracy", MaxPoints = 5m }
+        };
+        db.RubricVersions.Add(version);
+        db.RubricCriteria.AddRange(criteria);
+        await db.SaveChangesAsync();
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, role));
+
+        var result = await service.GetActivePlatformAsync(CancellationToken.None);
+
+        Assert.Equal(version.Id, result.Id);
+        Assert.Equal(new[] { 1, 2 }, result.Criteria.Select(x => x.OrderNo));
+        Assert.Equal(new[] { "Accuracy", "Clarity" }, result.Criteria.Select(x => x.Description));
+        Assert.Empty(db.AuditLogs);
+    }
+
+    [Fact]
+    public async Task Active_platform_lookup_excludes_inactive_unsealed_and_course_scoped_versions()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var active = NewVersion(seed.TemplateId, null, 1, isSealed: true, isActive: true, seed.LecturerId);
+        var inactive = NewVersion(seed.TemplateId, null, 2, isSealed: true, isActive: false, seed.LecturerId);
+        var unsealed = NewVersion(seed.TemplateId, null, 3, isSealed: false, isActive: false, seed.LecturerId);
+        var courseTemplate = new RubricTemplate
+        {
+            Id = Guid.NewGuid(), CourseId = seed.CourseId, Course = seed.Course,
+            Name = "Course rubric", CreatedBy = seed.LecturerId, CreatedAt = DateTime.UtcNow
+        };
+        var courseScoped = NewVersion(courseTemplate.Id, seed.CourseId, 1,
+            isSealed: true, isActive: false, seed.LecturerId);
+        courseScoped.Template = courseTemplate;
+        db.RubricTemplates.Add(courseTemplate);
+        db.RubricVersions.AddRange(active, inactive, unsealed, courseScoped);
+        await db.SaveChangesAsync();
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Lecturer));
+
+        var result = await service.GetActivePlatformAsync(CancellationToken.None);
+
+        Assert.Equal(active.Id, result.Id);
+    }
+
+    [Theory]
+    [InlineData("inactive")]
+    [InlineData("unsealed")]
+    [InlineData("course-scoped")]
+    public async Task Active_platform_lookup_ignores_each_nonqualifying_version_state(string scenario)
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var templateId = seed.TemplateId;
+        Guid? courseId = null;
+        var isSealed = true;
+        var isActive = true;
+        if (scenario == "inactive")
+            isActive = false;
+        else if (scenario == "unsealed")
+            isSealed = false;
+        else
+        {
+            var courseTemplate = new RubricTemplate
+            {
+                Id = Guid.NewGuid(), CourseId = seed.CourseId, Course = seed.Course,
+                Name = "Course rubric", CreatedBy = seed.LecturerId, CreatedAt = DateTime.UtcNow
+            };
+            db.RubricTemplates.Add(courseTemplate);
+            templateId = courseTemplate.Id;
+            courseId = seed.CourseId;
+        }
+
+        db.RubricVersions.Add(NewVersion(templateId, courseId, 1, isSealed, isActive, seed.LecturerId));
+        await db.SaveChangesAsync();
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId, Roles.Lecturer));
+
+        var exception = await Assert.ThrowsAsync<NotFoundException>(() =>
+            service.GetActivePlatformAsync(CancellationToken.None));
+
+        Assert.Equal("active_platform_rubric_not_found", exception.Code);
+    }
+
+    [Fact]
+    public async Task Active_platform_lookup_returns_not_found_when_no_qualifying_version_exists()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+
+        var exception = await Assert.ThrowsAsync<NotFoundException>(() =>
+            service.GetActivePlatformAsync(CancellationToken.None));
+
+        Assert.Equal("active_platform_rubric_not_found", exception.Code);
+    }
+
+    [Fact]
+    public async Task Active_platform_lookup_does_not_choose_when_multiple_qualifying_versions_exist()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        // The InMemory provider does not enforce the production unique partial index; this deliberately simulates corrupted data.
+        db.RubricVersions.AddRange(
+            NewVersion(seed.TemplateId, null, 1, isSealed: true, isActive: true, seed.LecturerId),
+            NewVersion(seed.TemplateId, null, 2, isSealed: true, isActive: true, seed.LecturerId));
+        await db.SaveChangesAsync();
+        var service = new RubricVersionService(db, new TestCurrentUser(seed.LecturerId));
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() =>
+            service.GetActivePlatformAsync(CancellationToken.None));
+
+        Assert.Equal("multiple_active_platform_rubrics", exception.Code);
+    }
+
+    [Theory]
+    [InlineData(Roles.Student, true)]
+    [InlineData(Roles.Lecturer, false)]
+    public async Task Active_platform_lookup_requires_an_authenticated_lecturer_or_administrator(
+        string role, bool isAuthenticated)
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var service = new RubricVersionService(db,
+            new TestCurrentUser(seed.LecturerId, role, isAuthenticated));
+
+        if (isAuthenticated)
+            await Assert.ThrowsAsync<ForbiddenException>(() => service.GetActivePlatformAsync(CancellationToken.None));
+        else
+            await Assert.ThrowsAsync<UnauthorizedException>(() => service.GetActivePlatformAsync(CancellationToken.None));
+    }
+
+    private static RubricVersion NewVersion(
+        Guid templateId, Guid? courseId, int versionNo, bool isSealed, bool isActive, Guid createdBy) => new()
+    {
+        Id = Guid.NewGuid(), TemplateId = templateId, CourseId = courseId, VersionNo = versionNo,
+        MaxScore = 10m, IsSealed = isSealed, IsActive = isActive, CreatedBy = createdBy,
+        CreatedAt = DateTime.UtcNow
+    };
+
     private static CreateRubricVersionRequest ValidRequest() =>
         new([new(1, "Accuracy", 5m), new(2, "Clarity", 5m)]);
 

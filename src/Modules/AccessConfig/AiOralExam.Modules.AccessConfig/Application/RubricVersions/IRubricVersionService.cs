@@ -6,4 +6,5 @@ public interface IRubricVersionService
     Task<RubricVersionDetailDto> ActivateAsync(Guid templateId, Guid versionId, CancellationToken ct);
     Task<IReadOnlyList<RubricVersionDto>> ListAsync(Guid templateId, CancellationToken ct);
     Task<RubricVersionDetailDto> GetAsync(Guid templateId, Guid versionId, CancellationToken ct);
+    Task<RubricVersionDetailDto> GetActivePlatformAsync(CancellationToken ct);
 }
