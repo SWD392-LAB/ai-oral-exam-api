@@ -1,108 +1,187 @@
-# Task Khang — đếm bài đang làm, phiên hết giờ và kiểm thử tích hợp
+# TASK-K — Khang: F1 question bank, FE F1/F7/F6 và kiểm thử tích hợp
 
-## Mục tiêu và phạm vi
+## 1. Mục tiêu
 
-Tài liệu này chuyển phần việc của Khang trong ảnh phân công thành checklist có thể thực hiện. Chỉ tập trung vào:
+Hoàn thiện phần ngân hàng câu hỏi F1 do Khang sở hữu, nối các màn hình question bank, cấu hình kỳ thi và báo cáo với API thật, đồng thời bổ sung kiểm thử contract/E2E và CI cho các luồng tích hợp.
 
-- **B5:** thêm `inProgressCount` vào danh sách phiên thi.
-- **B6:** xử lý/hiển thị phiên thi đã quá `EndTime`.
-- **C7:** bỏ `using` trùng trong `InterviewResultsApi.cs`.
-- **D10–D12:** kiểm thử tích hợp các luồng người dùng/Keycloak, cập nhật hồ sơ và chốt điểm; kiểm tra ghi chú liên quan script `03_...sql` nếu nằm trong phạm vi được giao.
+Phân công này **không có deadline**. Thứ tự bên dưới là thứ tự phụ thuộc kỹ thuật, không phải cam kết ngày hoàn thành.
 
-Không làm các mục của Minh: `UserService.cs`, `AiConfigService.cs`, `AuditLogService.cs`, `CourseService.cs`, `AdminCoursesController.cs` và các thay đổi A1–A4, B4, C8–C9. Không thay đổi SQL trong phạm vi này.
+## 2. Phạm vi sở hữu
 
-## Đối chiếu code hiện tại
+### Khang thực hiện
 
-- `ExamSessionSummaryDto` đang có `ParticipantCount`, `TakenCount`, `ToReviewCount`, nhưng **chưa có `InProgressCount`**.
-- `IInterviewResultsApi.GetAttemptCountsAsync` trả `AttemptCounts(TakenCount, ToReviewCount)`. `InterviewResultsApi` tính `TakenCount` từ `PendingReview` hoặc `Finalized`, và `ToReviewCount` từ `PendingReview`; do đó bài `InProgress` hiện chưa được đếm trong danh sách phiên.
-- `ExamSessionQueries.GetSessionsAsync` đã ghép participant/attempt counts vào DTO. Test tương ứng đã có, nhưng fake hiện chỉ trả hai bộ đếm.
-- `InterviewResultsApi.cs` hiện có hai dòng `using AiOralExam.Modules.Interview.Contracts;` giống nhau; C7 là dọn đúng dòng lặp này.
-- Phiên thi có các trạng thái lưu trữ `Draft`, `Published`, `Closed`. Đóng phiên thủ công hiện có trong `ExamSessionCommands.CloseAsync`; `ExamSessionInfo.IsOpenAt` cũng đã kiểm tra khoảng thời gian `StartTime`–`EndTime`, và luồng bắt đầu bài từ chối phiên không mở. Chưa thấy cơ chế tự cập nhật trạng thái lưu trữ thành `Closed` chỉ vì thời gian kết thúc đã qua.
-- **B6 chưa đủ rõ để tự chọn cách triển khai:** “tự đóng” có thể là ghi `Closed` vào DB, còn “trả trạng thái thực tế” có thể là trả trạng thái hiệu lực khi đọc mà không sửa dữ liệu. Ảnh cũng nhắc hỏi Minh về cách đóng phiên hiện tại. Cần thống nhất với Minh trước khi sửa logic hoặc API contract.
+- Backend AccessConfig cho question bank: tạo/sửa Draft, quản lý revision, approve/reject, attach câu đã duyệt vào session Draft và import JSON.
+- Backend-side contract/unit/integration tests và CI cho những luồng được phân công.
+- Đề xuất schema question bank và contract attach để Minh tích hợp vào migration/publish.
+- Frontend requirements are listed separately in Addendum A for the frontend owner; no frontend files are part of this backend task.
 
-## File dự kiến thay đổi
+### Phối hợp nhưng không nhận quyền sở hữu
 
-### B5 — `inProgressCount`
+- **Minh** sở hữu `database/`, migration/schema, rubric nền tảng, publish command và contract F7 liên quan.
+- **Phúc** sở hữu backend sinh câu hỏi bằng AI, ingest/RAG và provider AI. Khang nối giao diện question bank với contract generation sau khi hai bên thống nhất.
+- Khang kiểm thử luồng F3/F6 đã tích hợp; lỗi nghiệp vụ F3 chuyển cho Minh hoặc Phúc theo module sở hữu. Khang không triển khai nghiệp vụ F3 thay họ.
 
-Các file code/test dự kiến:
+### Không thuộc phạm vi
 
-1. [`src/Modules/Interview/AiOralExam.Modules.Interview.Contracts/IInterviewResultsApi.cs`](src/Modules/Interview/AiOralExam.Modules.Interview.Contracts/IInterviewResultsApi.cs)  
-   Mở rộng `AttemptCounts` với `InProgressCount`, giữ nguyên ý nghĩa hiện tại của `TakenCount` và `ToReviewCount`.
-2. [`src/Modules/Interview/AiOralExam.Modules.Interview/Application/InterviewResultsApi.cs`](src/Modules/Interview/AiOralExam.Modules.Interview/Application/InterviewResultsApi.cs)  
-   Tính số attempt có trạng thái `InProgress` theo `ExamSessionId`; vẫn trả đủ bộ ba số đếm bằng 0 cho session không có attempt. Dọn `using` trùng ở đây (C7).
-3. [`src/Modules/AccessConfig/AiOralExam.Modules.AccessConfig/Application/ExamSessions/ExamSessionDtos.cs`](src/Modules/AccessConfig/AiOralExam.Modules.AccessConfig/Application/ExamSessions/ExamSessionDtos.cs)  
-   Thêm `InProgressCount` vào `ExamSessionSummaryDto`; đảm bảo JSON list trả thuộc tính `inProgressCount`.
-4. [`src/Modules/AccessConfig/AiOralExam.Modules.AccessConfig/Application/ExamSessions/ExamSessionQueries.cs`](src/Modules/AccessConfig/AiOralExam.Modules.AccessConfig/Application/ExamSessions/ExamSessionQueries.cs)  
-   Gán count mới từ contract vào kết quả mỗi phiên; không làm thay đổi lọc quyền lecturer/admin, lọc `courseId`, thứ tự hoặc các count cũ.
-5. [`tests/AiOralExam.UnitTests/InterviewResultsApiTests.cs`](tests/AiOralExam.UnitTests/InterviewResultsApiTests.cs)  
-   Bổ sung/điều chỉnh dữ liệu và assertion cho `InProgress`, `PendingReview`, `Finalized` và session không có attempt.
-6. [`tests/AiOralExam.UnitTests/ExamSessionQueriesTests.cs`](tests/AiOralExam.UnitTests/ExamSessionQueriesTests.cs)  
-   Cập nhật fake contract và xác nhận count mới được ghép đúng vào DTO, cùng các count cũ.
+- Không sửa frontend trong repo `ai-oral-exam-web`.
+- Không sửa file SQL trong `database/`, không tự áp dụng migration và không sửa publish command.
+- Không tạo, sửa hoặc import rubric/criteria cho từng câu; không sở hữu platform rubric/version.
+- Không tự triển khai AI generation, RAG, voice/STT/TTS, chấm điểm, review/lifecycle attempt hoặc SignalR của F3.
+- Không thay đổi auth/đăng ký/Google SSO nếu chưa thống nhất phạm vi với Minh.
+- Không tiếp tục checklist cũ B5/B6/C7/D10–D12 trong task này; chúng không nằm trong TASK-K của work plan hiện tại.
 
-### B6 — phiên quá hạn
+## 3. Quy tắc nghiệp vụ bắt buộc
 
-Đã xác nhận chọn **đóng trạng thái lưu trữ** (`Published` → `Closed`) sau `EndTime`.
+### Question bank và revision
 
-- Background service trong AccessConfig kiểm tra mỗi 15 giây và dùng một câu lệnh cập nhật có điều kiện (`Published` và `EndTime <= UTC now`), tránh cập nhật lại phiên đã đóng hoặc phiên Draft.
-- `EndTime` là mốc không bao gồm: ngay tại `EndTime`, session không còn mở để bắt đầu attempt mới.
-- List/detail đọc trạng thái đã lưu; có thể chậm tối đa một chu kỳ kiểm tra (15 giây) mới phản ánh `Closed`.
-- Tác vụ hệ thống không ghi DB audit log vì schema bắt buộc `user_id` và không có actor hệ thống được xác nhận; thay vào đó ghi application log khi có session được đóng. Không giả mạo lecturer/admin làm actor.
-- Đã thêm unit tests để kiểm tra chọn Published session trước/đúng mốc hết giờ và biên `IsOpenAt`. Cần kiểm tra cập nhật SQL thực tế/luồng API đầu cuối trong môi trường test có .NET SDK và PostgreSQL.
+1. Mỗi bank item thuộc đúng một course và có nội dung câu hỏi, topic, mức Bloom, origin, trạng thái và thông tin actor/timestamps theo thiết kế đã thống nhất.
+2. Các mức Bloom được hỗ trợ: `Remember`, `Understand`, `Apply`, `Analyze`.
+3. Trạng thái item: `Draft`, `Approved`, `Rejected`, `Archived`. Câu mới tạo, import hoặc sinh bằng AI bắt đầu ở `Draft`; không có luồng tự động approve.
+4. Lịch sử nội dung được lưu thành revision bất biến kèm provenance. Không ghi đè revision đã tồn tại; nội dung đã được dùng trong session đã publish không được thay đổi khi bank item được sửa, archive hoặc có revision mới.
+5. Bank item/revision **không chứa rubric hoặc criteria**. Không nhận điểm hay criteria trong request tạo, sửa, import hoặc generation.
+6. Lecturer chỉ thao tác với course mà họ được phân công, theo authorization hiện có. Không cho phép truy cập hoặc attach item từ course khác. Không mở rộng quyền Administrator ngoài chính sách hiện có nếu chưa được thống nhất.
+7. Ghi audit theo pattern hiện có cho thao tác tạo/sửa/approve/reject/attach; không ghi tài liệu private, token, secret hoặc nội dung nhạy cảm vào log.
 
-### C7 — dọn using
+### Attach vào session
 
-- `InterviewResultsApi.cs`: xóa đúng một trong hai dòng `using AiOralExam.Modules.Interview.Contracts;` bị lặp.
-- Không tiện tay dọn các using/file khác ngoài phần được giao.
+1. Chỉ attach item `Approved`, thuộc cùng course với session và khi session còn `Draft`.
+2. Request phải được kiểm tra quyền lecturer đối với course/session; không tin `courseId`, trạng thái hoặc quyền do client tự khai báo.
+3. Khi attach, copy nội dung câu hỏi vào session và ghi provenance tới bank revision nguồn nếu contract/schema đã thống nhất. Không copy rubric từ bank.
+4. Câu hỏi và revision đã được dùng trong session publish là snapshot; thay đổi bank sau đó không làm đổi nội dung, rubric hoặc kết quả lịch sử của session.
+5. Quy tắc xử lý attach trùng và việc sửa/xóa câu đã attach khi session vẫn Draft phải được thống nhất với Minh trước khi chốt API. Không tự chọn một hành vi có thể gây mất dữ liệu hoặc thay đổi bài thi.
 
-## Phối hợp để tránh xung đột với Minh
+### Import JSON
 
-1. Trước khi bắt đầu code, kiểm tra working tree và đồng bộ nhánh `feature-crud` mới nhất theo quy trình nhóm; ảnh ghi nhận Minh đang sửa `ExamSessionQueries.cs` trên nhánh `b55378d`.
-2. Trao đổi trực tiếp với Minh để biết thay đổi nào đã vào nhánh chung và thống nhất ai chỉnh phần nào trong `ExamSessionQueries.cs`. B6 được thực hiện bằng hosted service riêng, không thay đổi truy vấn list.
-3. Không lấy bản `ExamSessionQueries.cs` cũ ghi đè lên phần Minh đã làm. Tích hợp thay đổi trên phiên bản mới nhất, giữ nguyên các xử lý Minh sở hữu.
-4. Hạn chế vùng thay đổi của Khang ở phần ghép count và logic B6 đã được đồng thuận. Các file `InterviewResultsApi.cs`/tests là phần tương đối độc lập, nhưng vẫn cần cập nhật trên nhánh mới nhất.
-5. Mỗi người tạo nhánh/PR riêng theo hướng dẫn trong ảnh; khi review, kiểm tra diff chỉ chứa phần được giao.
+1. Import tạo bank Draft, không import trực tiếp vào session; không nhận rubric/criteria và không approve/attach tự động.
+2. Validate toàn bộ batch trước khi lưu. Nếu có bất kỳ dòng không hợp lệ, không lưu một phần batch.
+3. Phản hồi lỗi phải chỉ rõ số dòng và trường/cột lỗi, đủ để người dùng sửa và gửi lại.
+4. Validate ít nhất: dữ liệu bắt buộc, nội dung rỗng, Bloom không hợp lệ, quyền trên course và câu trùng trong batch/bank.
+5. Chốt định dạng JSON, giới hạn batch và quy tắc nhận diện câu trùng với Minh/tech lead trước khi triển khai. Nếu chưa có quyết định, ghi rõ quyết định còn thiếu thay vì âm thầm tự đặt chính sách.
 
-## Kế hoạch kiểm thử và tiêu chí đạt
+### Rubric trong exam-config (F7)
 
-### Kiểm thử tự động B5/C7
+1. Giảng viên không nhập hoặc sửa rubric theo từng câu. Màn hình cấu hình chỉ hiển thị rubric platform dùng chung dưới dạng read-only theo contract của Minh.
+2. Session mới dùng cùng một rubric version đã pin khi publish; FE không tự chọn rubric version và không thay thế logic publish của backend.
+3. F7 chỉ cho chọn câu Approved, cùng course, để thêm vào session Draft. API phải từ chối câu Draft/Rejected/Archived, câu khác course hoặc session không còn Draft.
+4. Giữ nguyên các hành vi và quyền cấu hình session hiện tại ngoài phần thay đổi cần thiết để dùng question bank và rubric read-only.
 
-Chạy các test liên quan trong `AiOralExam.UnitTests` (tối thiểu `InterviewResultsApiTests` và `ExamSessionQueriesTests`):
+### Reporting (F6)
 
-- Session không có attempt: `TakenCount = 0`, `ToReviewCount = 0`, `InProgressCount = 0`.
-- Một attempt `InProgress`: chỉ tăng `InProgressCount`.
-- Một attempt `PendingReview`: tăng `TakenCount` và `ToReviewCount`, không tăng `InProgressCount`.
-- Một attempt `Finalized`: tăng `TakenCount`, không tăng `ToReviewCount` hay `InProgressCount`.
-- Trộn các trạng thái: mỗi count đúng theo định nghĩa, không cộng trùng bài `InProgress` vào `TakenCount`.
-- List phiên trả đúng `inProgressCount`; count participant, số câu hỏi, filter course và quyền lecturer/admin vẫn giữ nguyên.
-- Contract/fake trong test phải khớp chữ ký `AttemptCounts` mới; build project/test phải không lỗi.
+1. Sinh viên chỉ xem report của chính attempt mình. Khi attempt đang `PendingReview`, chỉ hiển thị metadata; không tiết lộ điểm, hội thoại hoặc feedback chi tiết trước khi giảng viên xác nhận.
+2. Sau khi điểm được xác nhận (`Finalized`), sinh viên mới thấy report/feedback được phép.
+3. Lecturer/Admin xem kết quả, statistics và tải CSV theo quyền hiện có. Statistics dùng kết quả đã xác nhận; CSV để trống final score và thể hiện `PendingReview` cho attempt chưa xác nhận.
+4. FE phải dùng API Reporting hiện có, không tự tính lại hoặc suy diễn điểm từ transcript/đề xuất AI.
 
-### Kiểm thử B6 sau khi chốt thiết kế
+## 4. Các đầu việc
 
-- Unit test: session Published trước hoặc đúng `EndTime` đủ điều kiện đóng; session hết hạn nhưng Draft/đã Closed và session Published còn hạn không bị chọn.
-- Unit test: session mở ngay trước `EndTime`; không mở tại hoặc sau mốc đó.
-- Với PostgreSQL test riêng: xác nhận worker cập nhật Published thành Closed, chạy lặp an toàn, không ảnh hưởng Draft/Closed/còn hạn; kiểm tra cập nhật đồng thời với thao tác đóng thủ công.
-- API test: list/detail phản ánh Closed sau lần kiểm tra worker; sinh viên bắt đầu attempt bị từ chối tại/sau `EndTime` với `exam_session_not_open`.
-- Xác nhận application log có số lượng session tự đóng; không kỳ vọng DB audit record có actor người dùng.
+### K1 — Chốt contract và phối hợp
 
-### Kiểm thử thủ công D10–D12 (không thêm code nếu chỉ là phần kiểm thử)
+- [x] Đối chiếu API hiện có: câu hỏi hiện tại được CRUD/import trực tiếp theo exam session; API Reporting đã có report cá nhân, results, statistics và grade-sheet CSV. Các route question bank chưa tồn tại.
+- [x] Recheck Minh's newer rubric work: `database/01_schema.sql` and `database/06_rubric_versions.sql` now define rubric templates/versions and session rubric pinning; AccessConfig also has rubric template/version services and HTTP tests. This completes the rubric-schema portion only.
+- [ ] Gửi Minh đề xuất/chốt schema bank/revision và contract attach; Minh tích hợp schema vào migration và nối vào publish. Chưa thể hoàn tất API lưu trữ trước khi nhận contract/schema này. Không cùng sửa `database/` hoặc publish command.
+- [ ] Thống nhất với Phúc contract generation, provenance/citation và trạng thái Draft; generation backend thuộc Phúc.
+- [ ] Chốt các quyết định đang mở: định dạng import/giới hạn batch, cách nhận diện câu trùng, xử lý attach trùng, chỉnh item sau approve và cách xử lý câu đã attach vào session Draft.
+- [ ] Ghi rõ các API/contract còn thiếu và người phụ trách; không thay bằng mock hoặc giả định không được thống nhất.
 
-Chuẩn bị môi trường local/test đã cấu hình Keycloak. Kiểm tra cấu hình client `aives-admin-api` được nhắc trong ảnh và cấu hình `KeycloakAdmin` trước khi thử; không đưa client secret vào tài liệu, log hoặc commit.
+### K2 — Backend question bank và import (F1-A2/B)
 
-1. Dùng tài khoản administrator tạo user thật qua `POST /api/admin/users`; xác nhận user được tạo và ID Keycloak khớp ID user API, vai trò/các mã Student/Lecturer hợp lệ.
-2. Gọi `POST /api/admin/users/{id}/setup-link`; xác nhận API báo gửi thành công và email/link đặt mật khẩu được Keycloak xử lý theo cấu hình môi trường.
-3. Đăng nhập bằng user đó, gọi `PATCH /api/auth/me` với `fullName` hợp lệ; xác nhận profile đổi, trường khác không bị sửa và request không có token bị từ chối.
-4. Dùng attempt đang `PendingReview`, đăng nhập lecturer được phân công, gọi `PUT /api/interview-attempts/{id}/score-review`; xác nhận score/review được lưu và trạng thái thành `Finalized`. Thử lại để xác nhận không chốt lặp/không đi ngược state machine.
-5. Ảnh có nhắc script `03_...sql`: chỉ xác nhận với người giao việc xem đây là yêu cầu kiểm thử hay thay đổi. Không sửa script trong scope Khang; nếu được yêu cầu kiểm tra migration, chỉ dùng môi trường test riêng và theo quy trình áp dụng DB của nhóm, không chạy trên dữ liệu dùng chung.
+- [x] Chuẩn bị draft request contract `QuestionBankImportRequest` / `QuestionBankImportItemRequest` và validator/test độc lập với database. Validator yêu cầu content/topic/Bloom và chấp nhận đúng bốn mức Bloom. Lỗi chỉ vị trí theo JSON array path (zero-based), ví dụ `items[0].content`.
+- [x] Recheck current schema and routes: no `question_bank_items`, `question_bank_revisions`, or `source_bank_revision_id` are defined in `01_schema.sql` or the available upgrade scripts; no bank service/controller or `/questions/from-bank` endpoint is present. The F1 plan documents these as proposed, not implemented.
+- [ ] **Blocked — Minh cung cấp schema/contract trước:** xây dựng API theo course cho list/detail, tạo Draft, sửa nội dung Draft/revision, approve và reject. Các route dưới đây là route dự kiến theo plan F1; xác nhận route cuối cùng trước khi công bố:
+  - `/api/courses/{courseId}/question-bank`
+  - `/api/courses/{courseId}/question-bank/{itemId}`
+  - `/api/courses/{courseId}/question-bank/{itemId}/approve`
+  - `/api/courses/{courseId}/question-bank/{itemId}/reject`
+- [ ] **Blocked — Minh cung cấp attach/schema contract trước:** tạo endpoint attach câu Approved vào session Draft, dự kiến `/api/exam-sessions/{sessionId}/questions/from-bank`. A route proposal in the F1 plan is not an implemented API contract; there is no request/response DTO, service, controller or persistence mapping yet.
+- [ ] **Blocked — schema và quyết định import còn thiếu:** tạo endpoint import JSON vào bank, dự kiến `/api/courses/{courseId}/question-bank/import`; validate toàn batch và chỉ persist toàn bộ khi tất cả dòng hợp lệ.
+- [ ] Khi storage API được triển khai, kiểm tra quyền course, trạng thái bank/session, revision/provenance và snapshot; đảm bảo không thể truy cập chéo course hoặc thay đổi nội dung session đã publish.
+- [ ] Khi endpoint sẵn sàng, bổ sung HTTP/contract tests cho quyền, trạng thái, revision, attach và atomic import. Test hiện tại chỉ bao phủ validation thuần, chưa chứng minh persistence/atomicity hay API behavior.
 
-**Hoàn tất khi:** B5/C7/B6 có test tự động xanh; B6 được kiểm tra với PostgreSQL/API; D10–D12 có ghi nhận kết quả thao tác thực tế (ẩn email, token, secret và dữ liệu nhạy cảm); diff không chứa thay đổi của Minh hay thay đổi SQL ngoài phạm vi.
+### K3 — Frontend work
 
-## Trạng thái thực hiện
+Frontend tasks are moved to **Addendum A** because this repository contains only the backend. Do not modify the frontend repository as part of this backend task.
 
-- **B5:** đã thêm `InProgressCount` vào contract, kết quả truy vấn và DTO danh sách; đã cập nhật test cho trạng thái trộn/không có attempt.
-- **C7:** đã xóa dòng `using` trùng trong `InterviewResultsApi.cs`.
-- **Tài liệu API:** README đã mô tả `inProgressCount`.
-- **B6:** đã thêm background auto-close 15 giây/lần với điều kiện UTC, cập nhật có điều kiện và quy tắc `EndTime` không bao gồm; README mô tả hành vi và audit/log. Đã thêm unit tests cho tiêu chí hết hạn và ranh giới thời gian.
-- **Kiểm thử tự động:** chưa chạy được vì môi trường không có .NET SDK; người dùng không cho phép cài SDK. Cần chạy test sau khi chọn môi trường có .NET 8 SDK.
-- **D10–D12:** chưa chạy các luồng API thật vì chúng tạo user/gửi email/cập nhật dữ liệu; cần môi trường test riêng và thông tin test do nhóm cung cấp. Repository đã có unit tests dùng fake cho tạo user/setup email (`UserCreationTests`, `KeycloakAdminClientTests`), cập nhật hồ sơ (`UserCreationTests`) và chốt điểm (`InterviewScoreReviewTests`); chúng chưa thay thế cho kiểm thử tích hợp thật và chưa được chạy trong lượt này.
-- Không chạy SQL hoặc thao tác database do quy định an toàn của workspace; không sửa schema/script.
-- Không có thay đổi SQL.
+### K6 — API mapping, kiểm thử tích hợp và CI
+
+- [ ] **Blocked in part:** lập bảng route/request/response/error đầy đủ sau khi bank, attach and generation contracts được chốt. Reporting routes were verified; rubric template/version APIs now exist in backend. FE mapping remains in Addendum A.
+- [x] Thêm backend GitHub Actions CI chạy restore và `dotnet test AiOralExam.sln` trên .NET 8 cho push, pull request và workflow dispatch.
+- [ ] **Blocked:** E2E với PostgreSQL/Keycloak và luồng question bank → publish → F3 → review → F6 cần schema/migration và hợp đồng Minh/Phúc. Không chạy trên database dùng chung.
+- [ ] Duy trì fake AI/storage trong CI khi các adapter được tích hợp; smoke test provider thật là bước riêng, không đưa credential, transcript hoặc tài liệu private vào CI/log.
+- [ ] Sau khi bank API sẵn sàng, bổ sung negative/regression tests cho sai quyền/course, trạng thái item/session, duplicate policy, atomic import và concurrency. Chuyển lỗi nghiệp vụ F3 cho Minh/Phúc theo ownership.
+- [x] Full solution unit/integration tests were run locally; results are recorded below. Tests currently use the repository's in-memory test setup and do not count as PostgreSQL/Keycloak E2E.
+
+## 5. Thứ tự phụ thuộc và bàn giao
+
+1. Minh chốt/cung cấp bank/revision/attach schema contract; Minh sở hữu schema migration và publish integration.
+2. Chốt generation/citation contract với Phúc; chuyển FE contract cho frontend owner, không giả định API generation đã tồn tại.
+3. Hoàn thiện BE bank/import, attach và PostgreSQL contract tests sau khi schema/contract sẵn sàng.
+4. Chuyển giao API contract cho frontend owner; frontend tiếp tục các mục tại Addendum A.
+5. Bật E2E PostgreSQL/Keycloak cho các luồng đã tích hợp; ghi rõ phần nào còn chờ Minh hoặc Phúc.
+
+Mỗi thay đổi API cần được thông báo cho FE/BE liên quan. Không yêu cầu người khác chờ toàn bộ TASK-K mới bắt đầu phần độc lập, nhưng không merge dựa trên contract chưa thống nhất.
+
+## 6. Tiêu chí nghiệm thu (Definition of Done)
+
+- [ ] Storage-backed bank API, workflow revision/moderation, attach rules and atomic JSON persistence pass contract tests. **Blocked on Minh's schema/contract.**
+- [ ] Only Approved items for the same course attach to Draft sessions; published question snapshots remain unchanged. **Blocked on schema/attach integration.**
+- [x] The import-validation contract rejects absent content/topic and unsupported Bloom levels; all four supported Bloom values have unit coverage.
+- [x] Existing backend F6 API enforces the report visibility and role rules in its service/tests; no backend change was needed for this part. Frontend consumption remains in Addendum A.
+- [x] Backend CI workflow is added; local full-solution tests pass. PostgreSQL/Keycloak E2E remains open.
+- [x] No changes to SQL/publish command or Minh/Phúc-owned F3 implementation.
+
+## 7. Implementation status and blockers
+
+- The existing question CRUD/import API is session-scoped and does **not** implement a question bank. It remains unchanged; do not treat it as satisfying F1-A2/B.
+- Added a provisional import request contract and pure validator. This validates non-empty batch, row presence, content/topic and the four Bloom values. It does not decide duplicate rules, persist data, authorize a course, or provide atomicity because those require the agreed schema and endpoint.
+- Minh's newer rubric schema/API work is present: the fresh-install schema and forward-only upgrade now cover shared rubric templates/versions and session pinning, with AccessConfig services/controllers and tests. This does **not** provide the question-bank schema.
+- F1 bank list/detail/create/revision/approve/reject, bank import endpoint, attach endpoint, audit writes and snapshot persistence are **still blocked**. `question_bank_items`, `question_bank_revisions`, and source-revision linkage are absent from available SQL; no bank API or attach endpoint exists. The proposed attach path in the F1 plan is documentation only. The task ownership rule prohibits Khang from editing `database/` or publish.
+- Still to decide with Minh/tech lead: JSON shape and batch limit, duplicate definition, attach-duplicate behavior, editing/rejecting after approval, and handling attached questions while a session remains Draft.
+- Next-session prerequisite: Minh supplies/merges the bank and revision schema plus the attach contract (including source revision linkage and duplicate/ordering behavior). Then implement the service/controller/EF mapping, transactional import, authorization and audit, and exercise the attach/publish snapshot path. Do not start persistence against the current schema.
+- The F6 backend endpoints and service are already present; existing tests cover pending-report privacy, student ownership, lecturer assignment, confirmed grade CSV, and statistics/results authorization. FE is not present in this repository.
+- PostgreSQL/Keycloak end-to-end validation was not run. Existing integration tests replace both module databases with EF InMemory and use fake authentication/Keycloak. Two PostgreSQL rubric concurrency tests are skipped unless the test database environment is configured.
+- The current build emits a duplicate `using` warning in `RubricTemplatesController.cs` and two xUnit analyzer warnings in `KeycloakAdminClientTests.cs`; they are outside Khang's assigned changes and were not altered.
+
+## Addendum A — Frontend work for `ai-oral-exam-web`
+
+These are frontend-only tasks; complete them in the frontend repository after the backend contracts are agreed and the required APIs are available.
+
+### Question bank (F1)
+
+- Implement the shared API client and question-bank list/detail/create/edit screens using real bank endpoints; show topic, Bloom level, origin, state, revision and provenance.
+- Add JSON import UI. Show row/field errors clearly and show success only when the complete batch was accepted.
+- Show AI-generated Drafts and source citations when Phúc's generation API provides them; let lecturers edit/review/approve/reject according to the agreed state transitions.
+- Allow selecting only Approved questions for a matching Draft session; surface backend errors. Do not add per-question rubric inputs.
+- Use `VITE_USE_MOCKS=false` for the integrated-flow verification.
+
+### Exam configuration (F7)
+
+- Select approved bank items instead of creating questions directly in the session.
+- Remove per-question rubric editing; display the platform rubric and criteria read-only from Minh's contract.
+- Preserve existing session configuration behavior; do not claim attach/publish succeeded when the API returns an error.
+
+### Reporting (F6)
+
+- Connect student attempt report, lecturer results/statistics and CSV download to existing Reporting endpoints.
+- For student attempts before `Finalized`, show only permitted metadata and pending-review state; hide scores, dialogue and detailed feedback.
+- Show permitted stored report details after final confirmation. Never expose an unconfirmed AI score.
+- Handle loading, empty, forbidden/not-found and API error states; verify that pending grades remain blank in the downloaded grade sheet.
+
+### Frontend integration verification
+
+- Update the frontend route/request/response/error mapping when backend contracts are finalized.
+- Run FE contract/E2E flows against the integrated backend and Keycloak; include unauthorized/cross-course cases and record any backend defect for its owning developer.
+- Frontend build/test and `VITE_USE_MOCKS=false` checks are outside this backend repository and have not been run here.
+
+## 8. Verification run
+
+- Focused import validator unit tests: **10 passed, 0 failed** (previous run).
+- Latest full `dotnet test AiOralExam.sln --no-restore`: **225 unit tests passed, 2 PostgreSQL concurrency tests skipped, and 31 integration tests passed**.
+- Latest suite build emitted one duplicate-using warning in `RubricTemplatesController.cs` and two xUnit analyzer warnings in `KeycloakAdminClientTests.cs`; tests still passed. No edits were made to those files.
+- The backend CI workflow is configured to run restore and Release solution tests on push, pull request, and workflow dispatch; its GitHub-hosted result cannot be observed from this workspace.
+
+## 7. Tài liệu tham chiếu
+
+- Phân công tổng thể: [Project-Work-Plan-Minh-Phuc-Khang.md](./Project-Work-Plan-Minh-Phuc-Khang.md)
+- Thiết kế F1, contract dự kiến và rule import/bank: [docs/F1-Implementation-Plan.md](./docs/F1-Implementation-Plan.md)
+- Hợp đồng và luồng F3/F6 liên quan đến kiểm thử tích hợp: [docs/F3-Implementation-Plan.md](./docs/F3-Implementation-Plan.md)
+- API Reporting hiện có: `src/Modules/Reporting/AiOralExam.Modules.Reporting/Controllers/ReportsController.cs`
