@@ -13,7 +13,7 @@ namespace AiOralExam.UnitTests;
 public sealed class ExamSessionCreationTests
 {
     [Fact]
-    public async Task Create_without_rubric_mode_defaults_to_legacy()
+    public async Task Create_without_rubric_mode_defaults_to_shared_version_and_pins_active_platform_rubric()
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
@@ -21,11 +21,11 @@ public sealed class ExamSessionCreationTests
 
         var created = await service.CreateAsync(Request(seed.CourseId), CancellationToken.None);
 
-        Assert.Equal("Legacy", created.RubricMode);
-        Assert.Null(created.RubricVersionId);
+        Assert.Equal("SharedVersion", created.RubricMode);
+        Assert.Equal(seed.PlatformVersionId, created.RubricVersionId);
         var session = await db.ExamSessions.SingleAsync();
-        Assert.Equal(RubricMode.Legacy, session.RubricMode);
-        Assert.Null(session.RubricVersionId);
+        Assert.Equal(RubricMode.SharedVersion, session.RubricMode);
+        Assert.Equal(seed.PlatformVersionId, session.RubricVersionId);
         Assert.Single(db.AuditLogs);
     }
 
@@ -76,18 +76,19 @@ public sealed class ExamSessionCreationTests
     }
 
     [Fact]
-    public async Task Shared_version_mode_requires_a_nonempty_version_id()
+    public async Task Shared_version_mode_without_a_version_pins_the_active_platform_version()
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
         var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
 
-        var exception = await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(
-            Request(seed.CourseId, RubricMode.SharedVersion), CancellationToken.None));
+        var created = await service.CreateAsync(
+            Request(seed.CourseId, RubricMode.SharedVersion), CancellationToken.None);
 
-        Assert.Contains("rubricVersionId", exception.Details!.Keys);
-        Assert.Empty(db.ExamSessions);
-        Assert.Empty(db.AuditLogs);
+        Assert.Equal("SharedVersion", created.RubricMode);
+        Assert.Equal(seed.PlatformVersionId, created.RubricVersionId);
+        Assert.Single(db.ExamSessions);
+        Assert.Single(db.AuditLogs);
     }
 
     [Fact]

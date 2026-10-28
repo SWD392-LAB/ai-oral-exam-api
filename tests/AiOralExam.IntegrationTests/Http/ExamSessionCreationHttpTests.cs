@@ -29,7 +29,8 @@ public sealed class ExamSessionCreationHttpTests
             startTime = start,
             endTime = end,
             timeLimitPerAnswerSeconds = 120,
-            maxFollowUps = 2
+            maxFollowUps = 2,
+            rubricMode = "Legacy"
         });
 
         Assert.Equal(HttpStatusCode.Created, legacyResponse.StatusCode);
@@ -44,6 +45,22 @@ public sealed class ExamSessionCreationHttpTests
         Assert.NotNull(legacyDetail);
         Assert.Equal("Legacy", legacyDetail.RubricMode);
         Assert.Null(legacyDetail.RubricVersionId);
+
+        using var defaultResponse = await client.PostAsJsonAsync("/api/exam-sessions", new
+        {
+            courseId = seeded.CourseId,
+            title = "Default shared session",
+            startTime = start,
+            endTime = end,
+            timeLimitPerAnswerSeconds = 120,
+            maxFollowUps = 2
+        });
+
+        Assert.Equal(HttpStatusCode.Created, defaultResponse.StatusCode);
+        var defaultSession = await defaultResponse.Content.ReadFromJsonAsync<ExamSessionCommandDto>();
+        Assert.NotNull(defaultSession);
+        Assert.Equal("SharedVersion", defaultSession.RubricMode);
+        Assert.Equal(seeded.VersionId, defaultSession.RubricVersionId);
 
         using var sharedResponse = await client.PostAsJsonAsync("/api/exam-sessions", new
         {

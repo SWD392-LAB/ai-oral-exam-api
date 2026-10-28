@@ -230,6 +230,7 @@ public sealed class ScoreReviewHttpContractTests
                 EndTime = StartedAt.AddHours(1),
                 TimeLimitPerAnswerSeconds = 60,
                 MaxFollowUps = 1,
+                RubricMode = AccessDomain.RubricMode.Legacy,
                 Status = ExamSessionStatus.Published,
                 CreatedAt = StartedAt,
             };

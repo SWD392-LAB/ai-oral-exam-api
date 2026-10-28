@@ -272,7 +272,8 @@ public sealed class SharedVersionWorkflowHttpTests
             startTime = start,
             endTime = end,
             timeLimitPerAnswerSeconds = 120,
-            maxFollowUps = 0
+            maxFollowUps = 0,
+            rubricMode = "Legacy"
         });
         Assert.Equal(HttpStatusCode.Created, sessionResponse.StatusCode);
         var session = await sessionResponse.Content.ReadFromJsonAsync<ExamSessionCommandDto>();

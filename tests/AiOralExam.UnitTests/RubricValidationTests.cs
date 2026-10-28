@@ -80,6 +80,7 @@ public sealed class RubricValidationTests
             Id = Guid.NewGuid(),
             CourseId = course.Id,
             Course = course,
+            RubricMode = RubricMode.Legacy,
             CreatedBy = lecturer.Id,
             Title = "Legacy Session",
             StartTime = DateTime.UtcNow,

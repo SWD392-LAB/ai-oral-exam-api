@@ -19,9 +19,9 @@ public sealed class RubricMappingTests
 
         var mode = model.FindEntityType(typeof(ExamSession))!.FindProperty(nameof(ExamSession.RubricMode))!;
         Assert.Equal(typeof(string), mode.GetTypeMapping().Converter!.ProviderClrType);
-        Assert.Equal(RubricMode.Legacy, mode.GetDefaultValue());
+        Assert.Equal(RubricMode.SharedVersion, mode.GetDefaultValue());
         Assert.Equal(ValueGenerated.Never, mode.ValueGenerated);
-        Assert.Equal(RubricMode.Legacy, new ExamSession().RubricMode);
+        Assert.Equal(RubricMode.SharedVersion, new ExamSession().RubricMode);
     }
 
     [Fact]

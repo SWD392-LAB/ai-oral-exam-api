@@ -105,6 +105,7 @@ public class AuditLogDescriptionTests
             Id = Guid.NewGuid(),
             CourseId = course.Id,
             Course = course,
+            RubricMode = RubricMode.Legacy,
             CreatedBy = lecturer.Id,
             Title = "Midterm",
             StartTime = DateTime.UtcNow,

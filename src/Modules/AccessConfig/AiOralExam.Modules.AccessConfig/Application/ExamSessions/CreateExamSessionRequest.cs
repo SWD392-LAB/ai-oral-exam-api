@@ -10,5 +10,5 @@ public sealed record CreateExamSessionRequest(
     DateTime EndTime,
     [Range(1, 3600)] int TimeLimitPerAnswerSeconds,
     [Range(0, 20)] int MaxFollowUps = 2,
-    RubricMode? RubricMode = null,
+    RubricMode? RubricMode = RubricMode.SharedVersion,
     Guid? RubricVersionId = null);

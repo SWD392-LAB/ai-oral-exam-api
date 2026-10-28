@@ -167,7 +167,7 @@ CREATE INDEX ix_course_lecturers_lecturer ON course_lecturers(lecturer_id);
 CREATE TABLE exam_sessions (
     id                             UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     course_id                      UUID         NOT NULL REFERENCES courses(id),
-    rubric_mode                    VARCHAR(20)  NOT NULL DEFAULT 'Legacy',
+    rubric_mode                    VARCHAR(20)  NOT NULL DEFAULT 'SharedVersion',
     rubric_version_id              UUID,
     created_by                     UUID         NOT NULL REFERENCES users(id),
     title                          VARCHAR(200) NOT NULL,
@@ -517,6 +517,18 @@ CREATE TRIGGER trg_criterion_score_check
 BEFORE INSERT OR UPDATE ON criterion_scores
 FOR EACH ROW EXECUTE FUNCTION fn_check_criterion_score();
 
+CREATE OR REPLACE FUNCTION fn_lock_rubric_activation() RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(5067184210567320137);
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql
+SET search_path FROM CURRENT;
+
+CREATE TRIGGER trg_rubric_versions_active_lock
+BEFORE UPDATE OF is_active ON rubric_versions
+FOR EACH STATEMENT EXECUTE FUNCTION fn_lock_rubric_activation();
+
 CREATE OR REPLACE FUNCTION fn_protect_rubric_version() RETURNS TRIGGER AS $$
 DECLARE
     v_template_course_id UUID;
@@ -535,14 +547,33 @@ BEGIN
     END IF;
 
     IF OLD.is_sealed
-       OR (to_jsonb(NEW) - ARRAY['is_sealed', 'max_score']::TEXT[])
-          IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['is_sealed', 'max_score']) THEN
+       AND (to_jsonb(NEW) - ARRAY['is_active']::TEXT[])
+           IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['is_active']::TEXT[]) THEN
         RAISE EXCEPTION 'A sealed rubric version is immutable except for its active state.'
             USING ERRCODE = '23514';
     END IF;
+    IF NOT OLD.is_sealed
+       AND (to_jsonb(NEW) - ARRAY['is_sealed', 'max_score']::TEXT[])
+           IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['is_sealed', 'max_score']::TEXT[]) THEN
+        RAISE EXCEPTION 'Rubric versions are immutable; only sealing an unsealed version is allowed.'
+            USING ERRCODE = '23514';
+    END IF;
+    IF NEW.is_active THEN
+        SELECT course_id INTO v_template_course_id
+        FROM rubric_templates WHERE id = NEW.template_id;
+        IF v_template_course_id IS NOT NULL OR NEW.course_id IS NOT NULL THEN
+            RAISE EXCEPTION 'Only platform-owned rubric versions can be activated.'
+                USING ERRCODE = '23514';
+        END IF;
+        IF NOT NEW.is_sealed THEN
+            RAISE EXCEPTION 'Only sealed rubric versions can be activated.'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path FROM CURRENT;
 
 CREATE TRIGGER trg_rubric_versions_immutable
 BEFORE INSERT OR UPDATE OR DELETE ON rubric_versions
@@ -602,21 +633,41 @@ DECLARE
     v_sealed BOOLEAN;
     v_active BOOLEAN;
     v_version_course_id UUID;
+    v_template_course_id UUID;
+    v_initial_publish BOOLEAN;
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        v_initial_publish := NEW.status = 'Published';
+    ELSE
+        v_initial_publish := OLD.status = 'Draft' AND NEW.status = 'Published';
+    END IF;
+
     IF NEW.rubric_mode = 'Legacy' AND NEW.rubric_version_id IS NOT NULL THEN
         RAISE EXCEPTION 'Legacy sessions cannot reference a shared rubric version.'
             USING ERRCODE = '23514';
     END IF;
 
+    IF NEW.rubric_mode = 'SharedVersion' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM pg_advisory_xact_lock(5067184210567320137);
+        ELSIF NEW.rubric_version_id IS DISTINCT FROM OLD.rubric_version_id
+           OR v_initial_publish THEN
+            PERFORM pg_advisory_xact_lock(5067184210567320137);
+        END IF;
+    END IF;
+
     IF NEW.rubric_version_id IS NOT NULL THEN
-        SELECT is_sealed, is_active, course_id INTO v_sealed, v_active, v_version_course_id
-        FROM rubric_versions
-        WHERE id = NEW.rubric_version_id;
+        SELECT v.is_sealed, v.is_active, v.course_id, t.course_id
+        INTO v_sealed, v_active, v_version_course_id, v_template_course_id
+        FROM rubric_versions v
+        JOIN rubric_templates t ON t.id = v.template_id
+        WHERE v.id = NEW.rubric_version_id;
         IF NOT FOUND OR NOT v_sealed THEN
             RAISE EXCEPTION 'A session can select only a sealed rubric version.'
                 USING ERRCODE = '23514';
         END IF;
-        IF NEW.status = 'Draft' AND (NOT v_active OR v_version_course_id IS NOT NULL) THEN
+        IF NEW.status = 'Draft'
+           AND (NOT v_active OR v_version_course_id IS NOT NULL OR v_template_course_id IS NOT NULL) THEN
             IF TG_OP = 'INSERT' THEN
                 RAISE EXCEPTION 'A new shared session must pin an active platform rubric version.'
                     USING ERRCODE = '23514';
@@ -624,6 +675,11 @@ BEGIN
                 RAISE EXCEPTION 'A new shared session must pin an active platform rubric version.'
                     USING ERRCODE = '23514';
             END IF;
+        END IF;
+        IF NEW.rubric_mode = 'SharedVersion' AND v_initial_publish
+           AND (NOT v_active OR v_version_course_id IS NOT NULL OR v_template_course_id IS NOT NULL) THEN
+            RAISE EXCEPTION 'A published shared session must pin an active platform rubric version.'
+                USING ERRCODE = '23514';
         END IF;
     END IF;
     IF NEW.rubric_mode = 'SharedVersion' AND EXISTS (
@@ -661,7 +717,8 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path FROM CURRENT;
 
 CREATE TRIGGER trg_exam_sessions_rubric_configuration
 BEFORE INSERT OR UPDATE ON exam_sessions

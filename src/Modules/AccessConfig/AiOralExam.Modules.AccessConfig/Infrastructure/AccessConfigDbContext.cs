@@ -171,7 +171,7 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
             e.HasKey(x => x.Id);
             e.Ignore(x => x.IsLocked);
             e.Property(x => x.Title).HasMaxLength(200).IsRequired();
-            e.Property(x => x.RubricMode).HasMaxLength(20).HasDefaultValue(RubricMode.Legacy)
+            e.Property(x => x.RubricMode).HasMaxLength(20).HasDefaultValue(RubricMode.SharedVersion)
                 .ValueGeneratedNever();
             e.Property(x => x.MaxFollowUps).HasDefaultValue(2);
             e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue(ExamSessionStatus.Draft);

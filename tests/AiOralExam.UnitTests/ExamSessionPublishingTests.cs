@@ -1,5 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Application;
 using AiOralExam.Modules.AccessConfig.Application.ExamSessions;
+using AiOralExam.Modules.AccessConfig.Application.RubricVersions;
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
@@ -39,6 +40,28 @@ public sealed class ExamSessionPublishingTests
         Assert.Contains("rubric", exception.Details!.Keys);
         Assert.Equal(ExamSessionStatus.Draft, (await db.ExamSessions.SingleAsync()).Status);
         Assert.Empty(db.AuditLogs);
+    }
+
+    [Fact]
+    public async Task Draft_pinned_to_a_rotated_version_can_be_edited_but_cannot_be_published()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db, RubricMode.SharedVersion);
+        await RotateActiveVersionAsync(db, seed.LecturerId);
+        var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
+
+        var updated = await service.UpdateAsync(seed.SessionId,
+            new UpdateExamSessionRequest("Edited draft", DateTime.UtcNow.AddHours(1),
+                DateTime.UtcNow.AddHours(2), 120), CancellationToken.None);
+        Assert.Equal("Edited draft", updated.Title);
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() =>
+            service.PublishAsync(seed.SessionId, CancellationToken.None));
+
+        Assert.Equal("rubric_version_not_active", exception.Code);
+        var draft = await db.ExamSessions.SingleAsync(x => x.Id == seed.SessionId);
+        Assert.Equal(ExamSessionStatus.Draft, draft.Status);
+        Assert.Equal(seed.VersionId, draft.RubricVersionId);
     }
 
     [Fact]
@@ -109,16 +132,31 @@ public sealed class ExamSessionPublishingTests
     }
 
     [Fact]
-    public async Task Shared_version_session_with_cross_course_version_is_rejected()
+    public async Task Shared_version_session_with_course_scoped_version_is_rejected()
     {
         await using var db = CreateDatabase();
-        var seed = await SeedAsync(db, RubricMode.SharedVersion, versionBelongsToCourse: false);
+        var seed = await SeedAsync(db, RubricMode.SharedVersion, versionBelongsToCourse: true);
         var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
 
         var exception = await Assert.ThrowsAsync<NotFoundException>(() =>
             service.PublishAsync(seed.SessionId, CancellationToken.None));
 
         Assert.Equal("rubric_version_not_found", exception.Code);
+        Assert.Equal(ExamSessionStatus.Draft, (await db.ExamSessions.SingleAsync()).Status);
+        Assert.Empty(db.AuditLogs);
+    }
+
+    [Fact]
+    public async Task Shared_version_session_with_inactive_version_is_rejected()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db, RubricMode.SharedVersion, versionActive: false);
+        var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() =>
+            service.PublishAsync(seed.SessionId, CancellationToken.None));
+
+        Assert.Equal("rubric_version_not_active", exception.Code);
         Assert.Equal(ExamSessionStatus.Draft, (await db.ExamSessions.SingleAsync()).Status);
         Assert.Empty(db.AuditLogs);
     }
@@ -235,6 +273,63 @@ public sealed class ExamSessionPublishingTests
         Assert.Equal(seed.VersionId, unchanged.RubricVersionId);
     }
 
+    [Fact]
+    public async Task Published_session_keeps_its_pinned_version_when_platform_activation_rotates()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db, RubricMode.SharedVersion);
+        var commands = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
+        await commands.PublishAsync(seed.SessionId, CancellationToken.None);
+
+        var nextVersionId = await RotateActiveVersionAsync(db, seed.LecturerId);
+        var closed = await commands.CloseAsync(seed.SessionId, CancellationToken.None);
+
+        var publishedSession = await db.ExamSessions.SingleAsync(x => x.Id == seed.SessionId);
+        Assert.Equal("Closed", closed.Status);
+        Assert.Equal(ExamSessionStatus.Closed, publishedSession.Status);
+        Assert.Equal(seed.VersionId, publishedSession.RubricVersionId);
+        Assert.False((await db.RubricVersions.SingleAsync(x => x.Id == seed.VersionId)).IsActive);
+        Assert.True((await db.RubricVersions.SingleAsync(x => x.Id == nextVersionId)).IsActive);
+    }
+
+    private static async Task<Guid> RotateActiveVersionAsync(AccessConfigDbContext db, Guid creatorId)
+    {
+        var template = new RubricTemplate
+        {
+            Id = Guid.NewGuid(),
+            Name = "Next platform rubric",
+            CreatedBy = creatorId,
+            CreatedAt = DateTime.UtcNow
+        };
+        var version = new RubricVersion
+        {
+            Id = Guid.NewGuid(),
+            TemplateId = template.Id,
+            Template = template,
+            VersionNo = 1,
+            MaxScore = 7m,
+            IsSealed = true,
+            CreatedBy = creatorId,
+            CreatedAt = DateTime.UtcNow
+        };
+        version.Criteria.Add(new RubricCriterion
+        {
+            Id = Guid.NewGuid(),
+            RubricVersionId = version.Id,
+            RubricVersion = version,
+            OrderNo = 1,
+            Description = "Updated accuracy",
+            MaxPoints = 7m
+        });
+        db.RubricTemplates.Add(template);
+        db.RubricVersions.Add(version);
+        await db.SaveChangesAsync();
+
+        await new RubricVersionService(db, new TestAdministrator(creatorId))
+            .ActivateAsync(template.Id, version.Id, CancellationToken.None);
+        return version.Id;
+    }
+
     private static AccessConfigDbContext CreateDatabase() =>
         new(new DbContextOptionsBuilder<AccessConfigDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -253,7 +348,8 @@ public sealed class ExamSessionPublishingTests
         bool versionSealed = true,
         bool versionHasCriteria = true,
         bool invalidCriterion = false,
-        bool versionBelongsToCourse = true,
+        bool versionBelongsToCourse = false,
+        bool versionActive = true,
         decimal versionMaxScore = 5m,
         decimal criterionMaxPoints = 5m,
         ExamSessionStatus status = ExamSessionStatus.Draft)
@@ -263,7 +359,6 @@ public sealed class ExamSessionPublishingTests
         var lecturer = NewUser(Guid.NewGuid(), lecturerRole, "lecturer@example.test");
         var student = NewUser(Guid.NewGuid(), studentRole, "student@example.test");
         var course = NewCourse("PUB101");
-        var otherCourse = NewCourse("PUB102");
         if (assignedLecturer)
             course.Lecturers.Add(new CourseLecturer
             {
@@ -274,11 +369,11 @@ public sealed class ExamSessionPublishingTests
                 AssignedAt = DateTime.UtcNow
             });
 
-        var versionCourse = versionBelongsToCourse ? course : otherCourse;
+        var versionCourse = versionBelongsToCourse ? course : null;
         var template = new RubricTemplate
         {
             Id = Guid.NewGuid(),
-            CourseId = versionCourse.Id,
+            CourseId = versionCourse?.Id,
             Course = versionCourse,
             Name = "Publish rubric",
             CreatedBy = lecturer.Id,
@@ -289,10 +384,11 @@ public sealed class ExamSessionPublishingTests
             Id = Guid.NewGuid(),
             TemplateId = template.Id,
             Template = template,
-            CourseId = versionCourse.Id,
+            CourseId = versionCourse?.Id,
             VersionNo = 1,
             MaxScore = versionMaxScore,
             IsSealed = versionSealed,
+            IsActive = versionActive,
             CreatedBy = lecturer.Id,
             CreatedAt = DateTime.UtcNow
         };
@@ -347,7 +443,7 @@ public sealed class ExamSessionPublishingTests
 
         db.Roles.AddRange(lecturerRole, studentRole);
         db.Users.AddRange(lecturer, student);
-        db.Courses.AddRange(course, otherCourse);
+        db.Courses.Add(course);
         db.RubricTemplates.Add(template);
         db.RubricVersions.Add(version);
         db.ExamSessions.Add(session);
@@ -408,5 +504,13 @@ public sealed class ExamSessionPublishingTests
         public Guid Id => id;
         public string? Role => Roles.Lecturer;
         public bool IsInRole(string requestedRole) => requestedRole == Roles.Lecturer;
+    }
+
+    private sealed class TestAdministrator(Guid id) : ICurrentUser
+    {
+        public bool IsAuthenticated => true;
+        public Guid Id => id;
+        public string? Role => Roles.Administrator;
+        public bool IsInRole(string requestedRole) => requestedRole == Roles.Administrator;
     }
 }
