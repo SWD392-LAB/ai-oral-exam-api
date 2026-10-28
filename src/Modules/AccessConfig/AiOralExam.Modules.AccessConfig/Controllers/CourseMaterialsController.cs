@@ -2,6 +2,7 @@ using AiOralExam.Modules.AccessConfig.Application.Materials;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AiOralExam.Modules.AccessConfig.Controllers;

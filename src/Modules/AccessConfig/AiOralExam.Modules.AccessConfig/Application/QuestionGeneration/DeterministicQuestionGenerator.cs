@@ -45,7 +45,7 @@ internal sealed class DeterministicQuestionGenerator(
             .Select((text, index) => (Text: text?.Trim() ?? string.Empty, Index: index, Citation: $"excerpt-{index + 1}"))
             .Where(x => x.Text.Length > 0)
             .Select(x => (x.Text, x.Index, x.Citation))
-            .Concat(materialSources.Select(x => (x.Text, x.ChunkNo, x.Citation)))
+            .Concat(materialSources.Select(x => (Text: x.Text, Index: x.ChunkNo, Citation: x.Citation)))
             .ToList();
         if (sources.Count == 0)
             throw new ConflictException("insufficient_source", "No usable source excerpt was supplied.");

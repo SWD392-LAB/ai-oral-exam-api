@@ -82,6 +82,88 @@ Content-Type: application/json
   "platformRubricVersionId": "RUBRIC_VERSION_ID"
 }
 
+### List Draft question-bank items (replace COURSE_ID)
+GET {{host}}/api/courses/COURSE_ID/question-bank?status=Draft
+Authorization: ******
+
+### Create a manual question-bank Draft (replace COURSE_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank
+Authorization: ******
+Content-Type: application/json
+
+{
+  "topic": "Relational databases",
+  "bloom": "Understand",
+  "content": "Explain the purpose of a primary key."
+}
+
+### Import question-bank Drafts (replace COURSE_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank/import
+Authorization: ******
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "topic": "Relational databases",
+      "bloom": "Remember",
+      "content": "Define a relation."
+    },
+    {
+      "topic": "Relational databases",
+      "bloom": "Apply",
+      "content": "Choose a primary key for a student table."
+    }
+  ]
+}
+
+### Invalid bank import (expects 400 with row/field details)
+POST {{host}}/api/courses/COURSE_ID/question-bank/import
+Authorization: ******
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "topic": "Relational databases",
+      "bloom": "Remember",
+      "content": " "
+    }
+  ]
+}
+
+### Get a question-bank item and its revisions (replace COURSE_ID and ITEM_ID)
+GET {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID
+Authorization: ******
+
+### Edit a Draft and create a revision (replace COURSE_ID and ITEM_ID)
+PUT {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID
+Authorization: ******
+Content-Type: application/json
+
+{
+  "topic": "Relational databases",
+  "bloom": "Analyze",
+  "content": "Compare candidate keys and primary keys."
+}
+
+### Approve a Draft (replace COURSE_ID and ITEM_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID/approve
+Authorization: ******
+
+### Reject a Draft (replace COURSE_ID and ITEM_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID/reject
+Authorization: ******
+
+### Attach Approved items to a Draft session (replace SESSION_ID and item IDs)
+POST {{host}}/api/exam-sessions/SESSION_ID/questions/from-bank
+Authorization: ******
+Content-Type: application/json
+
+{
+  "itemIds": ["ITEM_ID_1", "ITEM_ID_2"]
+}
+
 ### Health check
 GET {{host}}/health
 

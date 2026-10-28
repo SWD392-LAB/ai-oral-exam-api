@@ -34,6 +34,7 @@ internal sealed class QuestionBankService(
     {
         await EnsureCourseAccessAsync(courseId, ct);
         ValidateText(request.Topic, request.Content);
+        ValidateBloom(request.Bloom, "bloom");
         var item = NewItem(courseId, request.Topic, request.Bloom, request.Content, QuestionBankOrigin.Manual, null);
         db.QuestionBankItems.Add(item);
         AddAudit(AuditActions.Create, item.Id, $"Manual question bank item in course {courseId}");
@@ -44,33 +45,41 @@ internal sealed class QuestionBankService(
     public async Task<IReadOnlyList<QuestionBankItemDto>> ImportAsync(Guid courseId, ImportQuestionBankRequest request, CancellationToken ct)
     {
         await EnsureCourseAccessAsync(courseId, ct);
+        if (request?.Items is not { Count: > 0 } items)
+            throw new ValidationException(new Dictionary<string, string[]> { ["items"] = ["At least one item is required."] });
+
         var errors = new Dictionary<string, string[]>();
-        if (request.Items is null || request.Items.Count == 0)
-            errors["items"] = ["At least one item is required."];
-        else
+        for (var i = 0; i < items.Count; i++)
         {
-            for (var i = 0; i < request.Items.Count; i++)
-            {
-                var item = request.Items[i];
-                if (item is null || string.IsNullOrWhiteSpace(item.Content))
-                    errors[$"items[{i}].content"] = ["Content is required."];
-                if (item is null || string.IsNullOrWhiteSpace(item.Topic))
-                    errors[$"items[{i}].topic"] = ["Topic is required."];
-            }
+            var item = items[i];
+            if (item is null || string.IsNullOrWhiteSpace(item.Content))
+                errors[$"items[{i}].content"] = ["Content is required."];
+            else if (item.Content.Length > 10000)
+                errors[$"items[{i}].content"] = ["Content must not exceed 10000 characters."];
+            if (item is null || string.IsNullOrWhiteSpace(item.Topic))
+                errors[$"items[{i}].topic"] = ["Topic is required."];
+            else if (item.Topic.Length > 200)
+                errors[$"items[{i}].topic"] = ["Topic must not exceed 200 characters."];
+            if (item is not null && !Enum.IsDefined(item.Bloom))
+                errors[$"items[{i}].bloom"] = ["Bloom must be Remember, Understand, Apply, or Analyze."];
         }
         if (errors.Count > 0) throw new ValidationException(errors);
 
-        var duplicates = request.Items!.Select(x => x.Content.Trim().ToUpperInvariant())
-            .GroupBy(x => x).Where(x => x.Count() > 1).Select(x => x.Key).ToHashSet();
-        if (duplicates.Count > 0)
-            throw new ValidationException(new Dictionary<string, string[]> { ["items"] = ["Duplicate question content is not allowed in one import batch."] });
+        var duplicateRows = items.Select((item, index) => (Content: NormalizeContent(item.Content), Index: index))
+            .GroupBy(x => x.Content, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1)
+            .SelectMany(group => group.Select(row => row.Index));
+        foreach (var index in duplicateRows)
+            errors[$"items[{index}].content"] = ["Question content must be unique within the import batch."];
+        if (errors.Count > 0) throw new ValidationException(errors);
 
         var existing = await db.QuestionBankItems.Where(x => x.CourseId == courseId)
-            .Select(x => x.Content.ToUpper()).ToListAsync(ct);
-        if (request.Items.Any(x => existing.Contains(x.Content.Trim().ToUpperInvariant())))
+            .Select(x => x.Content).ToListAsync(ct);
+        var existingContent = existing.Select(NormalizeContent).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (items.Any(x => existingContent.Contains(NormalizeContent(x.Content))))
             throw new ConflictException("question_bank_duplicate", "A question with the same content already exists in this course.");
 
-        var imported = request.Items.Select(x => NewItem(courseId, x.Topic, x.Bloom, x.Content, QuestionBankOrigin.Import, null)).ToList();
+        var imported = items.Select(x => NewItem(courseId, x.Topic, x.Bloom, x.Content, QuestionBankOrigin.Import, null)).ToList();
         db.QuestionBankItems.AddRange(imported);
         foreach (var item in imported) AddAudit(AuditActions.Create, item.Id, $"Imported question bank item in course {courseId}");
         await db.SaveChangesAsync(ct);
@@ -81,6 +90,7 @@ internal sealed class QuestionBankService(
     {
         await EnsureCourseAccessAsync(courseId, ct);
         ValidateText(request.Topic, request.Content);
+        ValidateBloom(request.Bloom, "bloom");
         var item = await GetItemAsync(courseId, itemId, ct);
         if (item.Status != QuestionBankStatus.Draft)
             throw new ConflictException("question_bank_locked", "Only Draft bank items can be edited.");
@@ -103,6 +113,29 @@ internal sealed class QuestionBankService(
         if (drafts.Count == 0) return [];
         if (string.IsNullOrWhiteSpace(topic))
             throw new ValidationException(new Dictionary<string, string[]> { ["topic"] = ["A topic is required."] });
+        var errors = new Dictionary<string, string[]>();
+        for (var index = 0; index < drafts.Count; index++)
+        {
+            var draft = drafts[index];
+            if (draft.DraftId == Guid.Empty)
+                errors[$"drafts[{index}].draftId"] = ["Draft ID must not be empty."];
+            if (string.IsNullOrWhiteSpace(draft.Content))
+                errors[$"drafts[{index}].content"] = ["Content is required."];
+            if (draft.Content?.Length > 10000)
+                errors[$"drafts[{index}].content"] = ["Content must not exceed 10000 characters."];
+            if (!Enum.IsDefined(draft.Bloom))
+                errors[$"drafts[{index}].bloom"] = ["Bloom must be Remember, Understand, Apply, or Analyze."];
+            if (!string.Equals(draft.Status, "Draft", StringComparison.Ordinal))
+                errors[$"drafts[{index}].status"] = ["Generated questions must be Drafts."];
+        }
+        foreach (var duplicate in drafts.Select((draft, index) => (draft.DraftId, index))
+            .Where(x => x.DraftId != Guid.Empty)
+            .GroupBy(x => x.DraftId)
+            .Where(group => group.Count() > 1)
+            .SelectMany(group => group))
+            errors[$"drafts[{duplicate.index}].draftId"] = ["Draft IDs must be unique within the generation result."];
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
         var items = drafts.Select(d => NewItem(
             courseId, topic, d.Bloom, d.Content, QuestionBankOrigin.Ai,
             JsonSerializer.Serialize(new { d.PlatformRubricVersionId, d.Citations, SourceMaterialIds = sourceMaterialIds ?? Array.Empty<Guid>() }), d.DraftId)).ToList();
@@ -114,33 +147,43 @@ internal sealed class QuestionBankService(
 
     public async Task<IReadOnlyList<Guid>> AttachApprovedAsync(Guid sessionId, AttachQuestionBankRequest request, CancellationToken ct)
     {
+        if (request?.ItemIds is not { Count: > 0 } itemIds)
+            throw new ValidationException(new Dictionary<string, string[]> { ["itemIds"] = ["At least one question bank item is required."] });
+        if (itemIds.Distinct().Count() != itemIds.Count)
+            throw new ValidationException(new Dictionary<string, string[]> { ["itemIds"] = ["Question bank item IDs must be unique."] });
+
         var session = await db.ExamSessions.Include(x => x.Course).ThenInclude(x => x.Lecturers).Include(x => x.Questions)
             .FirstOrDefaultAsync(x => x.Id == sessionId, ct)
             ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
         EnsureCourseAccess(session.Course);
         if (session.Status != ExamSessionStatus.Draft)
             throw new ConflictException("exam_session_locked", "Only Draft sessions can attach question bank items.");
-        var ids = request.ItemIds.Distinct().ToArray();
+        var ids = itemIds.ToArray();
         var items = await db.QuestionBankItems.Include(x => x.Revisions)
             .Where(x => ids.Contains(x.Id) && x.CourseId == session.CourseId && x.Status == QuestionBankStatus.Approved)
             .ToListAsync(ct);
         if (items.Count != ids.Length)
             throw new ConflictException("question_bank_item_not_approved", "Every selected item must be Approved and belong to the session course.");
         var orderedItems = ids.Select(id => items.Single(item => item.Id == id)).ToList();
+        var revisions = orderedItems.ToDictionary(
+            item => item.Id,
+            item => item.Revisions.OrderByDescending(revision => revision.RevisionNo).FirstOrDefault());
+        if (revisions.Values.Any(revision => revision is null))
+            throw new ConflictException("question_bank_revision_missing", "Every Approved bank item must have a revision.");
         var attachedRevisionIds = session.Questions
             .Where(x => x.SourceBankRevisionId.HasValue)
             .Select(x => x.SourceBankRevisionId!.Value)
             .ToHashSet();
-        if (orderedItems.Select(x => x.Revisions.OrderByDescending(r => r.RevisionNo).First().Id).Any(attachedRevisionIds.Contains))
+        if (revisions.Values.Any(revision => attachedRevisionIds.Contains(revision!.Id)))
             throw new ConflictException("question_bank_item_already_attached", "A selected bank item is already attached to this session.");
 
         var nextOrder = session.Questions.Count == 0 ? 1 : session.Questions.Max(x => x.OrderNo) + 1;
         foreach (var item in orderedItems)
         {
-            var revision = item.Revisions.OrderByDescending(x => x.RevisionNo).First();
+            var revision = revisions[item.Id]!;
             var question = new Question
             {
-                Id = Guid.NewGuid(), ExamSessionId = session.Id, OrderNo = nextOrder++, Content = item.Content,
+                Id = Guid.NewGuid(), ExamSessionId = session.Id, OrderNo = nextOrder++, Content = revision.Content,
                 SourceBankRevisionId = revision.Id
             };
             db.Questions.Add(question);
@@ -156,6 +199,10 @@ internal sealed class QuestionBankService(
         var item = await GetItemAsync(courseId, itemId, ct);
         if (item.Status == QuestionBankStatus.Archived)
             throw new ConflictException("question_bank_locked", "Archived bank items cannot change status.");
+        if (item.Status == status)
+            return ToDto(item);
+        if (item.Status != QuestionBankStatus.Draft)
+            throw new ConflictException("question_bank_status_conflict", "Only Draft bank items can be approved or rejected.");
         item.Status = status;
         item.UpdatedAt = DateTime.UtcNow;
         AddAudit(status == QuestionBankStatus.Approved ? AuditActions.Approve : AuditActions.Reject, item.Id, $"Question bank item marked {status}");
@@ -207,9 +254,29 @@ internal sealed class QuestionBankService(
 
     private static void ValidateText(string topic, string content)
     {
-        if (string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(content))
-            throw new ValidationException(new Dictionary<string, string[]> { ["content"] = ["Topic and content are required."] });
+        var errors = new Dictionary<string, string[]>();
+        if (string.IsNullOrWhiteSpace(topic))
+            errors["topic"] = ["Topic is required."];
+        else if (topic.Length > 200)
+            errors["topic"] = ["Topic must not exceed 200 characters."];
+        if (string.IsNullOrWhiteSpace(content))
+            errors["content"] = ["Content is required."];
+        else if (content.Length > 10000)
+            errors["content"] = ["Content must not exceed 10000 characters."];
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
     }
+
+    private static void ValidateBloom(BloomLevel bloom, string key)
+    {
+        if (!Enum.IsDefined(bloom))
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [key] = ["Bloom must be Remember, Understand, Apply, or Analyze."]
+            });
+    }
+
+    private static string NormalizeContent(string content) => content.Trim();
 
     private static QuestionBankStatus ToStatus(QuestionBankStatusFilter filter) => (QuestionBankStatus)filter;
 

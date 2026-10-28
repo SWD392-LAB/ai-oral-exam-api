@@ -140,30 +140,57 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
         {
             e.ToTable("course_materials");
             e.HasKey(x => x.Id);
-            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.FileName).HasMaxLength(255).IsRequired();
+            e.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.StorageKey).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue(CourseMaterialStatus.Pending);
+            e.Property(x => x.IngestError).HasMaxLength(500);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
-            e.HasOne(x => x.Course).WithMany(c => c.RubricTemplates).HasForeignKey(x => x.CourseId)
-                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne(x => x.Course).WithMany().HasForeignKey(x => x.CourseId)
+                .OnDelete(DeleteBehavior.Cascade);
             e.HasOne<User>().WithMany().HasForeignKey(x => x.CreatedBy)
                 .OnDelete(DeleteBehavior.NoAction);
-            e.HasIndex(x => x.CourseId).HasDatabaseName("ix_rubric_templates_course");
+            e.HasMany(x => x.Chunks).WithOne(x => x.Material).HasForeignKey(x => x.CourseMaterialId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.CourseId, x.Status }).HasDatabaseName("ix_course_materials_course_status");
         });
 
         b.Entity<MaterialChunk>(e =>
         {
             e.ToTable("material_chunks");
             e.HasKey(x => x.Id);
-            e.Property(x => x.MaxScore).HasPrecision(5, 2).HasDefaultValue(0m).ValueGeneratedOnAddOrUpdate();
+            e.HasIndex(x => new { x.CourseMaterialId, x.ChunkNo }).IsUnique();
+        });
+
+        b.Entity<RubricTemplate>(e =>
+        {
+            e.ToTable("rubric_templates");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+            e.HasOne(x => x.Course).WithMany(x => x.RubricTemplates).HasForeignKey(x => x.CourseId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.CreatedBy)
+                .OnDelete(DeleteBehavior.NoAction);
+            e.HasMany(x => x.Versions).WithOne(x => x.Template).HasForeignKey(x => x.TemplateId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_rubric_versions_template");
+            e.HasIndex(x => x.CourseId).HasDatabaseName("ix_rubric_templates_course");
+        });
+
+        b.Entity<RubricVersion>(e =>
+        {
+            e.ToTable("rubric_versions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.MaxScore).HasPrecision(5, 2).HasDefaultValue(0m);
             e.Property(x => x.IsSealed).HasDefaultValue(false);
             e.Property(x => x.IsActive).HasDefaultValue(false);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
-            e.HasAlternateKey(x => new { x.TemplateId, x.VersionNo });
-            e.HasOne(x => x.Template).WithMany(x => x.Versions)
-                .HasForeignKey(x => x.TemplateId)
-                .OnDelete(DeleteBehavior.Restrict)
-                .HasConstraintName("fk_rubric_versions_template");
             e.HasOne<User>().WithMany().HasForeignKey(x => x.CreatedBy)
                 .OnDelete(DeleteBehavior.NoAction);
+            e.HasMany(x => x.Criteria).WithOne(x => x.RubricVersion).HasForeignKey(x => x.RubricVersionId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_rubric_criteria_version");
+            e.HasIndex(x => new { x.TemplateId, x.VersionNo }).IsUnique();
             e.HasIndex(x => new { x.TemplateId, x.VersionNo })
                 .HasDatabaseName("ix_rubric_versions_template");
             e.HasIndex(x => x.IsActive).IsUnique().HasFilter("is_active")

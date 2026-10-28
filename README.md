@@ -65,6 +65,12 @@ For private F1 course material ingestion on an existing database, apply
 the material metadata and extracted-chunk tables; uploaded files remain outside
 the database in the configured private storage root.
 
+The rubric-version/platform lifecycle upgrades are separate:
+`database/06_rubric_versions.sql`, `database/08_f1_platform_rubrics.sql`, and
+`database/10_f1_rubric_lifecycle.sql`. They require the `app_schema` psql
+variable; follow each script's header and the approved database change process
+before applying them.
+
 In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 
 ### Try the M1 exam flow in Swagger
@@ -129,11 +135,15 @@ ai-oral-exam-api/
 ├── Directory.Build.props            # shared settings: net8.0, nullable...
 ├── Directory.Packages.props         # NuGet versions declared once (Central Package Management)
 ├── database/
-│   ├── 01_schema.sql                # SOURCE OF TRUTH for the schema (16 tables)
+│   ├── 01_schema.sql                # SOURCE OF TRUTH for the schema
 │   ├── 02_seed.sql                  # demo data
 │   ├── 03_user_role_code_constraint.sql # upgrade for existing databases
 │   ├── 04_audit_log_description.sql # adds audit log descriptions to existing databases
-│   └── 05_allow_interview_attempt_retakes.sql # removes the old one-attempt constraint
+│   ├── 05_allow_interview_attempt_retakes.sql # removes the old one-attempt constraint
+│   ├── 06_*.sql                     # AI evaluation state and rubric versions
+│   ├── 07_*.sql                     # question bank and F3 turn processing
+│   ├── 08_*.sql                     # course materials and platform rubrics
+│   └── 09_*.sql–12_*.sql            # F3 processing, rubric lifecycle and retry upgrades
 ├── src/
 │   ├── AiOralExam.Api/              # Host: Program.cs, Keycloak token validation, Swagger, CORS, error middleware
 │   ├── Shared/
@@ -161,7 +171,7 @@ ai-oral-exam-api/
 
 | Module | Does | Owns tables | Depends on |
 |---|---|---|---|
-| **AccessConfig** (F7) | user profiles, lecturer assignment, exam sessions, questions, rubrics, AI settings, audit log | `users`, `roles`, `courses`, `course_lecturers`, `exam_sessions`, `questions`, `rubrics`, `rubric_criteria`, `ai_service_configs`, `audit_logs` | – |
+| **AccessConfig** (F7) | user profiles, lecturer assignment, exam sessions, question bank, course materials, platform/legacy rubrics, AI settings, audit log | `users`, `roles`, `courses`, `course_lecturers`, `exam_sessions`, `questions`, `question_bank_items`, `question_bank_revisions`, `course_materials`, `material_chunks`, `rubric_templates`, `rubric_versions`, `rubric_criteria` (legacy and versioned), `rubrics`, `ai_service_configs`, `audit_logs` | – |
 | **Interview** (F3) | runs the exam, follow-ups, AI score suggestions (per rubric criterion), lecturer score review and finalization | `participants`, `interview_attempts`, `question_responses`, `interview_turns`, `criterion_scores`, `score_reviews` | `AccessConfig.Contracts` |
 | **Reporting** (F6) | student reports, results, class statistics, grade sheet export | *(none)* | `Interview.Contracts`, `AccessConfig.Contracts` |
 

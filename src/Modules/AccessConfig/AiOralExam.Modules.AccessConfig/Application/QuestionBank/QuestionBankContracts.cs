@@ -3,27 +3,33 @@ using AiOralExam.Modules.AccessConfig.Application.QuestionGeneration;
 
 namespace AiOralExam.Modules.AccessConfig.Application.QuestionBank;
 
+/// <summary>Creates a manual question-bank item as a Draft.</summary>
 public sealed record CreateQuestionBankItemRequest(
     [Required, MaxLength(200)] string Topic,
     BloomLevel Bloom,
     [Required, MaxLength(10000)] string Content);
 
+/// <summary>Replaces the current Draft content and creates a new immutable revision.</summary>
 public sealed record UpdateQuestionBankItemRequest(
     [Required, MaxLength(200)] string Topic,
     BloomLevel Bloom,
     [Required, MaxLength(10000)] string Content);
 
+/// <summary>One question row in an atomic bank import.</summary>
 public sealed record ImportQuestionBankItem(
     [Required, MaxLength(200)] string Topic,
     BloomLevel Bloom,
     [Required, MaxLength(10000)] string Content);
 
+/// <summary>All rows to import as Drafts for one course.</summary>
 public sealed record ImportQuestionBankRequest(
     [Required, MinLength(1)] IReadOnlyList<ImportQuestionBankItem> Items);
 
+/// <summary>Approved bank item IDs to attach to a Draft session, in desired question order.</summary>
 public sealed record AttachQuestionBankRequest(
     [Required, MinLength(1)] IReadOnlyList<Guid> ItemIds);
 
+/// <summary>An immutable content revision of a question-bank item.</summary>
 public sealed record QuestionBankRevisionDto(
     Guid Id,
     int RevisionNo,
@@ -31,6 +37,7 @@ public sealed record QuestionBankRevisionDto(
     string? ProvenanceJson,
     DateTime CreatedAt);
 
+/// <summary>A course-scoped question-bank item and its revision history.</summary>
 public sealed record QuestionBankItemDto(
     Guid Id,
     Guid CourseId,
