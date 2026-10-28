@@ -147,6 +147,46 @@ public class InterviewScoreReviewTests
     }
 
     [Fact]
+    public async Task Interrupted_attempt_with_a_failed_turn_remains_unreviewable()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.InProgress, includeCompletedResponse: false);
+        var now = DateTime.UtcNow;
+        attempt.Interrupt(now);
+        attempt.Participant.Status = ParticipantStatus.Completed;
+        var response = new QuestionResponse
+        {
+            Id = Guid.NewGuid(),
+            AttemptId = attempt.Id,
+            QuestionId = DefaultQuestionId,
+        };
+        response.Turns.Add(new InterviewTurn
+        {
+            Id = Guid.NewGuid(),
+            QuestionResponseId = response.Id,
+            TurnNo = 1,
+            Type = TurnType.Main,
+            QuestionText = "Question",
+            AskedAt = now,
+            AnsweredAt = now,
+            ProcessingStatus = TurnProcessingStatus.Failed,
+            RetryCount = 4,
+        });
+        attempt.Responses.Add(response);
+        db.QuestionResponses.Add(response);
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true));
+
+        var getError = await Assert.ThrowsAsync<ConflictException>(() => service.GetAttemptReviewAsync(attempt.Id));
+        Assert.Equal("attempt_not_ready_for_review", getError.Code);
+        await AssertEvaluationPendingAsync(service, attempt.Id);
+        Assert.Empty(await new InterviewResultsApi(db).GetSessionResultsAsync(sessionId));
+        Assert.Empty(db.ScoreReviews);
+    }
+
+    [Fact]
     public async Task Missing_ai_score_is_evaluation_pending_even_when_response_and_turn_are_finished()
     {
         await using var db = CreateDbContext();

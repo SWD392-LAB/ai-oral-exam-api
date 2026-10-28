@@ -360,7 +360,7 @@ CREATE TABLE interview_attempts (
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     status          VARCHAR(20) NOT NULL DEFAULT 'InProgress'
-                    CHECK (status IN ('InProgress', 'PendingReview', 'Finalized')),
+                    CHECK (status IN ('InProgress', 'Interrupted', 'PendingReview', 'Finalized')),
     CHECK (completed_at IS NULL OR completed_at >= started_at)
 );
 CREATE INDEX ix_interview_attempts_participant ON interview_attempts(participant_id);
@@ -395,10 +395,12 @@ CREATE TABLE interview_turns (
     is_timed_out          BOOLEAN      NOT NULL DEFAULT FALSE,
     processing_status     VARCHAR(20)  NOT NULL DEFAULT 'AwaitingAnswer',
     processing_started_at TIMESTAMPTZ,
+    retry_count           INT          NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    next_retry_at         TIMESTAMPTZ,
     processing_token      UUID,
     submission_result     JSONB,
     CONSTRAINT ck_interview_turns_processing_status
-        CHECK (processing_status IN ('AwaitingAnswer', 'Processing', 'Retry', 'Completed')),
+        CHECK (processing_status IN ('AwaitingAnswer', 'Processing', 'Retry', 'Completed', 'Failed')),
     CONSTRAINT ck_interview_turns_processing_token
         CHECK ((processing_status = 'Processing') = (processing_token IS NOT NULL)),
     UNIQUE (question_response_id, turn_no)
@@ -406,6 +408,9 @@ CREATE TABLE interview_turns (
 CREATE INDEX ix_interview_turns_processing_recovery
     ON interview_turns(processing_status, processing_started_at)
     WHERE processing_status IN ('Processing', 'Retry');
+CREATE INDEX ix_interview_turns_retry_due
+    ON interview_turns(processing_status, next_retry_at)
+    WHERE processing_status = 'Retry';
 
 -- ERD: CRITERION SCORE  (QUESTION RESPONSE 1 --< 0..* "is scored by", RUBRIC CRITERION 1 --< 0..* "is scored in")
 -- Trigger trg_criterion_score_check: the criterion must belong to the rubric of the response's

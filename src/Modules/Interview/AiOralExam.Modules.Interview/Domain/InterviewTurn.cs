@@ -17,6 +17,8 @@ public class InterviewTurn
     public bool IsTimedOut { get; set; }
     public TurnProcessingStatus ProcessingStatus { get; set; } = TurnProcessingStatus.AwaitingAnswer;
     public DateTime? ProcessingStartedAt { get; set; }
+    public int RetryCount { get; set; }
+    public DateTime? NextRetryAt { get; set; }
     public Guid? ProcessingToken { get; set; }
     public string? SubmissionResultJson { get; set; }
 }
@@ -26,5 +28,6 @@ public enum TurnProcessingStatus
     AwaitingAnswer,
     Processing,
     Retry,
-    Completed
+    Completed,
+    Failed
 }

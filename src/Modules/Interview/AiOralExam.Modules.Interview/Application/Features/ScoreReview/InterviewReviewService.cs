@@ -26,6 +26,8 @@ internal sealed class InterviewReviewService(
         var attempt = await LoadReviewAttemptAsync(attemptId, ct);
         if (attempt.Status == AttemptStatus.InProgress)
             throw new ConflictException("attempt_not_ready_for_review", "The attempt has not been completed.");
+        if (attempt.Status == AttemptStatus.Interrupted)
+            throw new ConflictException("attempt_not_ready_for_review", "The attempt was interrupted before AI evaluation completed.");
         if (attempt.Review is { Status: ReviewStatus.Pending } review && review.ReviewerId != currentUser.Id)
             throw new ForbiddenException("This review is assigned to another lecturer.");
 
@@ -60,6 +62,13 @@ internal sealed class InterviewReviewService(
         WithAttemptLockAsync(attemptId, async () =>
         {
             var attempt = await LoadReviewAttemptAsync(attemptId, ct);
+            if (attempt.Status == AttemptStatus.Interrupted)
+            {
+                if (attempt.Review is { } interruptedReview && interruptedReview.ReviewerId != currentUser.Id)
+                    throw new ForbiddenException("This review is assigned to another lecturer.");
+                EnsureEvaluationComplete(attempt,
+                    await GetSessionAsync(attempt.Participant.ExamSessionId, ct));
+            }
             if (attempt.Status != AttemptStatus.PendingReview)
                 throw new ConflictException("attempt_not_pending_review", "Only attempts pending review can be edited.");
             if (attempt.Review is { Status: not ReviewStatus.Pending })
@@ -190,7 +199,7 @@ internal sealed class InterviewReviewService(
         EnsureLecturer();
 
         var attempt = await db.InterviewAttempts
-                          .Include(a => a.Participant)
+                          .Include(a => a.Participant).ThenInclude(p => p.Attempts)
                           .Include(a => a.Review)
                           .Include(a => a.Responses).ThenInclude(response => response.Turns)
                           .FirstOrDefaultAsync(a => a.Id == attemptId, ct)
@@ -205,7 +214,7 @@ internal sealed class InterviewReviewService(
     private static void EnsureEvaluationComplete(InterviewAttempt attempt, ExamSessionInfo session)
     {
         var expectedQuestionIds = session.Questions.Select(question => question.Id).ToHashSet();
-        if (attempt.Status == AttemptStatus.InProgress
+        if (attempt.Status is AttemptStatus.InProgress or AttemptStatus.Interrupted
             || expectedQuestionIds.Count == 0
             || attempt.Responses.Count != expectedQuestionIds.Count
             || !attempt.Responses.Select(response => response.QuestionId).ToHashSet().SetEquals(expectedQuestionIds)
@@ -290,6 +299,7 @@ internal sealed class InterviewReviewService(
         review.Status = ReviewStatus.Approved;
         review.ReviewedAt = UtcNow;
         attempt.TransitionTo(AttemptStatus.Finalized);
+        attempt.Participant.ReconcileStatus();
     }
 
     private InterviewAttemptEvent CreateFinalizedEvent(InterviewAttempt attempt, Guid sessionId)

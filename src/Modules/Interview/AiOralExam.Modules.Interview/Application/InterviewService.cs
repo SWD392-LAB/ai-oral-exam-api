@@ -109,7 +109,8 @@ internal sealed class InterviewService(
                         ? "The exam session is not open."
                         : $"The exam session is open only from {session.StartTime:u} to {session.EndTime:u} (UTC).");
 
-            if (participant.Attempts.Count > 0 && !_options.AllowRetake)
+            if (!_options.AllowRetake && participant.Attempts.Any(a =>
+                    a.Status is AttemptStatus.PendingReview or AttemptStatus.Finalized))
                 throw new ConflictException("attempt_already_taken", "You have already taken this exam session.");
 
             if (session.Questions.Count == 0)
@@ -123,7 +124,7 @@ internal sealed class InterviewService(
             };
             participant.Attempts.Add(attempt);
             db.InterviewAttempts.Add(attempt);
-            participant.Status = ParticipantStatus.InProgress;
+            participant.ReconcileStatus();
             AskMainQuestion(attempt, session.Questions[0], now);
             events.Add(CreateEvent(attempt, session.Id, "attempt.started", InterviewEventSequence.AttemptStarted, now));
             events.Add(CreateEvent(attempt, session.Id, "turn.opened", InterviewEventSequence.TurnOpened(1), now));
@@ -160,6 +161,9 @@ internal sealed class InterviewService(
             var submittedTurn = allTurns.FirstOrDefault(t => t.Id == request.TurnId)
                 ?? throw new ConflictException("turn_not_found", "The submitted turn does not belong to this attempt.");
 
+            if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Failed)
+                throw new ConflictException("turn_processing_failed", "Turn processing has permanently failed.");
+
             if (submittedTurn.AnsweredAt is not null || submittedTurn.IsTimedOut)
             {
                 if (submittedTurn.IsTimedOut)
@@ -180,11 +184,19 @@ internal sealed class InterviewService(
                         CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow,
                             submittedTurn.Id));
 
+                var retryNow = UtcNow;
+                if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Retry
+                    && submittedTurn.NextRetryAt is DateTime nextRetryAt && nextRetryAt > retryNow)
+                    return new TurnSubmissionClaim(null, DuplicateResponse(attempt, previousResponse, submittedTurn, session),
+                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), retryNow,
+                            submittedTurn.Id));
+
                 submittedTurn.ProcessingStatus = TurnProcessingStatus.Processing;
-                submittedTurn.ProcessingStartedAt = UtcNow;
+                submittedTurn.ProcessingStartedAt = retryNow;
+                submittedTurn.NextRetryAt = null;
                 submittedTurn.ProcessingToken = Guid.NewGuid();
                 return new TurnSubmissionClaim(new TurnProcessingClaim(attempt, previousResponse, submittedTurn,
-                    session, NormalizeAnswer(request.AnswerText), UtcNow, TimedOut: false, SessionOpen: session.IsOpenAt(UtcNow),
+                    session, NormalizeAnswer(request.AnswerText), retryNow, TimedOut: false, SessionOpen: session.IsOpenAt(retryNow),
                     ProcessingToken: submittedTurn.ProcessingToken.Value), null);
             }
 
@@ -230,57 +242,93 @@ internal sealed class InterviewService(
         var expiredCount = 0;
         foreach (var attemptId in attemptIds)
         {
-            var claim = await WithAttemptLockAsync(attemptId, async () =>
-            {
-                var attempt = await LoadAttemptAsync(attemptId, ct);
-                if (attempt.Status != AttemptStatus.InProgress)
-                    return null;
-
-                var now = UtcNow;
-                var pendingTurn = attempt.Responses.SelectMany(r => r.Turns)
-                    .Where(t => t.ProcessingStatus == TurnProcessingStatus.Retry
-                        || t.ProcessingStatus == TurnProcessingStatus.Processing
-                           && t.ProcessingStartedAt < now.AddMinutes(-2))
-                    .OrderBy(t => t.ProcessingStartedAt)
-                    .FirstOrDefault();
-                if (pendingTurn is not null)
-                {
-                    pendingTurn.ProcessingStatus = TurnProcessingStatus.Processing;
-                    pendingTurn.ProcessingStartedAt = now;
-                    pendingTurn.ProcessingToken = Guid.NewGuid();
-                    var pendingResponse = attempt.Responses.Single(r => r.Id == pendingTurn.QuestionResponseId);
-                    var pendingSession = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
-                    return new TurnProcessingClaim(attempt, pendingResponse, pendingTurn, pendingSession,
-                        pendingTurn.AnswerTranscript, now, pendingTurn.IsTimedOut, pendingSession.IsOpenAt(now),
-                        pendingTurn.ProcessingToken.Value);
-                }
-
-                var response = attempt.CurrentResponse;
-                var turn = response?.CurrentTurn;
-                if (response is null || turn is null)
-                    return null;
-
-                var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
-                var sessionOpen = session.IsOpenAt(now);
-                if (sessionOpen && now <= GetTurnDeadline(turn, session))
-                    return null;
-
-                turn.IsTimedOut = true;
-                turn.ProcessingStatus = TurnProcessingStatus.Processing;
-                turn.ProcessingStartedAt = now;
-                turn.ProcessingToken = Guid.NewGuid();
-                return new TurnProcessingClaim(attempt, response, turn, session, Answer: null, now,
-                    TimedOut: true, SessionOpen: sessionOpen, ProcessingToken: turn.ProcessingToken.Value);
-            }, ct);
-
-            if (claim is not null)
-            {
+            if (await ProcessOverdueAttemptAsync(attemptId, ct))
                 expiredCount++;
-                await ProcessClaimedTurnAsync(attemptId, claim, ct);
-            }
         }
 
         return expiredCount;
+    }
+
+    private async Task<bool> ProcessOverdueAttemptAsync(Guid attemptId, CancellationToken ct)
+    {
+        var claim = await WithAttemptLockAsync(attemptId, async () =>
+        {
+            var attempt = await LoadAttemptAsync(attemptId, ct);
+            if (attempt.Status != AttemptStatus.InProgress)
+                return null;
+
+            var now = UtcNow;
+            if (attempt.Responses.SelectMany(r => r.Turns)
+                .Any(t => t.ProcessingStatus == TurnProcessingStatus.Failed))
+            {
+                attempt.Interrupt(now);
+                attempt.Participant.ReconcileStatus();
+                return null;
+            }
+
+            var staleProcessingCutoff = now.AddMinutes(-2);
+            var pendingTurn = attempt.Responses.SelectMany(r => r.Turns)
+                .Where(t => t.ProcessingStatus == TurnProcessingStatus.Retry
+                        && (t.NextRetryAt == null || t.NextRetryAt <= now)
+                    || t.ProcessingStatus == TurnProcessingStatus.Processing
+                        && t.ProcessingStartedAt < staleProcessingCutoff)
+                .OrderBy(t => t.NextRetryAt ?? t.ProcessingStartedAt)
+                .FirstOrDefault();
+            if (pendingTurn is not null)
+            {
+                if (pendingTurn.ProcessingStatus == TurnProcessingStatus.Processing)
+                {
+                    pendingTurn.RetryCount++;
+                    pendingTurn.ProcessingStartedAt = null;
+                    pendingTurn.ProcessingToken = null;
+                    if (pendingTurn.RetryCount > Math.Max(0, _options.MaximumTurnRetries))
+                    {
+                        pendingTurn.ProcessingStatus = TurnProcessingStatus.Failed;
+                        pendingTurn.NextRetryAt = null;
+                        attempt.Interrupt(now);
+                        attempt.Participant.ReconcileStatus();
+                        return null;
+                    }
+
+                    pendingTurn.ProcessingStatus = TurnProcessingStatus.Retry;
+                    pendingTurn.NextRetryAt = now.Add(CalculateRetryDelay(pendingTurn.RetryCount, _options));
+                    return null;
+                }
+
+                pendingTurn.ProcessingStatus = TurnProcessingStatus.Processing;
+                pendingTurn.ProcessingStartedAt = now;
+                pendingTurn.NextRetryAt = null;
+                pendingTurn.ProcessingToken = Guid.NewGuid();
+                var pendingResponse = attempt.Responses.Single(r => r.Id == pendingTurn.QuestionResponseId);
+                var pendingSession = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+                return new TurnProcessingClaim(attempt, pendingResponse, pendingTurn, pendingSession,
+                    pendingTurn.AnswerTranscript, now, pendingTurn.IsTimedOut, pendingSession.IsOpenAt(now),
+                    pendingTurn.ProcessingToken.Value);
+            }
+
+            var response = attempt.CurrentResponse;
+            var turn = response?.CurrentTurn;
+            if (response is null || turn is null || turn.ProcessingStatus != TurnProcessingStatus.AwaitingAnswer)
+                return null;
+
+            var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+            var sessionOpen = session.IsOpenAt(now);
+            if (sessionOpen && now <= GetTurnDeadline(turn, session))
+                return null;
+
+            turn.IsTimedOut = true;
+            turn.ProcessingStatus = TurnProcessingStatus.Processing;
+            turn.ProcessingStartedAt = now;
+            turn.ProcessingToken = Guid.NewGuid();
+            return new TurnProcessingClaim(attempt, response, turn, session, Answer: null, now,
+                TimedOut: true, SessionOpen: sessionOpen, ProcessingToken: turn.ProcessingToken.Value);
+        }, ct);
+
+        if (claim is null)
+            return false;
+
+        await ProcessClaimedTurnAsync(attemptId, claim, ct);
+        return true;
     }
 
     // ------------------------------------------------------------------
@@ -290,13 +338,15 @@ internal sealed class InterviewService(
         var session = await examConfig.GetSessionAsync(attempt.Participant.ExamSessionId, ct)
                       ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
         var currentTurn = attempt.CurrentResponse?.CurrentTurn;
+        var now = UtcNow;
         var processingNeedsRecovery = attempt.Responses.SelectMany(r => r.Turns).Any(t =>
-            t.ProcessingStatus == TurnProcessingStatus.Retry
-            || t.ProcessingStatus == TurnProcessingStatus.Processing && t.ProcessingStartedAt < UtcNow.AddMinutes(-2));
+            t.ProcessingStatus == TurnProcessingStatus.Retry && (t.NextRetryAt == null || t.NextRetryAt <= now)
+            || t.ProcessingStatus == TurnProcessingStatus.Processing && t.ProcessingStartedAt < now.AddMinutes(-2)
+            || t.ProcessingStatus == TurnProcessingStatus.Failed);
         if (processingNeedsRecovery || currentTurn is not null
-            && (!session.IsOpenAt(UtcNow) || UtcNow > GetTurnDeadline(currentTurn, session)))
+            && (!session.IsOpenAt(now) || now > GetTurnDeadline(currentTurn, session)))
         {
-            await ExpireOverdueAttemptsAsync(ct);
+            await ProcessOverdueAttemptAsync(attemptId, ct);
             attempt = await LoadOwnAttemptAsync(attemptId, ct);
         }
         return ToState(attempt, session);
@@ -344,7 +394,7 @@ internal sealed class InterviewService(
 
     private async Task<InterviewAttempt> LoadAttemptAsync(Guid attemptId, CancellationToken ct) =>
         await db.InterviewAttempts
-            .Include(a => a.Participant)
+            .Include(a => a.Participant).ThenInclude(p => p.Attempts)
             .Include(a => a.Responses).ThenInclude(r => r.Turns)
             .Include(a => a.Responses).ThenInclude(r => r.CriterionScores)
             .AsSplitQuery()
@@ -425,7 +475,7 @@ internal sealed class InterviewService(
         else
         {
             attempt.Complete(now);
-            attempt.Participant.Status = ParticipantStatus.Completed;
+            attempt.Participant.ReconcileStatus();
             events.Add(CreateEvent(attempt, session.Id, canAskNextQuestion ? "attempt.completed" : "attempt.expired",
                 InterviewEventSequence.AttemptCompleted(turnCount), now));
             outcome = SubmitOutcome.Completed;
@@ -467,6 +517,7 @@ internal sealed class InterviewService(
                 claim.Answer, claim.Now, claim.TimedOut, claim.SessionOpen, events, ct);
             claim.Turn.ProcessingStatus = TurnProcessingStatus.Completed;
             claim.Turn.ProcessingStartedAt = null;
+            claim.Turn.NextRetryAt = null;
             claim.Turn.ProcessingToken = null;
             claim.Turn.SubmissionResultJson = JsonSerializer.Serialize(result);
             await WithAttemptLockAsync(attemptId, async () =>
@@ -492,9 +543,21 @@ internal sealed class InterviewService(
                 await WithAttemptLockAsync(attemptId, async () =>
                 {
                     await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, CancellationToken.None);
-                    claim.Turn.ProcessingStatus = TurnProcessingStatus.Retry;
+                    claim.Turn.RetryCount++;
+                    claim.Turn.ProcessingStatus = claim.Turn.RetryCount > Math.Max(0, _options.MaximumTurnRetries)
+                        ? TurnProcessingStatus.Failed
+                        : TurnProcessingStatus.Retry;
                     claim.Turn.ProcessingStartedAt = null;
                     claim.Turn.ProcessingToken = null;
+                    var retryNow = UtcNow;
+                    claim.Turn.NextRetryAt = claim.Turn.ProcessingStatus == TurnProcessingStatus.Retry
+                        ? retryNow.Add(CalculateRetryDelay(claim.Turn.RetryCount, _options))
+                        : null;
+                    if (claim.Turn.ProcessingStatus == TurnProcessingStatus.Failed)
+                    {
+                        claim.Attempt.Interrupt(retryNow);
+                        claim.Attempt.Participant.ReconcileStatus();
+                    }
                     return true;
                 }, CancellationToken.None);
             }
@@ -524,6 +587,15 @@ internal sealed class InterviewService(
         bool TimedOut,
         bool SessionOpen,
         Guid ProcessingToken);
+
+    internal static TimeSpan CalculateRetryDelay(int retryCount, InterviewOptions options)
+    {
+        var maximumSeconds = Math.Max(0, options.MaximumTurnRetryDelaySeconds);
+        var delaySeconds = Math.Clamp(options.InitialTurnRetryDelaySeconds, 0, maximumSeconds);
+        for (var retry = 1; retry < retryCount && delaySeconds < maximumSeconds; retry++)
+            delaySeconds = Math.Min(maximumSeconds, delaySeconds * 2);
+        return TimeSpan.FromSeconds(delaySeconds);
+    }
 
     private sealed record TurnSubmissionClaim(
         TurnProcessingClaim? Processing,

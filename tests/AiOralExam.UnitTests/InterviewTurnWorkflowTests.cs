@@ -94,12 +94,18 @@ public sealed class InterviewTurnWorkflowTests
         await using var recoveryDb = fixture.CreateIndependentDb();
         var recoveryService = fixture.CreateIndependentService(recoveryDb);
         fixture.Clock.Set(StartTime.AddMinutes(3));
-        Assert.Equal(1, await recoveryService.ExpireOverdueAttemptsAsync());
+        Assert.Equal(0, await recoveryService.ExpireOverdueAttemptsAsync());
+        var scheduledTurn = await recoveryDb.InterviewTurns.SingleAsync();
+        Assert.Equal(TurnProcessingStatus.Retry, scheduledTurn.ProcessingStatus);
+        Assert.Null(scheduledTurn.ProcessingToken);
+        Assert.Equal(StartTime.AddMinutes(3).AddSeconds(5), scheduledTurn.NextRetryAt);
 
         fixture.Analyzer.Release();
         var lateProviderResult = await originalProcessing;
 
         Assert.True(lateProviderResult.Duplicate);
+        fixture.Clock.Set(scheduledTurn.NextRetryAt!.Value);
+        Assert.Equal(1, await recoveryService.ExpireOverdueAttemptsAsync());
         await using var verificationDb = fixture.CreateIndependentDb();
         Assert.Equal(TurnProcessingStatus.Completed, (await verificationDb.InterviewTurns.SingleAsync()).ProcessingStatus);
         Assert.Single(await verificationDb.CriterionScores.ToListAsync());
@@ -118,8 +124,11 @@ public sealed class InterviewTurnWorkflowTests
 
         Assert.Equal("Persist before score", fixture.Db.InterviewTurns.Single().AnswerTranscript);
         Assert.Equal(TurnProcessingStatus.Retry, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+        Assert.Equal(StartTime.AddSeconds(5), fixture.Db.InterviewTurns.Single().NextRetryAt);
         Assert.Empty(fixture.Db.CriterionScores);
 
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        fixture.Clock.Set(StartTime.AddSeconds(5));
         Assert.Equal(1, await fixture.Service.ExpireOverdueAttemptsAsync());
 
         Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
@@ -208,6 +217,276 @@ public sealed class InterviewTurnWorkflowTests
     }
 
     [Fact]
+    public async Task Get_state_expires_only_the_requesting_students_attempt()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var ownAttempt = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var otherStudentId = Guid.NewGuid();
+        fixture.Db.Participants.Add(new Participant
+        {
+            Id = Guid.NewGuid(),
+            ExamSessionId = fixture.Session.Id,
+            StudentId = otherStudentId,
+            JoinedAt = StartTime,
+            Status = ParticipantStatus.Registered
+        });
+        await fixture.Db.SaveChangesAsync();
+        var otherAttempt = await fixture.CreateService(new TestUser(otherStudentId, Roles.Student))
+            .StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+
+        var ownState = await fixture.Service.GetAttemptStateAsync(ownAttempt.State.AttemptId);
+
+        Assert.Equal(AttemptStatus.PendingReview.ToString(), ownState.Status);
+        Assert.Null(ownState.CurrentTurn);
+        Assert.Equal(AttemptStatus.InProgress, fixture.Db.InterviewAttempts.Single(a => a.Id == otherAttempt.State.AttemptId).Status);
+        Assert.Equal(TurnProcessingStatus.AwaitingAnswer,
+            fixture.Db.InterviewTurns.Single(t => t.QuestionResponseId == otherAttempt.State.CurrentTurn!.QuestionResponseId).ProcessingStatus);
+    }
+
+    [Fact]
+    public void Retry_delay_doubles_and_stays_within_configured_boundaries()
+    {
+        var options = new InterviewOptions
+        {
+            InitialTurnRetryDelaySeconds = 5,
+            MaximumTurnRetryDelaySeconds = 12
+        };
+
+        Assert.Equal(TimeSpan.FromSeconds(5), InterviewService.CalculateRetryDelay(1, options));
+        Assert.Equal(TimeSpan.FromSeconds(10), InterviewService.CalculateRetryDelay(2, options));
+        Assert.Equal(TimeSpan.FromSeconds(12), InterviewService.CalculateRetryDelay(3, options));
+        Assert.Equal(TimeSpan.FromSeconds(12), InterviewService.CalculateRetryDelay(4, options));
+        var cappedOptions = new InterviewOptions
+        {
+            InitialTurnRetryDelaySeconds = 5,
+            MaximumTurnRetryDelaySeconds = 3
+        };
+        Assert.Equal(TimeSpan.FromSeconds(3), InterviewService.CalculateRetryDelay(1, cappedOptions));
+    }
+
+    [Fact]
+    public async Task Turn_processing_becomes_terminal_after_configured_retries_and_is_not_reclaimed()
+    {
+        await using var fixture = await CreateFixtureAsync(
+            maximumTurnRetries: 1, initialRetryDelaySeconds: 0, maximumRetryDelaySeconds: 0);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Retry me", started.State.CurrentTurn!.TurnId)));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
+        Assert.Equal(1, turn.RetryCount);
+        Assert.Equal(StartTime, turn.NextRetryAt);
+
+        fixture.Scorer.FailNext = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(2, turn.RetryCount);
+        Assert.Null(turn.NextRetryAt);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.NotNull(fixture.Db.InterviewAttempts.Single().CompletedAt);
+        Assert.Equal(ParticipantStatus.Registered, fixture.Db.Participants.Single().Status);
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        Assert.Equal(2, fixture.Scorer.CallCount);
+        Assert.Empty(fixture.Db.CriterionScores);
+        Assert.Empty(fixture.Db.ScoreReviews);
+
+        var replacement = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+
+        Assert.True(replacement.Created);
+        Assert.Equal(2, fixture.Db.InterviewAttempts.Count());
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single(a => a.Id == started.State.AttemptId).Status);
+        Assert.Equal(AttemptStatus.InProgress, fixture.Db.InterviewAttempts.Single(a => a.Id == replacement.State.AttemptId).Status);
+        Assert.Equal(ParticipantStatus.InProgress, fixture.Db.Participants.Single().Status);
+        Assert.Empty(fixture.Db.CriterionScores);
+        Assert.Empty(fixture.Db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Three_configured_retries_allow_four_total_executions_and_never_a_fifth()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 3);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Retry limit", started.State.CurrentTurn!.TurnId)));
+
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        Assert.Equal(1, fixture.Scorer.CallCount);
+        for (var retry = 0; retry < 3; retry++)
+        {
+            fixture.Clock.Set(turn.NextRetryAt!.Value);
+            fixture.Scorer.FailNext = true;
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ExpireOverdueAttemptsAsync());
+        }
+
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(4, turn.RetryCount);
+        Assert.Null(turn.NextRetryAt);
+        Assert.Null(turn.ProcessingToken);
+        Assert.Equal(4, fixture.Scorer.CallCount);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(ParticipantStatus.Registered, fixture.Db.Participants.Single().Status);
+        var state = await fixture.Service.GetAttemptStateAsync(started.State.AttemptId);
+        Assert.Equal(AttemptStatus.Interrupted.ToString(), state.Status);
+        Assert.Null(state.CurrentTurn);
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        Assert.Equal(4, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
+    public async Task Stale_processing_is_scheduled_with_backoff_before_recovery_claim()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        turn.AnswerTranscript = "Stale answer";
+        turn.AnsweredAt = StartTime;
+        turn.ProcessingStatus = TurnProcessingStatus.Processing;
+        turn.ProcessingStartedAt = StartTime;
+        turn.ProcessingToken = Guid.NewGuid();
+        fixture.Clock.Set(StartTime.AddMinutes(3));
+
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
+        Assert.Equal(1, turn.RetryCount);
+        Assert.Null(turn.ProcessingStartedAt);
+        Assert.Null(turn.ProcessingToken);
+        Assert.Equal(StartTime.AddMinutes(3).AddSeconds(5), turn.NextRetryAt);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        Assert.Equal(0, fixture.Scorer.CallCount);
+
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        fixture.Clock.Set(turn.NextRetryAt!.Value);
+
+        Assert.Equal(1, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Equal(TurnProcessingStatus.Completed, turn.ProcessingStatus);
+        Assert.Equal(1, fixture.Analyzer.CallCount);
+        Assert.Equal(1, fixture.Scorer.CallCount);
+        Assert.Equal(1, turn.RetryCount);
+    }
+
+    [Fact]
+    public async Task Exhausted_stale_processing_interrupts_attempt_without_evaluating_it()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 3);
+        await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        turn.AnswerTranscript = "Stale answer";
+        turn.AnsweredAt = StartTime;
+        turn.ProcessingStatus = TurnProcessingStatus.Processing;
+        turn.ProcessingStartedAt = StartTime;
+        turn.ProcessingToken = Guid.NewGuid();
+        turn.RetryCount = 3;
+        fixture.Clock.Set(StartTime.AddMinutes(3));
+
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(4, turn.RetryCount);
+        Assert.Null(turn.ProcessingToken);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(ParticipantStatus.Registered, fixture.Db.Participants.Single().Status);
+        Assert.Empty(fixture.Db.CriterionScores);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        Assert.Equal(0, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
+    public async Task Expiry_sweep_interrupts_an_attempt_with_an_expired_failed_turn()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        turn.ProcessingStatus = TurnProcessingStatus.Failed;
+        turn.RetryCount = 3;
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(3, turn.RetryCount);
+        Assert.Null(turn.ProcessingToken);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        Assert.Equal(0, fixture.Scorer.CallCount);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(ParticipantStatus.Registered, fixture.Db.Participants.Single().Status);
+    }
+
+    [Fact]
+    public async Task Student_get_reconciles_a_failed_turn_to_an_interrupted_attempt()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        turn.ProcessingStatus = TurnProcessingStatus.Failed;
+        turn.RetryCount = 2;
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+
+        var state = await fixture.Service.GetAttemptStateAsync(started.State.AttemptId);
+
+        Assert.Null(state.CurrentTurn);
+        Assert.Equal(AttemptStatus.Interrupted.ToString(), state.Status);
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(2, turn.RetryCount);
+        Assert.Null(turn.ProcessingToken);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        Assert.Equal(0, fixture.Scorer.CallCount);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(ParticipantStatus.Registered, fixture.Db.Participants.Single().Status);
+    }
+
+    [Fact]
+    public async Task Deadline_worker_interrupts_an_attempt_with_a_terminal_failed_turn()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        turn.ProcessingStatus = TurnProcessingStatus.Failed;
+        turn.RetryCount = 2;
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(2, turn.RetryCount);
+        Assert.Null(turn.ProcessingToken);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        Assert.Equal(0, fixture.Scorer.CallCount);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(ParticipantStatus.Registered, fixture.Db.Participants.Single().Status);
+    }
+
+    [Fact]
+    public async Task Answer_submission_cannot_reclaim_a_terminal_failed_turn()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        turn.AnswerTranscript = "Terminal answer";
+        turn.AnsweredAt = StartTime;
+        turn.ProcessingStatus = TurnProcessingStatus.Failed;
+        turn.RetryCount = 3;
+
+        var error = await Assert.ThrowsAsync<ConflictException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Terminal answer", turn.Id)));
+
+        Assert.Equal("turn_processing_failed", error.Code);
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(3, turn.RetryCount);
+        Assert.Null(turn.ProcessingToken);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        Assert.Equal(0, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
     public async Task Analyzer_failure_keeps_answer_and_identical_retry_recovers_processing()
     {
         await using var fixture = await CreateFixtureAsync();
@@ -224,6 +503,7 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
         Assert.Empty(fixture.Db.CriterionScores);
 
+        fixture.Clock.Set(StartTime.AddSeconds(5));
         var retry = await fixture.Service.SubmitAnswerAsync(started.State.AttemptId,
             new SubmitAnswerRequest("Durable answer", turnId));
 
@@ -402,6 +682,29 @@ public sealed class InterviewTurnWorkflowTests
         Assert.NotEqual(firstAllowed.State.AttemptId, retake.State.AttemptId);
         Assert.Equal(2, allowed.Db.InterviewAttempts.Count());
         Assert.Equal(2, allowed.Db.InterviewTurns.Count());
+    }
+
+    [Fact]
+    public async Task Interrupted_retake_does_not_regress_a_participant_with_a_completed_attempt()
+    {
+        await using var fixture = await CreateFixtureAsync(allowRetake: true, maximumTurnRetries: 0);
+        var first = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        await fixture.Service.SubmitAnswerAsync(first.State.AttemptId,
+            new SubmitAnswerRequest("Completed attempt", first.State.CurrentTurn!.TurnId));
+        Assert.Equal(ParticipantStatus.Completed, fixture.Db.Participants.Single().Status);
+
+        var second = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            second.State.AttemptId, new SubmitAnswerRequest("Interrupted retake", second.State.CurrentTurn!.TurnId)));
+
+        Assert.Equal(AttemptStatus.PendingReview, fixture.Db.InterviewAttempts.Single(a => a.Id == first.State.AttemptId).Status);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single(a => a.Id == second.State.AttemptId).Status);
+        Assert.Equal(ParticipantStatus.Completed, fixture.Db.Participants.Single().Status);
+        Assert.Single(fixture.Db.CriterionScores);
+        Assert.Null(fixture.Db.QuestionResponses.Single(response => response.AttemptId == second.State.AttemptId).AiSuggestedScore);
+        Assert.Empty(fixture.Db.ScoreReviews);
     }
 
     [Fact]
@@ -636,7 +939,10 @@ public sealed class InterviewTurnWorkflowTests
         int timeLimitSeconds = 60,
         bool allowRetake = false,
         int questionCount = 1,
-        int maxFollowUps = 0)
+        int maxFollowUps = 0,
+        int maximumTurnRetries = 3,
+        int initialRetryDelaySeconds = 5,
+        int maximumRetryDelaySeconds = 300)
     {
         var now = StartTime;
         var clock = new TestClock(now);
@@ -671,9 +977,17 @@ public sealed class InterviewTurnWorkflowTests
         var configuration = new TestExamConfiguration(session);
         var audioStore = new TestAudioChunkStore();
         var speechToText = new TestSpeechToText();
+        var interviewOptions = new InterviewOptions
+        {
+            AllowRetake = allowRetake,
+            TimeLimitGraceSeconds = 0,
+            MaximumTurnRetries = maximumTurnRetries,
+            InitialTurnRetryDelaySeconds = initialRetryDelaySeconds,
+            MaximumTurnRetryDelaySeconds = maximumRetryDelaySeconds
+        };
         var service = new InterviewService(db, configuration, analyzer, scorer,
             events, new TestUser(studentId, Roles.Student), clock,
-            Options.Create(new InterviewOptions { AllowRetake = allowRetake, TimeLimitGraceSeconds = 0 }),
+            Options.Create(interviewOptions),
             NullLogger<InterviewService>.Instance);
         return new Fixture(db, service, clock, analyzer, scorer, configuration, session, events,
             audioStore, speechToText, databaseName);
