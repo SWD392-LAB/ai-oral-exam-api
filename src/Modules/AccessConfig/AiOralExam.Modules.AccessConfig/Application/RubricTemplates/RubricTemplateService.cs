@@ -12,22 +12,22 @@ namespace AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
 internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUser currentUser) : IRubricTemplateService
 {
     private const string NpgsqlProvider = "Npgsql.EntityFrameworkCore.PostgreSQL";
-    private const string VersionTemplateConstraint = "fk_rubric_versions_template_course";
+    private const string VersionTemplateConstraint = "fk_rubric_versions_template";
 
     private bool IsAdmin => currentUser.IsInRole(Roles.Administrator);
 
     public async Task<RubricTemplateDto> CreateAsync(CreateRubricTemplateRequest request, CancellationToken ct)
     {
-        EnsureManagementRole();
+        EnsureAdministrator();
         var name = ValidateName(request.Name);
-        if (request.CourseId == Guid.Empty)
-            throw InvalidRequest("courseId", "A course is required.");
+        if (request.CourseId is not null)
+            throw InvalidRequest("courseId", "Platform rubric templates cannot be course-scoped.");
 
-        var course = await LoadCourseForManagementAsync(request.CourseId, ct);
+        Course? course = null;
         var template = new RubricTemplate
         {
             Id = Guid.NewGuid(),
-            CourseId = course.Id,
+            CourseId = course?.Id,
             Course = course,
             Name = name,
             CreatedBy = currentUser.Id,
@@ -36,7 +36,9 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
 
         db.RubricTemplates.Add(template);
         CourseService.AddAudit(db, currentUser.Id, AuditActions.Create, AuditEntities.RubricTemplate,
-            template.Id, $"Rubric template {template.Name} in course {course.Code}");
+            template.Id, course is null
+                ? $"Platform rubric template {template.Name}"
+                : $"Rubric template {template.Name} in course {course.Code}");
         await db.SaveChangesAsync(ct);
 
         return ToDto(template, course, 0);
@@ -49,19 +51,20 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
         if (!IsAdmin)
         {
             var userId = currentUser.Id;
-            query = query.Where(x => x.Course.Lecturers.Any(a => a.LecturerId == userId));
+            query = query.Where(x => x.CourseId == null
+                || x.Course!.Lecturers.Any(a => a.LecturerId == userId));
         }
         if (courseId.HasValue)
-            query = query.Where(x => x.CourseId == courseId.Value);
+            query = query.Where(x => x.CourseId == null || x.CourseId == courseId.Value);
 
         return await query
-            .OrderBy(x => x.Course.Code)
+            .OrderBy(x => x.Course == null ? string.Empty : x.Course.Code)
             .ThenBy(x => x.Name)
             .Select(x => new RubricTemplateDto(
                 x.Id,
                 x.CourseId,
-                x.Course.Code,
-                x.Course.Name,
+                x.Course == null ? null : x.Course.Code,
+                x.Course == null ? null : x.Course.Name,
                 x.Name,
                 x.CreatedBy,
                 x.CreatedAt,
@@ -78,11 +81,12 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
 
     public async Task<RubricTemplateDto> UpdateAsync(Guid id, UpdateRubricTemplateRequest request, CancellationToken ct)
     {
+        EnsureAdministrator();
         var name = ValidateName(request.Name);
         var template = await LoadTemplateForManagementAsync(id, ct);
         template.Name = name;
         CourseService.AddAudit(db, currentUser.Id, AuditActions.Update, AuditEntities.RubricTemplate,
-            template.Id, $"Rubric template {template.Name} in course {template.Course.Code}");
+            template.Id, $"Rubric template {template.Name}");
         await db.SaveChangesAsync(ct);
 
         var versionCount = await db.RubricVersions.CountAsync(x => x.TemplateId == id, ct);
@@ -91,6 +95,7 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
 
     public async Task DeleteAsync(Guid id, CancellationToken ct)
     {
+        EnsureAdministrator();
         var template = await LoadTemplateForManagementAsync(id, ct);
 
         await using var transaction = await db.Database.BeginTransactionAsync(ct);
@@ -105,7 +110,7 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
             await db.SaveChangesAsync(ct);
 
             CourseService.AddAudit(db, currentUser.Id, AuditActions.Delete, AuditEntities.RubricTemplate,
-                template.Id, $"Rubric template {template.Name} in course {template.Course.Code}");
+                template.Id, $"Rubric template {template.Name}");
             await db.SaveChangesAsync(ct);
             await transaction.CommitAsync(ct);
         }
@@ -116,21 +121,11 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
         }
     }
 
-    private async Task<Course> LoadCourseForManagementAsync(Guid courseId, CancellationToken ct)
-    {
-        EnsureManagementRole();
-        var course = await db.Courses.Include(x => x.Lecturers)
-            .FirstOrDefaultAsync(x => x.Id == courseId, ct) ??
-            throw new NotFoundException("course_not_found", "Course not found.");
-        EnsureCourseAccess(course);
-        return course;
-    }
-
     private async Task<RubricTemplate> LoadTemplateForManagementAsync(Guid id, CancellationToken ct)
     {
         EnsureManagementRole();
         var template = await db.RubricTemplates
-            .Include(x => x.Course).ThenInclude(x => x.Lecturers)
+            .Include(x => x.Course).ThenInclude(x => x!.Lecturers)
             .FirstOrDefaultAsync(x => x.Id == id, ct) ??
             throw new NotFoundException("rubric_template_not_found", "Rubric template not found.");
         EnsureCourseAccess(template.Course);
@@ -162,10 +157,10 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
         exception.SqlState == PostgresErrorCodes.ForeignKeyViolation
         && exception.ConstraintName == VersionTemplateConstraint;
 
-    private void EnsureCourseAccess(Course course)
+    private void EnsureCourseAccess(Course? course)
     {
         EnsureManagementRole();
-        if (!IsAdmin && course.Lecturers.All(x => x.LecturerId != currentUser.Id))
+        if (!IsAdmin && course is not null && course.Lecturers.All(x => x.LecturerId != currentUser.Id))
             throw new ForbiddenException("You are not assigned to this course.");
     }
 
@@ -174,7 +169,15 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
         if (!currentUser.IsAuthenticated)
             throw new UnauthorizedException("unauthenticated", "You need to sign in.");
         if (!IsAdmin && !currentUser.IsInRole(Roles.Lecturer))
-            throw new ForbiddenException("Only lecturers and administrators can manage rubric templates.");
+            throw new ForbiddenException("Only lecturers and administrators can read rubric templates.");
+    }
+
+    private void EnsureAdministrator()
+    {
+        if (!currentUser.IsAuthenticated)
+            throw new UnauthorizedException("unauthenticated", "You need to sign in.");
+        if (!IsAdmin)
+            throw new ForbiddenException("Only administrators can manage platform rubric templates.");
     }
 
     private static string ValidateName(string name)
@@ -191,11 +194,11 @@ internal sealed class RubricTemplateService(AccessConfigDbContext db, ICurrentUs
     private static ValidationException InvalidRequest(string field, string message) =>
         new(new Dictionary<string, string[]> { [field] = [message] });
 
-    private static RubricTemplateDto ToDto(RubricTemplate template, Course course, int versionCount) => new(
+    private static RubricTemplateDto ToDto(RubricTemplate template, Course? course, int versionCount) => new(
         template.Id,
         template.CourseId,
-        course.Code,
-        course.Name,
+        course?.Code,
+        course?.Name,
         template.Name,
         template.CreatedBy,
         template.CreatedAt,

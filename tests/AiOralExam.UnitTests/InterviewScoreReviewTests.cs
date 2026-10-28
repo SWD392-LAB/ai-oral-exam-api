@@ -15,6 +15,8 @@ namespace AiOralExam.UnitTests;
 
 public class InterviewScoreReviewTests
 {
+    private static readonly Guid DefaultQuestionId = Guid.Parse("c7da1d9a-bd60-458f-93a7-6e9a1f2c99fb");
+
     [Fact]
     public void Score_review_range_validation_is_attached_to_the_constructor_parameter()
     {
@@ -99,8 +101,151 @@ public class InterviewScoreReviewTests
             new TestExamConfigurationApi(sessionId, assigned: true));
 
         await Assert.ThrowsAsync<ConflictException>(() => service.ConfirmScoreReviewAsync(attempt.Id));
+    }
+
+    [Fact]
+    public async Task Score_review_mutations_return_evaluation_pending_when_responses_are_missing()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview, includeCompletedResponse: false);
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true));
+
+        await AssertEvaluationPendingAsync(service, attempt.Id);
+
         Assert.Equal(AttemptStatus.PendingReview, attempt.Status);
         Assert.Empty(db.ScoreReviews);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Score_review_mutations_return_evaluation_pending_for_incomplete_response_or_turn(
+        bool responseIncomplete,
+        bool turnIncomplete)
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview);
+        var response = Assert.Single(attempt.Responses);
+        if (responseIncomplete)
+        {
+            response.IsFinished = false;
+            response.AiSuggestedScore = null;
+            response.EvaluatedAt = null;
+        }
+        if (turnIncomplete)
+            Assert.Single(response.Turns).ProcessingStatus = TurnProcessingStatus.Retry;
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true));
+
+        await AssertEvaluationPendingAsync(service, attempt.Id);
+
+        Assert.Empty(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Interrupted_attempt_with_a_failed_turn_remains_unreviewable()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.InProgress, includeCompletedResponse: false);
+        var now = DateTime.UtcNow;
+        attempt.Interrupt(now);
+        attempt.Participant.Status = ParticipantStatus.Completed;
+        var response = new QuestionResponse
+        {
+            Id = Guid.NewGuid(),
+            AttemptId = attempt.Id,
+            QuestionId = DefaultQuestionId,
+        };
+        response.Turns.Add(new InterviewTurn
+        {
+            Id = Guid.NewGuid(),
+            QuestionResponseId = response.Id,
+            TurnNo = 1,
+            Type = TurnType.Main,
+            QuestionText = "Question",
+            AskedAt = now,
+            AnsweredAt = now,
+            ProcessingStatus = TurnProcessingStatus.Failed,
+            RetryCount = 4,
+        });
+        attempt.Responses.Add(response);
+        db.QuestionResponses.Add(response);
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true));
+
+        var getError = await Assert.ThrowsAsync<ConflictException>(() => service.GetAttemptReviewAsync(attempt.Id));
+        Assert.Equal("attempt_not_ready_for_review", getError.Code);
+        await AssertEvaluationPendingAsync(service, attempt.Id);
+        Assert.Empty(await new InterviewResultsApi(db).GetSessionResultsAsync(sessionId));
+        Assert.Empty(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Missing_ai_score_is_evaluation_pending_even_when_response_and_turn_are_finished()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview);
+        Assert.Single(attempt.Responses).AiSuggestedScore = null;
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true));
+
+        await AssertEvaluationPendingAsync(service, attempt.Id);
+
+        Assert.Empty(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Unauthorized_reviewer_gets_forbidden_before_evaluation_state_is_checked()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview);
+        Assert.Single(attempt.Responses).AiSuggestedScore = null;
+        var otherReviewerId = Guid.NewGuid();
+        attempt.Review = new ScoreReview
+        {
+            Id = Guid.NewGuid(),
+            AttemptId = attempt.Id,
+            ReviewerId = otherReviewerId,
+            FinalScore = 5m,
+            Status = ReviewStatus.Pending,
+        };
+        db.ScoreReviews.Add(attempt.Review);
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true));
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.SaveScoreReviewDraftAsync(
+            attempt.Id, new SubmitScoreReviewRequest(5m, null)));
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.ConfirmScoreReviewAsync(attempt.Id));
+        await Assert.ThrowsAsync<ForbiddenException>(() => service.SubmitScoreReviewAsync(
+            attempt.Id, new SubmitScoreReviewRequest(5m, null)));
+
+        Assert.Equal(ReviewStatus.Pending, attempt.Review.Status);
+        Assert.Equal(otherReviewerId, attempt.Review.ReviewerId);
+    }
+
+    private static async Task AssertEvaluationPendingAsync(InterviewReviewService service, Guid attemptId)
+    {
+        var draftError = await Assert.ThrowsAsync<ConflictException>(() => service.SaveScoreReviewDraftAsync(
+            attemptId, new SubmitScoreReviewRequest(5m, null)));
+        var confirmError = await Assert.ThrowsAsync<ConflictException>(() => service.ConfirmScoreReviewAsync(attemptId));
+        var submitError = await Assert.ThrowsAsync<ConflictException>(() => service.SubmitScoreReviewAsync(
+            attemptId, new SubmitScoreReviewRequest(5m, null)));
+
+        Assert.All(new[] { draftError, confirmError, submitError }, error =>
+        {
+            Assert.Equal(409, error.StatusCode);
+            Assert.Equal("evaluation_pending", error.Code);
+        });
     }
 
     [Fact]
@@ -126,7 +271,7 @@ public class InterviewScoreReviewTests
         var sessionId = Guid.NewGuid();
         var criterionId = Guid.NewGuid();
         var criteria = new[] { new RubricCriterionInfo(criterionId, 1, "Accuracy", 5m) };
-        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview);
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview, includeCompletedResponse: false);
         var configuration = new TestExamConfigurationApi(sessionId, assigned: true, criteria);
         var response = new QuestionResponse
         {
@@ -136,6 +281,7 @@ public class InterviewScoreReviewTests
             IsFinished = true,
             AiSuggestedScore = 5m,
             AiFeedback = "Good",
+            EvaluatedAt = DateTime.UtcNow,
             CriterionScores =
             {
                 new CriterionScore
@@ -242,7 +388,7 @@ public class InterviewScoreReviewTests
     }
 
     [Fact]
-    public async Task Submit_score_review_rejects_a_duplicate_review()
+    public async Task Submit_score_review_returns_the_stored_result_for_an_identical_finalized_retry()
     {
         await using var db = CreateDbContext();
         var sessionId = Guid.NewGuid();
@@ -251,10 +397,31 @@ public class InterviewScoreReviewTests
             new TestExamConfigurationApi(sessionId, assigned: true));
         var request = new SubmitScoreReviewRequest(5m, null);
 
-        await service.SubmitScoreReviewAsync(attempt.Id, request);
+        var submitted = await service.SubmitScoreReviewAsync(attempt.Id, request);
 
-        await Assert.ThrowsAsync<ConflictException>(() => service.SubmitScoreReviewAsync(attempt.Id, request));
+        var retry = await service.SubmitScoreReviewAsync(attempt.Id, request);
+
+        Assert.Equal(submitted, retry);
         Assert.Single(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Finalized_review_rejects_a_different_reviewer_or_changed_payload()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview);
+        var configuration = new TestExamConfigurationApi(sessionId, assigned: true);
+        var firstReviewer = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer), configuration);
+        var secondReviewer = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer), configuration);
+        var request = new SubmitScoreReviewRequest(5m, "Approved");
+        await firstReviewer.SubmitScoreReviewAsync(attempt.Id, request);
+
+        await Assert.ThrowsAsync<ConflictException>(() => firstReviewer.SubmitScoreReviewAsync(attempt.Id,
+            new SubmitScoreReviewRequest(6m, "Approved")));
+        await Assert.ThrowsAsync<ConflictException>(() => secondReviewer.SubmitScoreReviewAsync(attempt.Id, request));
+        Assert.Single(db.ScoreReviews);
+        Assert.Equal(5m, (await db.ScoreReviews.SingleAsync()).FinalScore);
     }
 
     private static InterviewReviewService CreateService(
@@ -271,12 +438,15 @@ public class InterviewScoreReviewTests
     private sealed class NoOpInterviewEventPublisher : IInterviewEventPublisher
     {
         public Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task PublishTranscriptUpdatedAsync(TranscriptUpdatedEvent transcriptEvent, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private static async Task<InterviewAttempt> AddAttemptAsync(
         InterviewDbContext db,
         Guid sessionId,
-        AttemptStatus status)
+        AttemptStatus status,
+        bool includeCompletedResponse = true)
     {
         var participant = new Participant
         {
@@ -293,6 +463,30 @@ public class InterviewScoreReviewTests
             Participant = participant,
             StartedAt = DateTime.UtcNow
         };
+        if (status != AttemptStatus.InProgress && includeCompletedResponse)
+        {
+            var response = new QuestionResponse
+            {
+                Id = Guid.NewGuid(),
+                AttemptId = attempt.Id,
+                QuestionId = DefaultQuestionId,
+                IsFinished = true,
+                AiSuggestedScore = 0m,
+                EvaluatedAt = DateTime.UtcNow,
+            };
+            response.Turns.Add(new InterviewTurn
+            {
+                Id = Guid.NewGuid(),
+                QuestionResponseId = response.Id,
+                TurnNo = 1,
+                Type = TurnType.Main,
+                QuestionText = "Question",
+                AnsweredAt = DateTime.UtcNow,
+                ProcessingStatus = TurnProcessingStatus.Completed,
+                AskedAt = DateTime.UtcNow,
+            });
+            attempt.Responses.Add(response);
+        }
         if (status != AttemptStatus.InProgress)
             attempt.Complete(DateTime.UtcNow);
         if (status == AttemptStatus.Finalized)
@@ -330,11 +524,10 @@ public class InterviewScoreReviewTests
 
         private static ExamSessionInfo CreateSession(Guid sessionId, IReadOnlyList<RubricCriterionInfo>? criteria)
         {
-            var questionId = Guid.NewGuid();
             return new ExamSessionInfo(
                 sessionId, Guid.NewGuid(), "TEST", "Test Course", "Test Session",
                 DateTime.UtcNow, DateTime.UtcNow.AddHours(1), 60, 2, ExamSessionStatus.Published,
-                [new QuestionInfo(questionId, 1, "Question", criteria ?? [], 10m)]);
+                [new QuestionInfo(DefaultQuestionId, 1, "Question", criteria ?? [], 10m)]);
         }
 
         public Task<ExamSessionInfo?> GetSessionAsync(Guid examSessionId, CancellationToken ct = default) =>

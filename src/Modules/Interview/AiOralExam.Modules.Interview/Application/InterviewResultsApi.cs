@@ -17,7 +17,8 @@ internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewRes
     public async Task<IReadOnlyList<AttemptResult>> GetSessionResultsAsync(Guid examSessionId, CancellationToken ct = default)
     {
         var attempts = await Query()
-            .Where(a => a.Participant.ExamSessionId == examSessionId && a.Status != AttemptStatus.InProgress)
+            .Where(a => a.Participant.ExamSessionId == examSessionId
+                && (a.Status == AttemptStatus.PendingReview || a.Status == AttemptStatus.Finalized))
             .ToListAsync(ct);
         return attempts.Select(ToResult).ToList();
     }

@@ -13,6 +13,10 @@
     <Using Include="Xunit" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="..\..\database\*.sql" Link="database\%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\..\src\Modules\AccessConfig\AiOralExam.Modules.AccessConfig\AiOralExam.Modules.AccessConfig.csproj" />
     <ProjectReference Include="..\..\src\Modules\Interview\AiOralExam.Modules.Interview\AiOralExam.Modules.Interview.csproj" />
     <ProjectReference Include="..\..\src\Modules\Reporting\AiOralExam.Modules.Reporting\AiOralExam.Modules.Reporting.csproj" />

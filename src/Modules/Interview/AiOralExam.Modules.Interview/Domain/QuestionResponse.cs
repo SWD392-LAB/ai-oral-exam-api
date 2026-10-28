@@ -27,8 +27,7 @@ public class QuestionResponse
         get
         {
             var last = Turns.MaxBy(t => t.TurnNo);
-            return last is { AnsweredAt: null }
-                || (last is not null && !IsFinished && AiEvaluationState != AiEvaluationState.Completed)
+            return last is { AnsweredAt: null, IsTimedOut: false, ProcessingStatus: TurnProcessingStatus.AwaitingAnswer }
                 ? last
                 : null;
         }

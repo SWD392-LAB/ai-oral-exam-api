@@ -127,7 +127,7 @@ CREATE TABLE courses (
 
 CREATE TABLE rubric_templates (
     id          UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    course_id   UUID         NOT NULL REFERENCES courses(id) ON DELETE RESTRICT,
+    course_id   UUID         REFERENCES courses(id) ON DELETE RESTRICT,
     name        VARCHAR(200) NOT NULL CHECK (btrim(name) <> ''),
     created_by  UUID         NOT NULL REFERENCES users(id) ON DELETE NO ACTION,
     created_at  TIMESTAMPTZ  NOT NULL DEFAULT now(),
@@ -137,20 +137,19 @@ CREATE INDEX ix_rubric_templates_course ON rubric_templates(course_id);
 
 CREATE TABLE rubric_versions (
     id          UUID          PRIMARY KEY DEFAULT gen_random_uuid(),
-    template_id UUID          NOT NULL,
-    course_id   UUID          NOT NULL,
+    template_id UUID          NOT NULL REFERENCES rubric_templates(id) ON DELETE RESTRICT,
+    course_id   UUID,
     version_no  INT           NOT NULL CHECK (version_no > 0),
     max_score   NUMERIC(5,2)  NOT NULL DEFAULT 0 CHECK (max_score >= 0),
     is_sealed   BOOLEAN       NOT NULL DEFAULT FALSE,
+    is_active   BOOLEAN       NOT NULL DEFAULT FALSE,
     created_by  UUID          NOT NULL REFERENCES users(id) ON DELETE NO ACTION,
     created_at  TIMESTAMPTZ   NOT NULL DEFAULT now(),
-    CONSTRAINT fk_rubric_versions_template_course
-        FOREIGN KEY (template_id, course_id)
-        REFERENCES rubric_templates(id, course_id) ON DELETE RESTRICT,
     UNIQUE (template_id, version_no),
     UNIQUE (id, course_id)
 );
 CREATE INDEX ix_rubric_versions_template ON rubric_versions(template_id, version_no);
+CREATE UNIQUE INDEX ux_rubric_versions_single_active ON rubric_versions(is_active) WHERE is_active;
 
 -- ERD: COURSE >o--|< USER "teaches"  (N-N -> join table)
 -- The diagram says every course has 1..* lecturers; a DB cannot enforce "at least one",
@@ -218,7 +217,7 @@ CREATE TABLE material_chunks (
 CREATE TABLE exam_sessions (
     id                             UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
     course_id                      UUID         NOT NULL REFERENCES courses(id),
-    rubric_mode                    VARCHAR(20)  NOT NULL DEFAULT 'Legacy',
+    rubric_mode                    VARCHAR(20)  NOT NULL DEFAULT 'SharedVersion',
     rubric_version_id              UUID,
     created_by                     UUID         NOT NULL REFERENCES users(id),
     title                          VARCHAR(200) NOT NULL,
@@ -231,9 +230,8 @@ CREATE TABLE exam_sessions (
     created_at                     TIMESTAMPTZ  NOT NULL DEFAULT now(),   -- technical column
     CONSTRAINT ck_exam_sessions_rubric_mode
         CHECK (rubric_mode IN ('Legacy', 'SharedVersion')),
-    CONSTRAINT fk_exam_sessions_rubric_version_course
-        FOREIGN KEY (rubric_version_id, course_id)
-        REFERENCES rubric_versions(id, course_id) ON DELETE RESTRICT,
+    CONSTRAINT fk_exam_sessions_rubric_version
+        FOREIGN KEY (rubric_version_id) REFERENCES rubric_versions(id) ON DELETE RESTRICT,
     CONSTRAINT ck_exam_sessions_rubric_configuration CHECK (
         (rubric_mode = 'Legacy' AND rubric_version_id IS NULL)
         OR (rubric_mode = 'SharedVersion' AND (rubric_version_id IS NOT NULL OR status = 'Draft'))
@@ -413,7 +411,7 @@ CREATE TABLE interview_attempts (
     started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     completed_at    TIMESTAMPTZ,
     status          VARCHAR(20) NOT NULL DEFAULT 'InProgress'
-                    CHECK (status IN ('InProgress', 'PendingReview', 'Finalized')),
+                    CHECK (status IN ('InProgress', 'Interrupted', 'PendingReview', 'Finalized')),
     CHECK (completed_at IS NULL OR completed_at >= started_at)
 );
 CREATE INDEX ix_interview_attempts_participant ON interview_attempts(participant_id);
@@ -448,8 +446,25 @@ CREATE TABLE interview_turns (
     audio_url             VARCHAR(500),            -- the audio file lives in object storage
     asked_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     answered_at           TIMESTAMPTZ,
+    is_timed_out          BOOLEAN      NOT NULL DEFAULT FALSE,
+    processing_status     VARCHAR(20)  NOT NULL DEFAULT 'AwaitingAnswer',
+    processing_started_at TIMESTAMPTZ,
+    retry_count           INT          NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    next_retry_at         TIMESTAMPTZ,
+    processing_token      UUID,
+    submission_result     JSONB,
+    CONSTRAINT ck_interview_turns_processing_status
+        CHECK (processing_status IN ('AwaitingAnswer', 'Processing', 'Retry', 'Completed', 'Failed')),
+    CONSTRAINT ck_interview_turns_processing_token
+        CHECK ((processing_status = 'Processing') = (processing_token IS NOT NULL)),
     UNIQUE (question_response_id, turn_no)
 );
+CREATE INDEX ix_interview_turns_processing_recovery
+    ON interview_turns(processing_status, processing_started_at)
+    WHERE processing_status IN ('Processing', 'Retry');
+CREATE INDEX ix_interview_turns_retry_due
+    ON interview_turns(processing_status, next_retry_at)
+    WHERE processing_status = 'Retry';
 
 -- ERD: CRITERION SCORE  (QUESTION RESPONSE 1 --< 0..* "is scored by", RUBRIC CRITERION 1 --< 0..* "is scored in")
 -- Trigger trg_criterion_score_check: the criterion must belong to the rubric of the response's
@@ -561,11 +576,25 @@ CREATE TRIGGER trg_criterion_score_check
 BEFORE INSERT OR UPDATE ON criterion_scores
 FOR EACH ROW EXECUTE FUNCTION fn_check_criterion_score();
 
+CREATE OR REPLACE FUNCTION fn_lock_rubric_activation() RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(5067184210567320137);
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql
+SET search_path FROM CURRENT;
+
+CREATE TRIGGER trg_rubric_versions_active_lock
+BEFORE UPDATE OF is_active ON rubric_versions
+FOR EACH STATEMENT EXECUTE FUNCTION fn_lock_rubric_activation();
+
 CREATE OR REPLACE FUNCTION fn_protect_rubric_version() RETURNS TRIGGER AS $$
+DECLARE
+    v_template_course_id UUID;
 BEGIN
     IF TG_OP = 'INSERT' THEN
-        IF NEW.is_sealed THEN
-            RAISE EXCEPTION 'A rubric version must be created unsealed and sealed after its criteria are inserted.'
+        IF NEW.is_sealed OR NEW.is_active THEN
+            RAISE EXCEPTION 'A rubric version must be created unsealed and inactive before it is sealed and activated.'
                 USING ERRCODE = '23514';
         END IF;
         RETURN NEW;
@@ -577,14 +606,33 @@ BEGIN
     END IF;
 
     IF OLD.is_sealed
-       OR (to_jsonb(NEW) - ARRAY['is_sealed', 'max_score']::TEXT[])
-          IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['is_sealed', 'max_score']) THEN
+       AND (to_jsonb(NEW) - ARRAY['is_active']::TEXT[])
+           IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['is_active']::TEXT[]) THEN
+        RAISE EXCEPTION 'A sealed rubric version is immutable except for its active state.'
+            USING ERRCODE = '23514';
+    END IF;
+    IF NOT OLD.is_sealed
+       AND (to_jsonb(NEW) - ARRAY['is_sealed', 'max_score']::TEXT[])
+           IS DISTINCT FROM (to_jsonb(OLD) - ARRAY['is_sealed', 'max_score']::TEXT[]) THEN
         RAISE EXCEPTION 'Rubric versions are immutable; only sealing an unsealed version is allowed.'
             USING ERRCODE = '23514';
     END IF;
+    IF NEW.is_active THEN
+        SELECT course_id INTO v_template_course_id
+        FROM rubric_templates WHERE id = NEW.template_id;
+        IF v_template_course_id IS NOT NULL OR NEW.course_id IS NOT NULL THEN
+            RAISE EXCEPTION 'Only platform-owned rubric versions can be activated.'
+                USING ERRCODE = '23514';
+        END IF;
+        IF NOT NEW.is_sealed THEN
+            RAISE EXCEPTION 'Only sealed rubric versions can be activated.'
+                USING ERRCODE = '23514';
+        END IF;
+    END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path FROM CURRENT;
 
 CREATE TRIGGER trg_rubric_versions_immutable
 BEFORE INSERT OR UPDATE OR DELETE ON rubric_versions
@@ -642,18 +690,54 @@ FOR EACH ROW EXECUTE FUNCTION fn_protect_sealed_rubric_criteria();
 CREATE OR REPLACE FUNCTION fn_check_exam_session_rubric() RETURNS TRIGGER AS $$
 DECLARE
     v_sealed BOOLEAN;
+    v_active BOOLEAN;
+    v_version_course_id UUID;
+    v_template_course_id UUID;
+    v_initial_publish BOOLEAN;
 BEGIN
+    IF TG_OP = 'INSERT' THEN
+        v_initial_publish := NEW.status = 'Published';
+    ELSE
+        v_initial_publish := OLD.status = 'Draft' AND NEW.status = 'Published';
+    END IF;
+
     IF NEW.rubric_mode = 'Legacy' AND NEW.rubric_version_id IS NOT NULL THEN
         RAISE EXCEPTION 'Legacy sessions cannot reference a shared rubric version.'
             USING ERRCODE = '23514';
     END IF;
 
+    IF NEW.rubric_mode = 'SharedVersion' THEN
+        IF TG_OP = 'INSERT' THEN
+            PERFORM pg_advisory_xact_lock(5067184210567320137);
+        ELSIF NEW.rubric_version_id IS DISTINCT FROM OLD.rubric_version_id
+           OR v_initial_publish THEN
+            PERFORM pg_advisory_xact_lock(5067184210567320137);
+        END IF;
+    END IF;
+
     IF NEW.rubric_version_id IS NOT NULL THEN
-        SELECT is_sealed INTO v_sealed
-        FROM rubric_versions
-        WHERE id = NEW.rubric_version_id AND course_id = NEW.course_id;
+        SELECT v.is_sealed, v.is_active, v.course_id, t.course_id
+        INTO v_sealed, v_active, v_version_course_id, v_template_course_id
+        FROM rubric_versions v
+        JOIN rubric_templates t ON t.id = v.template_id
+        WHERE v.id = NEW.rubric_version_id;
         IF NOT FOUND OR NOT v_sealed THEN
-            RAISE EXCEPTION 'A session can select only a sealed rubric version owned by its course.'
+            RAISE EXCEPTION 'A session can select only a sealed rubric version.'
+                USING ERRCODE = '23514';
+        END IF;
+        IF NEW.status = 'Draft'
+           AND (NOT v_active OR v_version_course_id IS NOT NULL OR v_template_course_id IS NOT NULL) THEN
+            IF TG_OP = 'INSERT' THEN
+                RAISE EXCEPTION 'A new shared session must pin an active platform rubric version.'
+                    USING ERRCODE = '23514';
+            ELSIF NEW.rubric_version_id IS DISTINCT FROM OLD.rubric_version_id THEN
+                RAISE EXCEPTION 'A new shared session must pin an active platform rubric version.'
+                    USING ERRCODE = '23514';
+            END IF;
+        END IF;
+        IF NEW.rubric_mode = 'SharedVersion' AND v_initial_publish
+           AND (NOT v_active OR v_version_course_id IS NOT NULL OR v_template_course_id IS NOT NULL) THEN
+            RAISE EXCEPTION 'A published shared session must pin an active platform rubric version.'
                 USING ERRCODE = '23514';
         END IF;
     END IF;
@@ -692,7 +776,8 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$ LANGUAGE plpgsql
+SET search_path FROM CURRENT;
 
 CREATE TRIGGER trg_exam_sessions_rubric_configuration
 BEFORE INSERT OR UPDATE ON exam_sessions

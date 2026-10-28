@@ -22,6 +22,7 @@ public class InterviewAttempt
     public static bool CanTransition(AttemptStatus from, AttemptStatus to) => (from, to) switch
     {
         (AttemptStatus.InProgress, AttemptStatus.PendingReview) => true,
+        (AttemptStatus.InProgress, AttemptStatus.Interrupted) => true,
         (AttemptStatus.PendingReview, AttemptStatus.Finalized) => true,
         _ => false
     };
@@ -38,6 +39,12 @@ public class InterviewAttempt
     public void Complete(DateTime utcNow)
     {
         TransitionTo(AttemptStatus.PendingReview);
+        CompletedAt = utcNow;
+    }
+
+    public void Interrupt(DateTime utcNow)
+    {
+        TransitionTo(AttemptStatus.Interrupted);
         CompletedAt = utcNow;
     }
 

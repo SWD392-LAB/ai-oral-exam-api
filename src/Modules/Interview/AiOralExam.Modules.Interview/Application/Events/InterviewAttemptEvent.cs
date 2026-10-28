@@ -8,12 +8,18 @@ public sealed record InterviewAttemptEvent(
     Guid AttemptId,
     Guid ExamSessionId,
     long Sequence,
+    Guid? TurnId,
+    long StateVersion,
     string Type,
     DateTime OccurredAt);
+
+public sealed record TranscriptUpdatedEvent(Guid AttemptId, Guid TurnId, string Transcript);
 
 public interface IInterviewEventPublisher
 {
     Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default);
+
+    Task PublishTranscriptUpdatedAsync(TranscriptUpdatedEvent transcriptEvent, CancellationToken ct = default);
 }
 
 internal static class InterviewEventSequence
@@ -31,6 +37,9 @@ internal static class InterviewEventSequence
         var turnCount = attempt.Responses.Sum(response => response.Turns.Count);
         return attempt.Status switch
         {
+            AttemptStatus.InProgress when attempt.Responses.SelectMany(response => response.Turns)
+                .MaxBy(turn => turn.AskedAt)?.ProcessingStatus is TurnProcessingStatus.Processing or TurnProcessingStatus.Retry
+                => TurnAnswered(turnCount),
             AttemptStatus.InProgress => TurnOpened(turnCount),
             AttemptStatus.PendingReview => AttemptCompleted(turnCount),
             AttemptStatus.Finalized => AttemptCompleted(turnCount) + 1,

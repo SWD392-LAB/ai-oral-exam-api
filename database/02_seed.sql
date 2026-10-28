@@ -237,6 +237,36 @@ INSERT INTO rubric_criteria (id, rubric_id, order_no, description, max_points) V
   ('99999999-0000-0000-0000-000000000221', '88888888-0000-0000-0000-000000000022', 1, 'Binding sources: route, query, body', 5),
   ('99999999-0000-0000-0000-000000000222', '88888888-0000-0000-0000-000000000022', 2, 'DataAnnotations and ModelState / [ApiController]', 5);
 
+-- ---------- Initial platform-owned shared rubric (safe to repeat independently) ----------
+INSERT INTO rubric_templates (id, course_id, name, created_by)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000001', NULL, 'Platform Shared Oral Rubric',
+        '11111111-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO rubric_versions (id, template_id, course_id, version_no, max_score, is_sealed, is_active, created_by)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000002',
+        'aaaaaaaa-0000-0000-0000-000000000001', NULL, 1, 10.00, FALSE, FALSE,
+        '11111111-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO rubric_criteria (id, rubric_id, rubric_version_id, order_no, description, max_points)
+VALUES
+  ('aaaaaaaa-0000-0000-0000-000000000003', NULL, 'aaaaaaaa-0000-0000-0000-000000000002', 1, 'Accuracy and correctness', 5.00),
+  ('aaaaaaaa-0000-0000-0000-000000000004', NULL, 'aaaaaaaa-0000-0000-0000-000000000002', 2, 'Clarity and completeness', 5.00)
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE rubric_versions
+SET is_sealed = TRUE, max_score = 10.00
+WHERE id = 'aaaaaaaa-0000-0000-0000-000000000002' AND NOT is_sealed;
+
+UPDATE rubric_versions
+SET is_active = TRUE
+WHERE id = 'aaaaaaaa-0000-0000-0000-000000000002'
+  AND NOT EXISTS (
+      SELECT 1 FROM rubric_versions active
+      WHERE active.is_active
+  );
+
 -- ---------- Participants (joined_at = when the lecturer imported the student list) ----------
 INSERT INTO participants (id, exam_session_id, student_id, joined_at, status) VALUES
   ('55555555-0000-0000-0000-000000000001', '33333333-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000004', timestamptz '2026-09-28 09:00+07', 'Completed'),

@@ -1,4 +1,5 @@
 using AiOralExam.Modules.Interview.Application;
+using AiOralExam.Modules.Interview.Application.Audio;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +13,9 @@ namespace AiOralExam.Modules.Interview.Controllers;
 [Route("api")]
 [Tags("Interview")]
 [Authorize(Roles = Roles.Student)]
-public sealed class InterviewAttemptsController(IInterviewService interview) : ControllerBase
+public sealed class InterviewAttemptsController(
+    IInterviewService interview,
+    IInterviewAudioSubmissionService audio) : ControllerBase
 {
     /// <summary>Exam sessions the student is registered for (Draft sessions excluded).</summary>
     [HttpGet("interview/my-sessions")]
@@ -50,5 +53,40 @@ public sealed class InterviewAttemptsController(IInterviewService interview) : C
     public Task<SubmitAnswerResponse> Submit(Guid id, SubmitAnswerRequest request, CancellationToken ct) =>
         interview.SubmitAnswerAsync(id, request, ct);
 
-    // Audio upload and question/answer audio playback live in InterviewAudioController.
+    [HttpPost("interview-attempts/{id:guid}/audio/chunks")]
+    [Consumes("multipart/form-data")]
+    [ProducesResponseType<AudioChunkCheckpointDto>(StatusCodes.Status200OK)]
+    public async Task<AudioChunkCheckpointDto> SendAudioChunk(
+        Guid id,
+        [FromQuery] Guid turnId,
+        [FromQuery] int sequence,
+        IFormFile chunk,
+        CancellationToken ct)
+    {
+        if (chunk is null)
+            throw new AiOralExam.SharedKernel.Errors.ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(chunk)] = ["An audio chunk file is required."]
+            });
+        if (chunk.Length > AudioChunkLimits.MaximumChunkBytes)
+            throw new AiOralExam.SharedKernel.Errors.ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(chunk)] = [$"Audio chunks cannot exceed {AudioChunkLimits.MaximumChunkBytes} bytes."]
+            });
+
+        await using var input = chunk.OpenReadStream();
+        await using var buffer = new MemoryStream((int)chunk.Length);
+        await input.CopyToAsync(buffer, ct);
+        return await audio.SendAudioChunkAsync(id, turnId, sequence, buffer.ToArray(), chunk.ContentType, ct);
+    }
+
+    [HttpGet("interview-attempts/{id:guid}/audio/checkpoint")]
+    public Task<AudioChunkCheckpointDto?> GetAudioCheckpoint(
+        Guid id, [FromQuery] Guid turnId, CancellationToken ct) =>
+        audio.GetAudioCheckpointAsync(id, turnId, ct);
+
+    [HttpPost("interview-attempts/{id:guid}/audio/complete")]
+    [ProducesResponseType<SubmitAnswerResponse>(StatusCodes.Status200OK)]
+    public Task<SubmitAnswerResponse> CompleteAudio(Guid id, [FromQuery] Guid turnId, CancellationToken ct) =>
+        audio.CompleteAudioAnswerAsync(id, turnId, ct);
 }

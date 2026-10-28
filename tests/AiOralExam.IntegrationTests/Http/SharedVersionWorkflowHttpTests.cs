@@ -29,13 +29,12 @@ public sealed class SharedVersionWorkflowHttpTests
     [Fact]
     public async Task Shared_version_workflow_reaches_interview_scoring_and_reporting()
     {
-        using var factory = new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
+        using var factory = new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Administrator);
         var seeded = await SeedAsync(factory);
         using var client = factory.CreateClient();
 
         using var templateResponse = await client.PostAsJsonAsync("/api/rubric-templates", new
         {
-            courseId = seeded.CourseId,
             name = "End-to-end rubric"
         });
         Assert.Equal(HttpStatusCode.Created, templateResponse.StatusCode);
@@ -66,6 +65,13 @@ public sealed class SharedVersionWorkflowHttpTests
             storedVersion.MaxScore = version.MaxScore;
             await db.SaveChangesAsync();
         }
+
+        using var activationResponse = await client.PostAsync(
+            $"/api/rubric-templates/{template.Id}/versions/{version.Id}/activate", null);
+        Assert.Equal(HttpStatusCode.OK, activationResponse.StatusCode);
+        version = await activationResponse.Content.ReadFromJsonAsync<RubricVersionDetailDto>();
+        Assert.NotNull(version);
+        Assert.True(version.IsActive);
 
         var start = DateTime.UtcNow.AddMinutes(-2);
         var end = DateTime.UtcNow.AddHours(1);
@@ -149,8 +155,16 @@ public sealed class SharedVersionWorkflowHttpTests
         Assert.Equal(1, attempt.CurrentTurn?.QuestionOrderNo);
 
         var answer = string.Join(' ', Enumerable.Repeat("explanation", 60));
-        using var firstAnswerResponse = await client.PostAsJsonAsync(
+        using var missingTurnIdResponse = await client.PostAsJsonAsync(
             $"/api/interview-attempts/{attempt.AttemptId}/responses", new { answerText = answer });
+        Assert.Equal(HttpStatusCode.BadRequest, missingTurnIdResponse.StatusCode);
+
+        using var firstAnswerResponse = await client.PostAsJsonAsync(
+            $"/api/interview-attempts/{attempt.AttemptId}/responses", new
+            {
+                answerText = answer,
+                turnId = attempt.CurrentTurn!.TurnId
+            });
         Assert.Equal(HttpStatusCode.OK, firstAnswerResponse.StatusCode);
         var firstAnswer = await firstAnswerResponse.Content.ReadFromJsonAsync<SubmitAnswerResponse>();
         Assert.NotNull(firstAnswer);
@@ -158,7 +172,11 @@ public sealed class SharedVersionWorkflowHttpTests
         Assert.Equal(2, firstAnswer.Attempt.CurrentTurn?.QuestionOrderNo);
 
         using var secondAnswerResponse = await client.PostAsJsonAsync(
-            $"/api/interview-attempts/{attempt.AttemptId}/responses", new { answerText = answer });
+            $"/api/interview-attempts/{attempt.AttemptId}/responses", new
+            {
+                answerText = answer,
+                turnId = firstAnswer.Attempt.CurrentTurn!.TurnId
+            });
         Assert.Equal(HttpStatusCode.OK, secondAnswerResponse.StatusCode);
         var secondAnswer = await secondAnswerResponse.Content.ReadFromJsonAsync<SubmitAnswerResponse>();
         Assert.NotNull(secondAnswer);
@@ -254,7 +272,8 @@ public sealed class SharedVersionWorkflowHttpTests
             startTime = start,
             endTime = end,
             timeLimitPerAnswerSeconds = 120,
-            maxFollowUps = 0
+            maxFollowUps = 0,
+            rubricMode = "Legacy"
         });
         Assert.Equal(HttpStatusCode.Created, sessionResponse.StatusCode);
         var session = await sessionResponse.Content.ReadFromJsonAsync<ExamSessionCommandDto>();

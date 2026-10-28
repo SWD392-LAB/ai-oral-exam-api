@@ -51,7 +51,9 @@ public sealed class ScoreReviewHttpContractTests
         Assert.Equal(StudentId, result.StudentId);
         Assert.Equal(AttemptStatus.PendingReview, result.Status);
         Assert.Null(result.Review);
-        Assert.Empty(result.Responses);
+        var evaluatedResponse = Assert.Single(result.Responses);
+        Assert.Equal(0m, evaluatedResponse.SuggestedScore);
+        Assert.Equal(0m, result.SuggestedTotalScore);
     }
 
     [Fact]
@@ -192,6 +194,45 @@ public sealed class ScoreReviewHttpContractTests
         Assert.Contains(nameof(SubmitScoreReviewRequest.FinalScore), error.Details.Keys);
     }
 
+    [Fact]
+    public async Task Score_review_mutations_return_409_evaluation_pending_while_ai_evaluation_is_incomplete()
+    {
+        using var factory = NewLecturerFactory();
+        await SeedReviewScenarioAsync(factory);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<InterviewDbContext>();
+            var response = await db.QuestionResponses.SingleAsync(item => item.AttemptId == AttemptId);
+            response.IsFinished = false;
+            response.AiSuggestedScore = null;
+            response.EvaluatedAt = null;
+            await db.SaveChangesAsync();
+        }
+        using var client = factory.CreateClient();
+
+        using var submitResponse = await client.PutAsJsonAsync(
+            $"/api/interview-attempts/{AttemptId}/score-review",
+            new { finalScore = 85.25m, comment = "Pending AI evaluation." });
+        using var draftResponse = await client.PutAsJsonAsync(
+            $"/api/interview-attempts/{AttemptId}/score-review/draft",
+            new { finalScore = 85.25m, comment = "Pending AI evaluation." });
+        using var confirmResponse = await client.PostAsync(
+            $"/api/interview-attempts/{AttemptId}/score-review/confirm", content: null);
+
+        foreach (var response in new[] { submitResponse, draftResponse, confirmResponse })
+        {
+            Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+            var error = await response.Content.ReadFromJsonAsync<ApiError>();
+            Assert.NotNull(error);
+            Assert.Equal("evaluation_pending", error.Code);
+        }
+
+        await using var verifyScope = factory.Services.CreateAsyncScope();
+        var verifyDb = verifyScope.ServiceProvider.GetRequiredService<InterviewDbContext>();
+        Assert.Empty(await verifyDb.ScoreReviews.ToListAsync());
+        Assert.Equal(AttemptStatus.PendingReview, (await verifyDb.InterviewAttempts.SingleAsync()).Status);
+    }
+
     private static ApiTestFactory NewLecturerFactory() =>
         new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
 
@@ -230,6 +271,7 @@ public sealed class ScoreReviewHttpContractTests
                 EndTime = StartedAt.AddHours(1),
                 TimeLimitPerAnswerSeconds = 60,
                 MaxFollowUps = 1,
+                RubricMode = AccessDomain.RubricMode.Legacy,
                 Status = ExamSessionStatus.Published,
                 CreatedAt = StartedAt,
             };
@@ -283,6 +325,28 @@ public sealed class ScoreReviewHttpContractTests
                 Participant = participant,
                 StartedAt = StartedAt,
             };
+            var response = new InterviewDomain.QuestionResponse
+            {
+                Id = Guid.NewGuid(),
+                AttemptId = AttemptId,
+                QuestionId = QuestionId,
+                IsFinished = true,
+                AiSuggestedScore = 0m,
+                EvaluatedAt = StartedAt,
+            };
+            response.Turns.Add(new InterviewDomain.InterviewTurn
+            {
+                Id = Guid.NewGuid(),
+                QuestionResponseId = response.Id,
+                TurnNo = 1,
+                Type = TurnType.Main,
+                QuestionText = "Test question",
+                AnswerTranscript = "Test answer",
+                AskedAt = StartedAt,
+                AnsweredAt = StartedAt.AddMinutes(1),
+                ProcessingStatus = InterviewDomain.TurnProcessingStatus.Completed,
+            });
+            attempt.Responses.Add(response);
             attempt.Complete(StartedAt.AddMinutes(20));
             participant.Attempts.Add(attempt);
             db.Participants.Add(participant);

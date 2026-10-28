@@ -17,8 +17,14 @@ public sealed class InterviewOptions
     /// <summary>Allow another attempt after a finished one (open point - off by default).</summary>
     public bool AllowRetake { get; set; }
 
-    /// <summary>Language passed to the analyzer/scorer; F7 can override this in deployment config.</summary>
-    public string Language { get; set; } = "Vietnamese";
+    /// <summary>Number of retries allowed after the initial turn-processing attempt.</summary>
+    public int MaximumTurnRetries { get; set; } = 3;
+
+    /// <summary>Initial delay before retrying failed turn processing.</summary>
+    public int InitialTurnRetryDelaySeconds { get; set; } = 5;
+
+    /// <summary>Upper bound for exponential turn-processing retry delays.</summary>
+    public int MaximumTurnRetryDelaySeconds { get; set; } = 300;
 
     public MockOptions Mock { get; set; } = new();
 

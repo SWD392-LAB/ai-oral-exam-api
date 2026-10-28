@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using AiOralExam.IntegrationTests.Infrastructure;
+using AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
 using AiOralExam.Modules.AccessConfig.Application.RubricVersions;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
@@ -16,7 +17,7 @@ public sealed class RubricVersionHttpContractTests
     private static readonly Guid OtherLecturerId = Guid.Parse("d115d5a8-63f7-49f3-9492-222222222242");
 
     [Fact]
-    public async Task Assigned_lecturer_can_create_list_and_get_sealed_version()
+    public async Task Administrator_can_create_list_and_get_sealed_version()
     {
         using var factory = NewFactory();
         var seeded = await SeedAsync(factory, assignedToActor: true);
@@ -48,10 +49,64 @@ public sealed class RubricVersionHttpContractTests
     }
 
     [Fact]
-    public async Task Unassigned_lecturer_cannot_create_or_read_versions()
+    public async Task Lecturer_can_read_global_rubric_but_cannot_manage_or_activate_it()
     {
         using var factory = NewFactory();
-        var seeded = await SeedAsync(factory, assignedToActor: false, addVersion: true);
+        await SeedAsync(factory, assignedToActor: true);
+        Guid templateId;
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AccessConfigDbContext>();
+            var template = new RubricTemplate
+            {
+                Id = Guid.NewGuid(),
+                Name = "Platform rubric",
+                CreatedBy = LecturerId,
+                CreatedAt = DateTime.UtcNow
+            };
+            db.RubricTemplates.Add(template);
+            await db.SaveChangesAsync();
+            templateId = template.Id;
+        }
+
+        using var client = factory.CreateClient();
+        using var createResponse = await client.PostAsJsonAsync(
+            $"/api/rubric-templates/{templateId}/versions", ValidRequest());
+        Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        var version = await createResponse.Content.ReadFromJsonAsync<RubricVersionDetailDto>();
+        Assert.NotNull(version);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AccessConfigDbContext>();
+            var stored = await db.RubricVersions.SingleAsync(x => x.Id == version.Id);
+            stored.MaxScore = version.MaxScore;
+            await db.SaveChangesAsync();
+        }
+        using var activateResponse = await client.PostAsync(
+            $"/api/rubric-templates/{templateId}/versions/{version.Id}/activate", null);
+        Assert.Equal(HttpStatusCode.OK, activateResponse.StatusCode);
+
+        factory.AuthenticateAs(LecturerId, Roles.Lecturer);
+        using var readTemplateResponse = await client.GetAsync($"/api/rubric-templates/{templateId}");
+        using var readVersionResponse = await client.GetAsync(
+            $"/api/rubric-templates/{templateId}/versions/{version.Id}");
+        using var activateAsLecturerResponse = await client.PostAsync(
+            $"/api/rubric-templates/{templateId}/versions/{version.Id}/activate", null);
+        using var createAsLecturerResponse = await client.PostAsJsonAsync(
+            $"/api/rubric-templates/{templateId}/versions", ValidRequest());
+
+        Assert.Equal(HttpStatusCode.OK, readTemplateResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.OK, readVersionResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, activateAsLecturerResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, createAsLecturerResponse.StatusCode);
+        Assert.Null((await readTemplateResponse.Content.ReadFromJsonAsync<RubricTemplateDto>())?.CourseId);
+    }
+
+    [Fact]
+    public async Task Unassigned_lecturer_cannot_create_or_read_versions()
+    {
+        using var factory = new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
+        var seeded = await SeedAsync(factory, assignedToActor: false, addVersion: true, courseScopedTemplate: true);
         using var client = factory.CreateClient();
 
         using var createResponse = await client.PostAsJsonAsync(
@@ -92,7 +147,7 @@ public sealed class RubricVersionHttpContractTests
         Assert.Equal(HttpStatusCode.NotFound, mismatchResponse.StatusCode);
     }
 
-    private static ApiTestFactory NewFactory() => new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
+    private static ApiTestFactory NewFactory() => new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Administrator);
 
     private static CreateRubricVersionRequest ValidRequest() => new(
     [
@@ -101,7 +156,8 @@ public sealed class RubricVersionHttpContractTests
     ]);
 
     private static async Task<SeededTemplates> SeedAsync(
-        ApiTestFactory factory, bool assignedToActor, bool addSecondTemplate = false, bool addVersion = false)
+        ApiTestFactory factory, bool assignedToActor, bool addSecondTemplate = false, bool addVersion = false,
+        bool courseScopedTemplate = false)
     {
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AccessConfigDbContext>();
@@ -118,7 +174,12 @@ public sealed class RubricVersionHttpContractTests
             Lecturer = assignedLecturer,
             AssignedAt = DateTime.UtcNow
         });
-        var template = NewTemplate(actor.Id, course, "Main template");
+        var template = courseScopedTemplate
+            ? NewTemplate(actor.Id, course, "Main template")
+            : new RubricTemplate
+            {
+                Id = Guid.NewGuid(), Name = "Main template", CreatedBy = actor.Id, CreatedAt = DateTime.UtcNow
+            };
         var otherTemplate = addSecondTemplate ? NewTemplate(actor.Id, course, "Other template") : null;
         var version = addVersion
             ? new RubricVersion
@@ -126,7 +187,7 @@ public sealed class RubricVersionHttpContractTests
                 Id = Guid.NewGuid(),
                 TemplateId = template.Id,
                 Template = template,
-                CourseId = course.Id,
+                CourseId = template.CourseId,
                 VersionNo = 1,
                 MaxScore = 10m,
                 IsSealed = true,

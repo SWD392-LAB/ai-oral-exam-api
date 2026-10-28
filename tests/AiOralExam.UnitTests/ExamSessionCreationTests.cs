@@ -13,7 +13,7 @@ namespace AiOralExam.UnitTests;
 public sealed class ExamSessionCreationTests
 {
     [Fact]
-    public async Task Create_without_rubric_mode_defaults_to_legacy()
+    public async Task Create_without_rubric_mode_defaults_to_shared_version_and_pins_active_platform_rubric()
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
@@ -21,11 +21,11 @@ public sealed class ExamSessionCreationTests
 
         var created = await service.CreateAsync(Request(seed.CourseId), CancellationToken.None);
 
-        Assert.Equal("Legacy", created.RubricMode);
-        Assert.Null(created.RubricVersionId);
+        Assert.Equal("SharedVersion", created.RubricMode);
+        Assert.Equal(seed.PlatformVersionId, created.RubricVersionId);
         var session = await db.ExamSessions.SingleAsync();
-        Assert.Equal(RubricMode.Legacy, session.RubricMode);
-        Assert.Null(session.RubricVersionId);
+        Assert.Equal(RubricMode.SharedVersion, session.RubricMode);
+        Assert.Equal(seed.PlatformVersionId, session.RubricVersionId);
         Assert.Single(db.AuditLogs);
     }
 
@@ -58,18 +58,37 @@ public sealed class ExamSessionCreationTests
     }
 
     [Fact]
-    public async Task Shared_version_mode_requires_a_nonempty_version_id()
+    public async Task Shared_version_mode_rejects_a_sealed_but_inactive_platform_version()
+    {
+        await using var db = CreateDatabase();
+        var seed = await SeedAsync(db);
+        var version = await db.RubricVersions.SingleAsync(x => x.Id == seed.PlatformVersionId);
+        version.IsActive = false;
+        await db.SaveChangesAsync();
+        var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
+
+        var exception = await Assert.ThrowsAsync<ConflictException>(() => service.CreateAsync(
+            Request(seed.CourseId, RubricMode.SharedVersion, seed.PlatformVersionId), CancellationToken.None));
+
+        Assert.Equal("rubric_version_not_active", exception.Code);
+        Assert.Empty(db.ExamSessions);
+        Assert.Empty(db.AuditLogs);
+    }
+
+    [Fact]
+    public async Task Shared_version_mode_without_a_version_pins_the_active_platform_version()
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
         var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
 
-        var exception = await Assert.ThrowsAsync<ValidationException>(() => service.CreateAsync(
-            Request(seed.CourseId, RubricMode.SharedVersion), CancellationToken.None));
+        var created = await service.CreateAsync(
+            Request(seed.CourseId, RubricMode.SharedVersion), CancellationToken.None);
 
-        Assert.Contains("rubricVersionId", exception.Details!.Keys);
-        Assert.Empty(db.ExamSessions);
-        Assert.Empty(db.AuditLogs);
+        Assert.Equal("SharedVersion", created.RubricMode);
+        Assert.Equal(seed.PlatformVersionId, created.RubricVersionId);
+        Assert.Single(db.ExamSessions);
+        Assert.Single(db.AuditLogs);
     }
 
     [Fact]
@@ -80,18 +99,18 @@ public sealed class ExamSessionCreationTests
         var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
 
         var created = await service.CreateAsync(
-            Request(seed.CourseId, RubricMode.SharedVersion, seed.CourseVersionId), CancellationToken.None);
+            Request(seed.CourseId, RubricMode.SharedVersion, seed.PlatformVersionId), CancellationToken.None);
 
         Assert.Equal("SharedVersion", created.RubricMode);
-        Assert.Equal(seed.CourseVersionId, created.RubricVersionId);
+        Assert.Equal(seed.PlatformVersionId, created.RubricVersionId);
         var session = await db.ExamSessions.SingleAsync();
         Assert.Equal(RubricMode.SharedVersion, session.RubricMode);
-        Assert.Equal(seed.CourseVersionId, session.RubricVersionId);
+        Assert.Equal(seed.PlatformVersionId, session.RubricVersionId);
 
         var detail = await new ExamSessionQueries(db, new TestCurrentUser(seed.LecturerId, Roles.Administrator),
             new FakeInterviewResultsApi()).GetSessionAsync(created.Id);
         Assert.Equal("SharedVersion", detail.RubricMode);
-        Assert.Equal(seed.CourseVersionId, detail.RubricVersionId);
+        Assert.Equal(seed.PlatformVersionId, detail.RubricVersionId);
         Assert.Single(db.AuditLogs);
     }
 
@@ -103,7 +122,7 @@ public sealed class ExamSessionCreationTests
         var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
 
         var exception = await Assert.ThrowsAsync<ConflictException>(() => service.CreateAsync(
-            Request(seed.CourseId, RubricMode.SharedVersion, seed.UnsealedVersionId), CancellationToken.None));
+            Request(seed.CourseId, RubricMode.SharedVersion, seed.PlatformUnsealedVersionId), CancellationToken.None));
 
         Assert.Equal("rubric_version_not_sealed", exception.Code);
         Assert.Empty(db.ExamSessions);
@@ -115,13 +134,13 @@ public sealed class ExamSessionCreationTests
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
-        var version = await db.RubricVersions.SingleAsync(x => x.Id == seed.CourseVersionId);
+        var version = await db.RubricVersions.SingleAsync(x => x.Id == seed.PlatformVersionId);
         version.MaxScore = 4m;
         await db.SaveChangesAsync();
         var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
 
         var exception = await Assert.ThrowsAsync<ConflictException>(() => service.CreateAsync(
-            Request(seed.CourseId, RubricMode.SharedVersion, seed.CourseVersionId), CancellationToken.None));
+            Request(seed.CourseId, RubricMode.SharedVersion, seed.PlatformVersionId), CancellationToken.None));
 
         Assert.Equal("rubric_version_invalid", exception.Code);
         Assert.Empty(db.ExamSessions);
@@ -129,14 +148,14 @@ public sealed class ExamSessionCreationTests
     }
 
     [Fact]
-    public async Task Shared_version_mode_rejects_a_version_from_another_course()
+    public async Task Shared_version_mode_rejects_course_scoped_versions()
     {
         await using var db = CreateDatabase();
         var seed = await SeedAsync(db);
         var service = new ExamSessionCommands(db, new TestCurrentUser(seed.LecturerId));
 
         var exception = await Assert.ThrowsAsync<NotFoundException>(() => service.CreateAsync(
-            Request(seed.CourseId, RubricMode.SharedVersion, seed.OtherCourseVersionId), CancellationToken.None));
+            Request(seed.CourseId, RubricMode.SharedVersion, seed.CourseVersionId), CancellationToken.None));
 
         Assert.Equal("rubric_version_not_found", exception.Code);
         Assert.Empty(db.ExamSessions);
@@ -208,15 +227,19 @@ public sealed class ExamSessionCreationTests
         var courseVersion = NewVersion(course, lecturer.Id, sealedVersion: true);
         var otherCourseVersion = NewVersion(otherCourse, lecturer.Id, sealedVersion: true);
         var unsealedVersion = NewVersion(course, lecturer.Id, sealedVersion: false);
+        var platformVersion = NewPlatformVersion(lecturer.Id, sealedVersion: true);
+        var platformUnsealedVersion = NewPlatformVersion(lecturer.Id, sealedVersion: false);
 
         db.Roles.Add(lecturerRole);
         db.Users.Add(lecturer);
         db.Courses.AddRange(course, otherCourse);
-        db.RubricTemplates.AddRange(courseVersion.Template, otherCourseVersion.Template, unsealedVersion.Template);
-        db.RubricVersions.AddRange(courseVersion, otherCourseVersion, unsealedVersion);
+        db.RubricTemplates.AddRange(courseVersion.Template, otherCourseVersion.Template, unsealedVersion.Template,
+            platformVersion.Template, platformUnsealedVersion.Template);
+        db.RubricVersions.AddRange(courseVersion, otherCourseVersion, unsealedVersion, platformVersion, platformUnsealedVersion);
         await db.SaveChangesAsync();
 
-        return new Seed(lecturer.Id, course.Id, courseVersion.Id, otherCourseVersion.Id, unsealedVersion.Id);
+        return new Seed(lecturer.Id, course.Id, courseVersion.Id, otherCourseVersion.Id,
+            unsealedVersion.Id, platformVersion.Id, platformUnsealedVersion.Id);
     }
 
     private static Course NewCourse(string code) => new()
@@ -261,6 +284,39 @@ public sealed class ExamSessionCreationTests
         return version;
     }
 
+    private static RubricVersion NewPlatformVersion(Guid creatorId, bool sealedVersion)
+    {
+        var template = new RubricTemplate
+        {
+            Id = Guid.NewGuid(),
+            Name = "Platform selection rubric",
+            CreatedBy = creatorId,
+            CreatedAt = DateTime.UtcNow
+        };
+        var version = new RubricVersion
+        {
+            Id = Guid.NewGuid(),
+            TemplateId = template.Id,
+            Template = template,
+            VersionNo = 1,
+            MaxScore = 5m,
+            IsSealed = sealedVersion,
+            IsActive = sealedVersion,
+            CreatedBy = creatorId,
+            CreatedAt = DateTime.UtcNow
+        };
+        version.Criteria.Add(new RubricCriterion
+        {
+            Id = Guid.NewGuid(),
+            RubricVersionId = version.Id,
+            RubricVersion = version,
+            OrderNo = 1,
+            Description = "Accuracy",
+            MaxPoints = 5m
+        });
+        return version;
+    }
+
     private static User NewUser(Guid id, Role role) => new()
     {
         Id = id,
@@ -278,7 +334,9 @@ public sealed class ExamSessionCreationTests
         Guid CourseId,
         Guid CourseVersionId,
         Guid OtherCourseVersionId,
-        Guid UnsealedVersionId);
+        Guid UnsealedVersionId,
+        Guid PlatformVersionId,
+        Guid PlatformUnsealedVersionId);
 
     private sealed class TestCurrentUser(Guid id, string role = Roles.Lecturer) : ICurrentUser
     {

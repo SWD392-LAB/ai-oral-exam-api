@@ -7,6 +7,8 @@ public enum AttemptStatus
 {
     /// <summary>The student is taking the exam.</summary>
     InProgress,
+    /// <summary>Turn processing failed permanently before AI evaluation completed.</summary>
+    Interrupted,
     /// <summary>Finished; the AI has suggested scores and the lecturer has to review them.</summary>
     PendingReview,
     /// <summary>The lecturer has confirmed the final score - only now can the student see the report.</summary>

@@ -1,5 +1,4 @@
 using AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
-using AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
 using AiOralExam.Modules.AccessConfig.Application.RubricVersions;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -17,6 +16,7 @@ public sealed class RubricTemplatesController(
     IRubricVersionService versions) : ControllerBase
 {
     [HttpPost]
+    [Authorize(Roles = Roles.Administrator)]
     public async Task<ActionResult<RubricTemplateDto>> Create(CreateRubricTemplateRequest request, CancellationToken ct)
     {
         var template = await templates.CreateAsync(request, ct);
@@ -32,16 +32,23 @@ public sealed class RubricTemplatesController(
         templates.GetAsync(id, ct);
 
     [HttpPatch("{id:guid}")]
+    [Authorize(Roles = Roles.Administrator)]
     public Task<RubricTemplateDto> Update(Guid id, UpdateRubricTemplateRequest request, CancellationToken ct) =>
         templates.UpdateAsync(id, request, ct);
 
     [HttpPost("{templateId:guid}/versions")]
+    [Authorize(Roles = Roles.Administrator)]
     public async Task<ActionResult<RubricVersionDetailDto>> CreateVersion(
         Guid templateId, CreateRubricVersionRequest request, CancellationToken ct)
     {
         var version = await versions.CreateAsync(templateId, request, ct);
         return CreatedAtAction(nameof(GetVersion), new { templateId, versionId = version.Id }, version);
     }
+
+    [HttpPost("{templateId:guid}/versions/{versionId:guid}/activate")]
+    [Authorize(Roles = Roles.Administrator)]
+    public Task<RubricVersionDetailDto> ActivateVersion(Guid templateId, Guid versionId, CancellationToken ct) =>
+        versions.ActivateAsync(templateId, versionId, ct);
 
     [HttpGet("{templateId:guid}/versions")]
     public Task<IReadOnlyList<RubricVersionDto>> ListVersions(Guid templateId, CancellationToken ct) =>
@@ -52,6 +59,7 @@ public sealed class RubricTemplatesController(
         versions.GetAsync(templateId, versionId, ct);
 
     [HttpDelete("{id:guid}")]
+    [Authorize(Roles = Roles.Administrator)]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
     {
         await templates.DeleteAsync(id, ct);

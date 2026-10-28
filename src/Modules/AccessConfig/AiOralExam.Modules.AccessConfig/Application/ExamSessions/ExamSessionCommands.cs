@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Courses;
 using AiOralExam.Modules.AccessConfig.Contracts;
@@ -10,7 +9,6 @@ using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;
-
 
 namespace AiOralExam.Modules.AccessConfig.Application.ExamSessions;
 internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser me) : IExamSessionCommands
@@ -49,7 +47,7 @@ internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser
                     "endTime", ["EndTime must be after StartTime."]
                 }
             });
-        var rubricMode = r.RubricMode ?? RubricMode.Legacy;
+        var rubricMode = r.RubricMode ?? RubricMode.SharedVersion;
         if (!Enum.IsDefined(typeof(RubricMode), rubricMode))
             throw InvalidRubricSelection("rubricMode", "Rubric mode must be Legacy or SharedVersion.");
 
@@ -61,22 +59,23 @@ internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser
         }
         else
         {
-            if (r.RubricVersionId is not Guid versionId || versionId == Guid.Empty)
-                throw InvalidRubricSelection("rubricVersionId", "A rubric version is required for SharedVersion sessions.");
-
-            selectedVersion = await db.RubricVersions.AsNoTracking()
+            var versions = db.RubricVersions.AsNoTracking()
                 .Include(x => x.Template)
-                .Include(x => x.Criteria)
-                .FirstOrDefaultAsync(x => x.Id == versionId, ct) ??
-                throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
-
-            if (selectedVersion.CourseId != c.Id
-                || selectedVersion.Template is null
-                || selectedVersion.Template.Id != selectedVersion.TemplateId
-                || selectedVersion.Template.CourseId != c.Id)
-                throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
-
-            ValidateSelectedRubricVersion(selectedVersion);
+                .Include(x => x.Criteria);
+            if (r.RubricVersionId is Guid versionId)
+            {
+                if (versionId == Guid.Empty)
+                    throw InvalidRubricSelection("rubricVersionId", "A rubric version must be selected for SharedVersion sessions.");
+                selectedVersion = await versions.FirstOrDefaultAsync(x => x.Id == versionId, ct) ??
+                    throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
+            }
+            else
+            {
+                selectedVersion = await versions.FirstOrDefaultAsync(x => x.IsActive, ct) ??
+                    throw new ConflictException("rubric_version_not_active",
+                        "No active platform rubric version is available for the session.");
+            }
+            ValidateSelectedRubricVersion(selectedVersion, requireActive: true);
         }
 
         var s = new ExamSession
@@ -104,10 +103,19 @@ internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser
     private static ValidationException InvalidRubricSelection(string field, string message) =>
         new(new Dictionary<string, string[]> { [field] = [message] });
 
-    private static void ValidateSelectedRubricVersion(RubricVersion version)
+    private static void ValidateSelectedRubricVersion(RubricVersion version, bool requireActive)
     {
+        if (version.CourseId is not null
+            || version.Template is null
+            || version.Template.Id != version.TemplateId
+            || version.Template.CourseId is not null)
+            throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
+
         if (!version.IsSealed)
             throw new ConflictException("rubric_version_not_sealed", "Only sealed rubric versions can be selected.");
+        if (requireActive && !version.IsActive)
+            throw new ConflictException("rubric_version_not_active",
+                "SharedVersion sessions must pin the currently active platform rubric version.");
 
         var criteria = version.Criteria.OrderBy(x => x.OrderNo).ToList();
         if (criteria.Count == 0
@@ -234,13 +242,7 @@ internal sealed class ExamSessionCommands(AccessConfigDbContext db, ICurrentUser
             .FirstOrDefaultAsync(x => x.Id == versionId, ct) ??
             throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
 
-        if (version.CourseId != session.CourseId
-            || version.Template is null
-            || version.Template.Id != version.TemplateId
-            || version.Template.CourseId != session.CourseId)
-            throw new NotFoundException("rubric_version_not_found", "Rubric version not found.");
-
-        ValidateSelectedRubricVersion(version);
+        ValidateSelectedRubricVersion(version, requireActive: true);
         return version;
     }
 
