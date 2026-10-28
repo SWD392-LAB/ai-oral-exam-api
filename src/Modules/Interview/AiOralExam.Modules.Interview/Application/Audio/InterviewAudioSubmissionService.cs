@@ -1,5 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.Interview.Application.Ai;
+using AiOralExam.Modules.Interview.Application.Events;
 using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.Modules.Interview.Domain;
 using AiOralExam.Modules.Interview.Infrastructure;
@@ -17,6 +18,7 @@ internal sealed class InterviewAudioSubmissionService(
     IAudioChunkStore audioStore,
     ISpeechToTextService speechToText,
     IInterviewService interview,
+    IInterviewEventPublisher eventPublisher,
     TimeProvider clock,
     IOptions<InterviewOptions> options) : IInterviewAudioSubmissionService
 {
@@ -102,8 +104,12 @@ internal sealed class InterviewAudioSubmissionService(
                 [nameof(SubmitAnswerRequest.AnswerText)] = ["Transcribed answers cannot exceed 10000 characters."]
             });
 
-        return await interview.SubmitAnswerAsync(attemptId,
+        var result = await interview.SubmitAnswerAsync(attemptId,
             new SubmitAnswerRequest(transcript, turnId), ct);
+        if (!result.Duplicate)
+            await eventPublisher.PublishTranscriptUpdatedAsync(
+                new TranscriptUpdatedEvent(attemptId, turnId, transcript), ct);
+        return result;
     }
 
     private async Task ValidateCurrentTurnAsync(Guid attemptId, Guid turnId, CancellationToken ct)

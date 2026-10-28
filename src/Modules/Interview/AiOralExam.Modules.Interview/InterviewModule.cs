@@ -9,13 +9,18 @@ using AiOralExam.Modules.Interview.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace AiOralExam.Modules.Interview;
 
 public static class InterviewModule
 {
-    public static IServiceCollection AddInterviewModule(this IServiceCollection services, string connectionString, IConfiguration configuration)
+    public static IServiceCollection AddInterviewModule(
+        this IServiceCollection services,
+        string connectionString,
+        IConfiguration configuration,
+        string environmentName = "Production")
     {
         services.AddDbContext<InterviewDbContext>(o => o
             .UseNpgsql(connectionString)
@@ -25,7 +30,14 @@ public static class InterviewModule
 
         services.AddScoped<IInterviewService, InterviewService>();
         services.AddScoped<IInterviewAudioSubmissionService, InterviewAudioSubmissionService>();
-        services.AddScoped<IAudioChunkStore, UnavailableAudioChunkStore>();
+        if (!services.Any(descriptor => descriptor.ServiceType == typeof(IAudioChunkStore)))
+        {
+            if (string.Equals(environmentName, Environments.Development, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(environmentName, "Testing", StringComparison.OrdinalIgnoreCase))
+                services.AddSingleton<IAudioChunkStore, InMemoryAudioChunkStore>();
+            else
+                services.AddScoped<IAudioChunkStore, UnavailableAudioChunkStore>();
+        }
         services.AddScoped<IInterviewReviewService, InterviewReviewService>();
         services.AddScoped<IInterviewResultsApi, InterviewResultsApi>();
         services.AddSingleton<IInterviewEventPublisher, SignalRInterviewEventPublisher>();

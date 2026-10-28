@@ -33,7 +33,7 @@ builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 // Each module registers its own DbContext + services. Modules talk to each other only through *.Contracts.
 builder.Services
     .AddAccessConfigModule(connectionString, config)
-    .AddInterviewModule(connectionString, config)
+    .AddInterviewModule(connectionString, config, builder.Environment.EnvironmentName)
     .AddReportingModule();
 
 // ---------------------------------------------------------------- Auth (Keycloak access tokens)

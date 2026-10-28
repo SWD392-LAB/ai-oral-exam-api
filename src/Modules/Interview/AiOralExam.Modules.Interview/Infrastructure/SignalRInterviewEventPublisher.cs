@@ -9,6 +9,21 @@ internal sealed class SignalRInterviewEventPublisher(
     IHubContext<InterviewUpdatesHub> hubContext,
     ILogger<SignalRInterviewEventPublisher> logger) : IInterviewEventPublisher
 {
+    public async Task PublishTranscriptUpdatedAsync(TranscriptUpdatedEvent transcriptEvent, CancellationToken ct = default)
+    {
+        try
+        {
+            await hubContext.Clients.Group(InterviewHubGroups.Attempt(transcriptEvent.AttemptId))
+                .SendAsync("TranscriptUpdated", transcriptEvent, ct);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception,
+                "Could not publish transcript update for attempt {AttemptId}, turn {TurnId}.",
+                transcriptEvent.AttemptId, transcriptEvent.TurnId);
+        }
+    }
+
     public async Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default)
     {
         try

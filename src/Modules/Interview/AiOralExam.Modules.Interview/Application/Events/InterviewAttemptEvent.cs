@@ -13,9 +13,13 @@ public sealed record InterviewAttemptEvent(
     string Type,
     DateTime OccurredAt);
 
+public sealed record TranscriptUpdatedEvent(Guid AttemptId, Guid TurnId, string Transcript);
+
 public interface IInterviewEventPublisher
 {
     Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default);
+
+    Task PublishTranscriptUpdatedAsync(TranscriptUpdatedEvent transcriptEvent, CancellationToken ct = default);
 }
 
 internal static class InterviewEventSequence

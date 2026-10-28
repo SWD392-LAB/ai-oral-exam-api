@@ -877,6 +877,60 @@ public sealed class InterviewTurnWorkflowTests
     }
 
     [Fact]
+    public async Task Audio_completion_publishes_attempt_scoped_transcript_only_after_answer_persistence()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student), new InMemoryAudioChunkStore());
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+
+        await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+
+        var transcriptEvent = Assert.Single(fixture.Events.TranscriptUpdates);
+        Assert.Equal(started.State.AttemptId, transcriptEvent.AttemptId);
+        Assert.Equal(turnId, transcriptEvent.TurnId);
+        Assert.Equal("transcribed answer", transcriptEvent.Transcript);
+        Assert.Equal("transcribed answer", fixture.Db.InterviewTurns.Single().AnswerTranscript);
+    }
+
+    [Fact]
+    public async Task Audio_failure_before_successful_submission_does_not_publish_transcript_updated()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student), new InMemoryAudioChunkStore());
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId));
+
+        Assert.Empty(fixture.Events.TranscriptUpdates);
+    }
+
+    [Fact]
+    public async Task Failed_transcription_does_not_publish_transcript_updated()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student), new InMemoryAudioChunkStore());
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.SpeechToText.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId));
+
+        Assert.Empty(fixture.Events.TranscriptUpdates);
+    }
+
+    [Fact]
     public async Task Audio_chunks_are_rejected_after_the_turn_deadline()
     {
         await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
@@ -1027,8 +1081,8 @@ public sealed class InterviewTurnWorkflowTests
         public InterviewService CreateService(TestUser user) => new(Db, Configuration, Analyzer, Scorer,
             Events, user, Clock, Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
             NullLogger<InterviewService>.Instance);
-        public InterviewAudioSubmissionService CreateAudioService(TestUser user) => new(Db, Configuration,
-            user, AudioStore, SpeechToText, Service, Clock,
+        public InterviewAudioSubmissionService CreateAudioService(TestUser user, IAudioChunkStore? audioStore = null) => new(Db, Configuration,
+            user, audioStore ?? AudioStore, SpeechToText, Service, Events, Clock,
             Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }));
         public ValueTask DisposeAsync() => Db.DisposeAsync();
     }
@@ -1105,9 +1159,15 @@ public sealed class InterviewTurnWorkflowTests
     private sealed class TestSpeechToText : ISpeechToTextService
     {
         public int CallCount { get; private set; }
+        public bool FailNext { get; set; }
         public Task<string> TranscribeAsync(Stream audio, string contentType, string language, CancellationToken ct = default)
         {
             CallCount++;
+            if (FailNext)
+            {
+                FailNext = false;
+                throw new InvalidOperationException("Speech-to-text failure.");
+            }
             return Task.FromResult("transcribed answer");
         }
     }
@@ -1115,6 +1175,15 @@ public sealed class InterviewTurnWorkflowTests
     private sealed class TestEventPublisher(InterviewDbContext db) : IInterviewEventPublisher
     {
         public List<InterviewAttemptEvent> Events { get; } = [];
+        public List<TranscriptUpdatedEvent> TranscriptUpdates { get; } = [];
+
+        public Task PublishTranscriptUpdatedAsync(TranscriptUpdatedEvent transcriptEvent, CancellationToken ct = default)
+        {
+            Assert.Contains(db.InterviewTurns, turn => turn.Id == transcriptEvent.TurnId
+                && turn.AnswerTranscript == transcriptEvent.Transcript);
+            TranscriptUpdates.Add(transcriptEvent);
+            return Task.CompletedTask;
+        }
 
         public Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default)
         {

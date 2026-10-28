@@ -438,6 +438,8 @@ public class InterviewScoreReviewTests
     private sealed class NoOpInterviewEventPublisher : IInterviewEventPublisher
     {
         public Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task PublishTranscriptUpdatedAsync(TranscriptUpdatedEvent transcriptEvent, CancellationToken ct = default) => Task.CompletedTask;
     }
 
     private static async Task<InterviewAttempt> AddAttemptAsync(
