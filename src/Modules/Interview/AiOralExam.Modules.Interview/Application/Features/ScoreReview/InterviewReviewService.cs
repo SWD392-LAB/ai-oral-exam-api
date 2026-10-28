@@ -68,6 +68,7 @@ internal sealed class InterviewReviewService(
                 throw new ForbiddenException("This review is assigned to another lecturer.");
 
             var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+            EnsureEvaluationComplete(attempt, session);
             ValidateScoreReviewRequest(request, session.TotalMaxScore);
             await ValidateAttemptScoresAsync(attemptId, session, ct);
 
@@ -96,12 +97,16 @@ internal sealed class InterviewReviewService(
                     throw new ForbiddenException("This review is assigned to another lecturer.");
                 return ToResult(approved);
             }
+            if (attempt.Review is { Status: ReviewStatus.Pending } pending
+                && pending.ReviewerId != currentUser.Id)
+                throw new ForbiddenException("This review is assigned to another lecturer.");
+            var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+            EnsureEvaluationComplete(attempt, session);
             if (attempt.Status != AttemptStatus.PendingReview || attempt.Review is not { Status: ReviewStatus.Pending } review)
                 throw new ConflictException("score_review_draft_not_found", "Save a review draft before confirming it.");
             if (review.ReviewerId != currentUser.Id)
                 throw new ForbiddenException("This review is assigned to another lecturer.");
 
-            var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
             ValidateScoreReviewRequest(new SubmitScoreReviewRequest(review.FinalScore, review.Comment), session.TotalMaxScore);
             await ValidateAttemptScoresAsync(attemptId, session, ct);
             ApproveReview(attempt, review);
@@ -133,14 +138,14 @@ internal sealed class InterviewReviewService(
                 throw new ConflictException("score_review_already_submitted",
                     "The finalized score review cannot be changed or submitted by another reviewer.");
             }
+            if (attempt.Review is { } existing && existing.ReviewerId != currentUser.Id)
+                throw new ForbiddenException("This review is assigned to another lecturer.");
+            var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+            EnsureEvaluationComplete(attempt, session);
             if (attempt.Status != AttemptStatus.PendingReview)
                 throw new ConflictException("attempt_not_pending_review", "Only attempts pending review can be finalized.");
             if (attempt.Review is { Status: not ReviewStatus.Pending })
                 throw new ConflictException("score_review_already_submitted", "A score review has already been submitted.");
-            if (attempt.Review is { } existing && existing.ReviewerId != currentUser.Id)
-                throw new ForbiddenException("This review is assigned to another lecturer.");
-
-            var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
             ValidateScoreReviewRequest(request, session.TotalMaxScore);
             await ValidateAttemptScoresAsync(attemptId, session, ct);
 
@@ -195,6 +200,22 @@ internal sealed class InterviewReviewService(
             throw new NotFoundException("attempt_not_found", "Attempt not found.");
 
         return attempt;
+    }
+
+    private static void EnsureEvaluationComplete(InterviewAttempt attempt, ExamSessionInfo session)
+    {
+        var expectedQuestionIds = session.Questions.Select(question => question.Id).ToHashSet();
+        if (attempt.Status == AttemptStatus.InProgress
+            || expectedQuestionIds.Count == 0
+            || attempt.Responses.Count != expectedQuestionIds.Count
+            || !attempt.Responses.Select(response => response.QuestionId).ToHashSet().SetEquals(expectedQuestionIds)
+            || attempt.Responses.Any(response => !response.IsFinished
+            || response.AiSuggestedScore is null
+            || response.EvaluatedAt is null
+            || response.Turns.Count == 0
+            || response.Turns.Any(turn => turn.ProcessingStatus != TurnProcessingStatus.Completed
+                || turn.AnsweredAt is null && !turn.IsTimedOut)))
+            throw new ConflictException("evaluation_pending", "AI evaluation is still in progress.");
     }
 
     private async Task<ExamSessionInfo> GetSessionAsync(Guid sessionId, CancellationToken ct) =>

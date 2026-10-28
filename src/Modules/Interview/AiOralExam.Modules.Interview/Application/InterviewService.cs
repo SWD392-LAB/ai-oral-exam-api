@@ -397,18 +397,15 @@ internal sealed class InterviewService(
 
         var score = await scorer.ScoreAsync(new RubricScoringRequest(
             question.Content, question.Criteria, dialogue, DefaultLanguage), ct);
-        var criterionScores = question.Criteria.Select(c =>
-        {
-            var given = score.Scores.FirstOrDefault(s => s.CriterionId == c.Id);
-            return new CriterionScore
+        var criterionScores = ValidateAiScore(score, question.Criteria)
+            .Select((given, index) => new CriterionScore
             {
                 Id = Guid.NewGuid(),
                 QuestionResponseId = response.Id,
-                RubricCriterionId = c.Id,
-                Points = Math.Clamp(given?.Points ?? 0, 0, c.MaxPoints),
-                Comment = given?.Comment,
-            };
-        }).ToList();
+                RubricCriterionId = question.Criteria[index].Id,
+                Points = given.Points!.Value,
+                Comment = given.Comment,
+            }).ToList();
         response.RecordAiEvaluation(criterionScores, score.Feedback, now);
         db.CriterionScores.AddRange(criterionScores);
         var suggested = response.AiSuggestedScore!.Value;
@@ -437,6 +434,26 @@ internal sealed class InterviewService(
         logger.LogInformation("Attempt {AttemptId}: question {QuestionId} scored {Score}/{Max}, outcome {Outcome}",
             attempt.Id, question.Id, suggested, question.MaxScore, outcome);
         return new SubmitAnswerResponse(outcome, timedOut, null, ToState(attempt, session));
+    }
+
+    private static IReadOnlyList<CriterionPoints> ValidateAiScore(
+        RubricScore? score,
+        IReadOnlyList<RubricCriterionInfo> criteria)
+    {
+        var scores = score?.Scores;
+        if (scores is null || scores.Count != criteria.Count
+            || scores.Select(item => item.CriterionId).Distinct().Count() != scores.Count)
+            throw new InvalidOperationException("AI rubric scoring returned an incomplete or duplicate criterion score set.");
+
+        var byCriterion = scores.ToDictionary(item => item.CriterionId);
+        if (criteria.Any(criterion => !byCriterion.TryGetValue(criterion.Id, out var item)
+            || item.Points is not decimal points
+            || points < 0
+            || points > criterion.MaxPoints
+            || points != decimal.Round(points, 2)))
+            throw new InvalidOperationException("AI rubric scoring returned an invalid criterion score.");
+
+        return criteria.Select(criterion => byCriterion[criterion.Id]).ToList();
     }
 
     private async Task<SubmitAnswerResponse> ProcessClaimedTurnAsync(

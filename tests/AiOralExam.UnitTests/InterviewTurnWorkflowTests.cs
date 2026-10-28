@@ -1,4 +1,5 @@
 using AiOralExam.Modules.AccessConfig.Contracts;
+using System.Text.Json;
 using AiOralExam.Modules.Interview.Application;
 using AiOralExam.Modules.Interview.Application.Ai;
 using AiOralExam.Modules.Interview.Application.Audio;
@@ -124,6 +125,58 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
         Assert.Single(fixture.Db.CriterionScores);
         Assert.Equal(2, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
+    public async Task Missing_or_invalid_criterion_scores_fail_evaluation_without_persisting_a_score()
+    {
+        Func<Guid, RubricScore>[] invalidScoreFactories =
+        {
+            _ => new([], "Missing all scores."),
+            criterionId => new([new CriterionPoints(criterionId, null, null)], "Missing points."),
+            criterionId => new([new CriterionPoints(criterionId, -1m, null)], "Negative points."),
+            criterionId => new([new CriterionPoints(criterionId, 10.01m, null)], "Out of range."),
+            _ => new([new CriterionPoints(Guid.NewGuid(), 5m, null)], "Unknown criterion."),
+            criterionId => new([new CriterionPoints(criterionId, 5m, null), new CriterionPoints(criterionId, 5m, null)], "Duplicate criterion."),
+        };
+
+        foreach (var createInvalidScore in invalidScoreFactories)
+        {
+            await using var fixture = await CreateFixtureAsync();
+            var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+            fixture.Scorer.ResultOverride = createInvalidScore(fixture.Session.Questions[0].Criteria[0].Id);
+
+            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+                started.State.AttemptId,
+                new SubmitAnswerRequest("Answer", started.State.CurrentTurn!.TurnId)));
+
+            Assert.Empty(fixture.Db.CriterionScores);
+            Assert.Null(fixture.Db.QuestionResponses.Single().AiSuggestedScore);
+            Assert.Equal(TurnProcessingStatus.Retry, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+            Assert.Equal(AttemptStatus.InProgress, fixture.Db.InterviewAttempts.Single().Status);
+        }
+    }
+
+    [Theory]
+    [InlineData("\"not-a-number\"")]
+    [InlineData("\"NaN\"")]
+    [InlineData("\"Infinity\"")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    public async Task Malformed_and_non_finite_scores_fail_evaluation(string points)
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var criterionId = fixture.Session.Questions[0].Criteria[0].Id;
+        fixture.Scorer.RawJsonOverride = $$"""{"scores":[{"criterionId":"{{criterionId}}","points":{{points}},"comment":null}],"feedback":""}""";
+
+        await Assert.ThrowsAsync<JsonException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId,
+            new SubmitAnswerRequest("Answer", started.State.CurrentTurn!.TurnId)));
+
+        Assert.Empty(fixture.Db.CriterionScores);
+        Assert.Null(fixture.Db.QuestionResponses.Single().AiSuggestedScore);
+        Assert.Equal(TurnProcessingStatus.Retry, fixture.Db.InterviewTurns.Single().ProcessingStatus);
     }
 
     [Fact]
@@ -819,6 +872,8 @@ public sealed class InterviewTurnWorkflowTests
     {
         public int CallCount { get; private set; }
         public bool FailNext { get; set; }
+        public RubricScore? ResultOverride { get; set; }
+        public string? RawJsonOverride { get; set; }
 
         public Task<RubricScore> ScoreAsync(RubricScoringRequest request, CancellationToken ct = default)
         {
@@ -828,7 +883,11 @@ public sealed class InterviewTurnWorkflowTests
                 FailNext = false;
                 throw new InvalidOperationException("Scorer failure.");
             }
-            return Task.FromResult(new RubricScore([new CriterionPoints(criterionId, 8m, "Good")], "Good answer."));
+            if (RawJsonOverride is not null)
+                return Task.FromResult(JsonSerializer.Deserialize<RubricScore>(RawJsonOverride,
+                    new JsonSerializerOptions(JsonSerializerDefaults.Web))!);
+            return Task.FromResult(ResultOverride
+                ?? new RubricScore([new CriterionPoints(criterionId, 8m, "Good")], "Good answer."));
         }
     }
 
