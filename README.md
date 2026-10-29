@@ -87,7 +87,7 @@ migrations:
 
 ```powershell
 $env:AIVES_POSTGRES_TEST_CONNECTION_STRING = "Host=localhost;Port=5432;Database=r3_phase2_test;Username=<test-role>;Password=<test-password>;Search Path=r3_phase2_app,pg_catalog"
-dotnet test tests/AiOralExam.IntegrationTests/AiOralExam.IntegrationTests.csproj
+dotnet test tests/AiOralExam.IntegrationTests/AiOralExam.IntegrationTests.csproj --filter "FullyQualifiedName~PostgresInterviewRecoveryTests"
 Remove-Item Env:AIVES_POSTGRES_TEST_CONNECTION_STRING
 ```
 
@@ -96,8 +96,13 @@ search path must include the non-public `r3_phase2_app` schema and must not use 
 Verify the connection string before starting the tests. The tests create uniquely named rows
 but do not clean them up; isolate each run and drop only this dedicated test database manually
 after the run. No test setup should execute migrations against an existing development or
-production database. The successful manual-recovery audit integration test is implemented and
-build-verified, but is not considered executed unless this connection string is available.
+production database. Based on the supplied latest execution evidence, the focused PostgreSQL
+recovery suite ran against the isolated `r3_phase2_test` database with the non-public
+`r3_phase2_app,pg_catalog` search path and passed 6 tests with 0 failures and 0 skips. The
+successful manual-recovery audit test asserts the recovered TurnId in the persisted description.
+The concurrency test uses target-scoped analyzer/scorer invocation counters and persisted
+criterion-score assertions rather than a global worker count. This test result does not claim
+that migrations were applied by the test setup or to any development or production database.
 
 In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 

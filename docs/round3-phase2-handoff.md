@@ -8,8 +8,8 @@
 
 - **VERIFIED:** Phase 1 work is present in the working tree. The repository has not been reset, committed, or pushed.
 - **VERIFIED:** The current worktree also contains Phase 2 recovery implementation and test artifacts listed below.
-- **VERIFIED:** Focused Phase 1/2 unit coverage and the recovery workflow regression suite have passed in recorded runs. No migration has been applied by this agent.
-- **REMAINING VERIFICATION:** The latest PostgreSQL execution was not run because `AIVES_POSTGRES_TEST_CONNECTION_STRING` was unavailable. Historical PostgreSQL failures and later reported isolated-database verification are distinct from this latest unexecuted run.
+- **VERIFIED:** Focused Phase 1/2 unit coverage and the recovery workflow regression suite have passed in recorded runs. The latest full unit-suite evidence is 324 passed, 0 failed, and 3 skipped. No migration has been applied by this agent.
+- **VERIFIED:** The latest focused PostgreSQL recovery integration suite ran against the isolated `r3_phase2_test` database with `Search Path=r3_phase2_app,pg_catalog` and no `public` schema; 6 tests passed, with 0 failures and 0 skips. Historical PostgreSQL failures are distinct from this successful isolated run.
 
 ### Phase 2
 
@@ -17,10 +17,10 @@
 - **VERIFIED — STEP 2 complete:** Recovery processing and fencing are implemented in `InterviewService`, including stale processing handling and PostgreSQL attempt-row locking.
 - **VERIFIED — STEP 3 complete:** The synchronous manual recovery application method, HTTP request/response contract, controller route, authorization, and HTTP contract test were added.
 - **VERIFIED — STEP 4:** Audit writing uses the existing AccessConfig audit model/service area through `IAuditLogWriter`; successful and failed recovery audit paths are implemented.
-- **VERIFIED — STEP 5:** The PostgreSQL recovery test fixture and isolated non-public schema requirements are documented. The latest PostgreSQL test execution remains pending because the required connection string was unavailable.
+- **VERIFIED — STEP 5:** The PostgreSQL recovery test fixture and isolated non-public schema requirements are documented and were exercised against `r3_phase2_test`/`r3_phase2_app` in the latest focused run.
 - **VERIFIED — STEP 6:** Post-closure text-answer recovery now uses stage-specific prerequisites and permits AI-evaluation recovery when `AnsweredAt` and `AnswerTranscript` are persisted.
 - **VERIFIED — STEP 8:** Successful-recovery audit append failures are logged with non-sensitive identifiers and rethrown with the original exception.
-- **IMPLEMENTED — STEP 9:** A focused PostgreSQL test verifies successful recovery audit persistence through the administrator audit read path. It is build-verified but has not executed without the required isolated PostgreSQL connection.
+- **IMPLEMENTED and VERIFIED — STEP 9/15:** A focused PostgreSQL test verifies successful recovery audit persistence through the administrator audit read path, including the recovered TurnId in the persisted audit description. The concurrent worker test verifies target-scoped analyzer/scorer invocation counts and the absence of duplicate persisted criterion scores; it does not rely on the global worker sweep count.
 
 ## 2. Exact Phase 2 files
 
@@ -65,8 +65,8 @@
 
 - **VERIFIED:** Audit logging for manual recovery is implemented, but Interview state persistence and AccessConfig audit persistence use separate DbContexts and are not atomic.
 - **VERIFIED:** If a successful audit append fails, recovery may already be durably `PendingReview`/`Completed`; the audit exception is logged and rethrown, so the API may report an error despite committed recovery state. A repeated recovery request is not an audit-delivery retry mechanism.
-- **HISTORICAL REPORT:** Isolated PostgreSQL recovery verification was reported complete after the required database preparation. The latest connection was unavailable, so the current migration-14 state was not independently rechecked.
-- **HISTORICAL:** Earlier PostgreSQL recovery tests were blocked by the missing `manual_recovery_count` column in the then-current test database. This is not evidence about the latest unexecuted run.
+- **VERIFIED:** The latest focused PostgreSQL recovery suite executed against the isolated `r3_phase2_test` database with the non-public `r3_phase2_app,pg_catalog` search path. This evidence does not claim that migrations were applied by the test setup or to a development or production database.
+- **HISTORICAL:** Earlier PostgreSQL recovery tests were blocked by the missing `manual_recovery_count` column in the then-current test database. This is not evidence against the latest successful isolated run.
 - **VERIFIED:** Migration 14 rejects the `public` schema; it requires an explicitly supplied non-public application schema.
 - **VERIFIED:** External STT/AI execution is not guaranteed exactly once. Token fencing protects persisted state, not provider-side duplicate execution.
 - **VERIFIED:** `InMemoryAudioChunkStore` is not restart durable.
@@ -107,8 +107,8 @@
 ### Required STEP 4 tests
 
 - **VERIFIED:** The focused fault-injection unit test verifies committed recovery state, original audit exception propagation, logging, and no repeated AI/STT execution.
-- **IMPLEMENTED:** The PostgreSQL integration test verifies one successful audit record through the administrator audit read path when an explicitly isolated database is available.
-- **COVERAGE GAP:** The PostgreSQL audit test verifies the attempt target ID and outcome, but does not independently assert the turn ID inside the persisted audit description.
+- **VERIFIED:** The PostgreSQL integration test verifies one successful audit record through the administrator audit read path against the explicitly isolated test database, including the recovered TurnId inside the persisted audit description.
+- **VERIFIED:** The PostgreSQL concurrency test uses target-scoped analyzer/scorer invocation counters and target-response criterion-score persistence assertions; it does not rely on unrelated rows or the global worker count.
 
 ### Only files STEP 4 should inspect or modify
 
@@ -151,11 +151,11 @@ Do not modify SQL migrations or `database/01_schema.sql` for STEP 4 unless a sep
 - **VERIFIED from `step3-http-test-output.txt`:** The HTTP recovery test was attempted and failed because ASP.NET Core rejected validation metadata on the positional record request model, producing HTTP 500 instead of the expected NotFound. This is a recorded prior result, not a claim that the current tree still has exactly that failure.
 - **VERIFIED from `postgres-step2-test-output.txt`:** A PostgreSQL HTTP test was attempted and failed with `42703: column i0.manual_recovery_count does not exist`.
 - **VERIFIED from `round3-test-log.txt`:** PostgreSQL recovery tests were attempted and blocked by missing credentials (`No password has been provided but the backend requires one`).
-- **RECORDED PASS:** Focused unit recovery tests passed; the recovery workflow suite recorded 67 passed tests after the post-closure fix and audit-failure logging changes.
-- **RECORDED PASS:** The integration-test project build passed after adding the successful-audit test.
-- **NOT EXECUTED:** The new successful-audit PostgreSQL integration test was not executed because `AIVES_POSTGRES_TEST_CONNECTION_STRING` was unavailable.
-- **NOT ASSERTED:** The new successful-audit test does not independently assert the turn ID in the persisted audit description; it asserts the attempt ID as `TargetId` and the completed outcome.
-- **UNVERIFIED:** Latest PostgreSQL recovery behavior against `r3_phase2_test`/`r3_phase2_app` remains pending a user-provided isolated connection.
+- **RECORDED PASS:** Full unit suite passed with 324 passed tests, 0 failed tests, and 3 skipped tests.
+- **RECORDED PASS:** The focused PostgreSQL recovery integration suite passed 6 tests with 0 failures and 0 skips against `r3_phase2_test` using `r3_phase2_app,pg_catalog` without `public`.
+- **RECORDED PASS:** The successful-audit PostgreSQL test independently asserts the recovered TurnId in the persisted audit description.
+- **RECORDED PASS:** The PostgreSQL concurrency test uses target-scoped analyzer/scorer counters and persisted criterion-score assertions to verify one target processing execution without relying on global sweep counts.
+- **EVIDENCE BOUNDARY:** The recorded PostgreSQL result does not claim that migrations were applied by test setup or to any development or production database.
 
 ## 8. Repository safety rules
 
