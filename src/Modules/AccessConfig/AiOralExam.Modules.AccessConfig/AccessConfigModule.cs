@@ -50,7 +50,9 @@ public static class AccessConfigModule
         services.AddScoped<IParticipantService, ParticipantService>();
         services.AddScoped<ILecturerAssignmentService, LecturerAssignmentService>();
         services.AddScoped<IAiConfigService, AiConfigService>();
-        services.AddScoped<IAuditLogService, AuditLogService>();
+        services.AddScoped<AuditLogService>();
+        services.AddScoped<IAuditLogService>(sp => sp.GetRequiredService<AuditLogService>());
+        services.AddScoped<IAuditLogWriter>(sp => sp.GetRequiredService<AuditLogService>());
         services.AddOptions<KeycloakAdminOptions>()
             .Bind(configuration.GetSection(KeycloakAdminOptions.SectionName))
             .Validate(o => !string.IsNullOrWhiteSpace(o.ClientSecret),

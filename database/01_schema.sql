@@ -392,10 +392,18 @@ CREATE TABLE interview_turns (
     audio_url             VARCHAR(500),            -- the audio file lives in object storage
     asked_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     answered_at           TIMESTAMPTZ,
+    audio_completion_received_at TIMESTAMPTZ,
+    audio_accepted_at     TIMESTAMPTZ,
     is_timed_out          BOOLEAN      NOT NULL DEFAULT FALSE,
     processing_status     VARCHAR(20)  NOT NULL DEFAULT 'AwaitingAnswer',
     processing_started_at TIMESTAMPTZ,
     retry_count           INT          NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    transcription_retry_count INT      NOT NULL DEFAULT 0
+                              CONSTRAINT ck_interview_turns_transcription_retry_count
+                              CHECK (transcription_retry_count >= 0),
+    manual_recovery_count INT          NOT NULL DEFAULT 0
+                               CONSTRAINT ck_interview_turns_manual_recovery_count
+                               CHECK (manual_recovery_count BETWEEN 0 AND 1),
     next_retry_at         TIMESTAMPTZ,
     processing_token      UUID,
     submission_result     JSONB,

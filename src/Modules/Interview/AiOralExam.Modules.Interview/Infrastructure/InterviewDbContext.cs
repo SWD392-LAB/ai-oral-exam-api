@@ -62,6 +62,10 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.Property(x => x.ProcessingStatus).HasDefaultValue(TurnProcessingStatus.AwaitingAnswer);
             e.Property(x => x.ProcessingToken).HasColumnName("processing_token");
             e.Property(x => x.RetryCount).HasColumnName("retry_count");
+            e.Property(x => x.AudioCompletionReceivedAt).HasColumnName("audio_completion_received_at");
+            e.Property(x => x.AudioAcceptedAt).HasColumnName("audio_accepted_at");
+            e.Property(x => x.TranscriptionRetryCount).HasColumnName("transcription_retry_count").HasDefaultValue(0);
+            e.Property(x => x.ManualRecoveryCount).HasColumnName("manual_recovery_count").HasDefaultValue(0);
             e.Property(x => x.NextRetryAt).HasColumnName("next_retry_at");
             e.Property(x => x.SubmissionResultJson).HasColumnName("submission_result").HasColumnType("jsonb");
             e.HasIndex(x => new { x.ProcessingStatus, x.ProcessingStartedAt })

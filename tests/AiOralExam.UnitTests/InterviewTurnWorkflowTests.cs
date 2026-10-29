@@ -1,5 +1,5 @@
-using AiOralExam.Modules.AccessConfig.Contracts;
 using System.Text.Json;
+using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.Interview.Application;
 using AiOralExam.Modules.Interview.Application.Ai;
 using AiOralExam.Modules.Interview.Application.Audio;
@@ -11,6 +11,7 @@ using AiOralExam.Modules.Interview.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 
@@ -79,6 +80,30 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Equal(mainTurnId, fixture.Events.Events[^1].TurnId);
         Assert.Equal(2, fixture.Analyzer.CallCount);
         Assert.Single(fixture.Db.CriterionScores);
+    }
+
+    [Fact]
+    public async Task Student_cannot_invoke_manual_recovery_at_the_application_boundary()
+    {
+        await using var fixture = await CreateFixtureAsync();
+
+        var exception = await Assert.ThrowsAsync<ForbiddenException>(() => fixture.Service
+            .RecoverInterruptedTurnAsync(Guid.NewGuid(), Guid.NewGuid()));
+
+        Assert.Contains("administrators", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Unassigned_lecturer_cannot_recover_an_attempt()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var lecturerId = Guid.NewGuid();
+        fixture.Configuration.AssignedLecturerId = Guid.NewGuid();
+
+        await Assert.ThrowsAsync<ForbiddenException>(() => fixture.CreateService(
+                new TestUser(lecturerId, Roles.Lecturer))
+            .RecoverInterruptedTurnAsync(started.State.AttemptId, started.State.CurrentTurn!.TurnId));
     }
 
     [Fact]
@@ -281,7 +306,7 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Equal(StartTime, turn.NextRetryAt);
 
         fixture.Scorer.FailNext = true;
-        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ExpireOverdueAttemptsAsync());
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
 
         Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
         Assert.Equal(2, turn.RetryCount);
@@ -306,6 +331,86 @@ public sealed class InterviewTurnWorkflowTests
     }
 
     [Fact]
+    public async Task Manual_recovery_evaluates_a_failed_turn_without_reopening_student_flow()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 0, questionCount: 2);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Accepted answer", turnId)));
+
+        var recovery = await fixture.CreateService(new TestUser(Guid.NewGuid(), Roles.Lecturer))
+            .RecoverInterruptedTurnAsync(started.State.AttemptId, turnId);
+
+        Assert.Equal(SubmitOutcome.Completed, recovery.Outcome);
+        Assert.Equal(AttemptStatus.PendingReview.ToString(), recovery.Attempt.Status);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+        Assert.Equal(1, fixture.Db.InterviewTurns.Single().ManualRecoveryCount);
+        Assert.Single(fixture.Db.CriterionScores);
+        Assert.Single(fixture.Db.InterviewTurns);
+        Assert.Null(recovery.Attempt.CurrentTurn);
+    }
+
+    [Fact]
+    public async Task Manual_audio_recovery_after_session_close_requires_durable_audio_and_preserves_acceptance()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 0, timeLimitSeconds: 10);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.SpeechToText.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => audio.CompleteAudioAnswerAsync(
+            started.State.AttemptId, turnId));
+
+        var failed = fixture.Db.InterviewTurns.Single();
+        var acceptedAt = failed.AudioAcceptedAt;
+        var receiptAt = failed.AudioCompletionReceivedAt;
+        fixture.Clock.Set(fixture.Session.EndTime.AddTicks(1));
+
+        var recovery = await fixture.CreateService(new TestUser(Guid.NewGuid(), Roles.Lecturer))
+            .RecoverInterruptedTurnAsync(started.State.AttemptId, turnId);
+
+        var recovered = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(SubmitOutcome.Completed, recovery.Outcome);
+        Assert.Equal(AttemptStatus.PendingReview.ToString(), recovery.Attempt.Status);
+        Assert.Equal(TurnProcessingStatus.Completed, recovered.ProcessingStatus);
+        Assert.Equal(receiptAt, recovered.AudioCompletionReceivedAt);
+        Assert.Equal(acceptedAt, recovered.AudioAcceptedAt);
+        Assert.Equal(acceptedAt, recovered.AnsweredAt);
+        Assert.Equal("transcribed answer", recovered.AnswerTranscript);
+        Assert.Single(fixture.Db.CriterionScores);
+    }
+
+    [Fact]
+    public async Task Concurrent_manual_recovery_requests_allow_only_the_failed_turn_claim()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 0);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        fixture.Scorer.FailNext = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Accepted answer", turnId)));
+
+        var lecturer = new TestUser(Guid.NewGuid(), Roles.Lecturer);
+        var first = fixture.CreateService(lecturer).RecoverInterruptedTurnAsync(started.State.AttemptId, turnId);
+        var second = fixture.CreateService(lecturer).RecoverInterruptedTurnAsync(started.State.AttemptId, turnId);
+        var results = await Task.WhenAll(
+            first.ContinueWith(task => (Exception?)task.Exception?.InnerException),
+            second.ContinueWith(task => (Exception?)task.Exception?.InnerException));
+
+        Assert.Single(results, exception => exception is null);
+        Assert.Single(results, exception => exception is ConflictException conflict
+            && conflict.Code is "attempt_not_interrupted" or "turn_not_failed" or "manual_recovery_already_used");
+        Assert.Equal(1, fixture.Db.InterviewTurns.Single().ManualRecoveryCount);
+        Assert.Single(fixture.Db.CriterionScores);
+    }
+
+    [Fact]
     public async Task Three_configured_retries_allow_four_total_executions_and_never_a_fifth()
     {
         await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 3);
@@ -321,7 +426,7 @@ public sealed class InterviewTurnWorkflowTests
         {
             fixture.Clock.Set(turn.NextRetryAt!.Value);
             fixture.Scorer.FailNext = true;
-            await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.ExpireOverdueAttemptsAsync());
+            Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
         }
 
         Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
@@ -512,6 +617,91 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Single(fixture.Db.CriterionScores);
         Assert.Equal(2, fixture.Analyzer.CallCount);
         Assert.Equal(1, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
+    public async Task Manual_recovery_stays_committed_when_success_audit_fails_and_is_not_repeated()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 0,
+            auditLogWriter: new ThrowingAuditLogWriter());
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Recover after audit failure", turnId)));
+
+        fixture.Configuration.AssignedLecturerId = Guid.NewGuid();
+        var recoveryService = fixture.CreateService(new TestUser(
+            fixture.Configuration.AssignedLecturerId.Value, Roles.Lecturer));
+
+        var auditException = await Assert.ThrowsAsync<InvalidOperationException>(() => recoveryService.RecoverInterruptedTurnAsync(
+            started.State.AttemptId, turnId));
+
+        Assert.Equal(AttemptStatus.PendingReview, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+        Assert.Same(auditException, fixture.Logger.Exception);
+        Assert.Equal(AuditLogActions.ManualRecoverySucceeded, fixture.Logger.Properties["AuditAction"]);
+        Assert.Equal(started.State.AttemptId, fixture.Logger.Properties["AttemptId"]);
+        Assert.Equal(turnId, fixture.Logger.Properties["TurnId"]);
+        Assert.Equal(fixture.Configuration.AssignedLecturerId, fixture.Logger.Properties["ActorId"]);
+        var analyzerCalls = fixture.Analyzer.CallCount;
+        var scorerCalls = fixture.Scorer.CallCount;
+        var speechToTextCalls = fixture.SpeechToText.CallCount;
+
+        await Assert.ThrowsAsync<ConflictException>(() => recoveryService.RecoverInterruptedTurnAsync(
+            started.State.AttemptId, turnId));
+
+        Assert.Equal(analyzerCalls, fixture.Analyzer.CallCount);
+        Assert.Equal(scorerCalls, fixture.Scorer.CallCount);
+        Assert.Equal(speechToTextCalls, fixture.SpeechToText.CallCount);
+    }
+
+    [Fact]
+    public async Task Manual_recovery_reprocesses_a_persisted_text_answer_after_session_closure()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 0);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Service.SubmitAnswerAsync(
+            started.State.AttemptId, new SubmitAnswerRequest("Persisted text answer", turnId)));
+
+        fixture.Clock.Set(fixture.Session.EndTime.AddTicks(1));
+        var lecturerId = Guid.NewGuid();
+        fixture.Configuration.AssignedLecturerId = lecturerId;
+        var recoveryService = fixture.CreateService(new TestUser(lecturerId, Roles.Lecturer));
+
+        var recovered = await recoveryService.RecoverInterruptedTurnAsync(started.State.AttemptId, turnId);
+
+        Assert.Equal(SubmitOutcome.Completed, recovered.Outcome);
+        Assert.Equal(AttemptStatus.PendingReview, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+        Assert.Equal(2, fixture.Scorer.CallCount);
+    }
+
+    [Fact]
+    public async Task Manual_recovery_rejects_ai_evaluation_without_a_persisted_transcript()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = fixture.Db.InterviewTurns.Single();
+        turn.AnsweredAt = StartTime;
+        turn.ProcessingStatus = TurnProcessingStatus.Failed;
+        fixture.Db.InterviewAttempts.Single().Interrupt(StartTime.AddMinutes(1));
+
+        var lecturerId = Guid.NewGuid();
+        fixture.Configuration.AssignedLecturerId = lecturerId;
+        var recoveryService = fixture.CreateService(new TestUser(lecturerId, Roles.Lecturer));
+
+        var error = await Assert.ThrowsAsync<ConflictException>(() => recoveryService.RecoverInterruptedTurnAsync(
+            started.State.AttemptId, turn.Id));
+
+        Assert.Equal("transcript_not_persisted", error.Code);
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Equal(0, fixture.Analyzer.CallCount);
+        Assert.Equal(0, fixture.Scorer.CallCount);
     }
 
     [Fact]
@@ -897,6 +1087,35 @@ public sealed class InterviewTurnWorkflowTests
     }
 
     [Fact]
+    public async Task Transcript_updated_is_published_once_after_audio_retry_eventual_success()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student), new InMemoryAudioChunkStore());
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.Scorer.FailNext = true;
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId));
+
+        Assert.Empty(fixture.Events.TranscriptUpdates);
+        var turn = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
+        Assert.NotNull(turn.AnswerTranscript);
+        fixture.Clock.Set(turn.NextRetryAt!.Value);
+
+        Assert.Equal(1, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        Assert.Single(fixture.Events.TranscriptUpdates);
+        Assert.Equal(started.State.AttemptId, fixture.Events.TranscriptUpdates[0].AttemptId);
+        Assert.Single(fixture.Db.CriterionScores);
+        await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        Assert.Single(fixture.Events.TranscriptUpdates);
+    }
+
+    [Fact]
     public async Task Audio_failure_before_successful_submission_does_not_publish_transcript_updated()
     {
         await using var fixture = await CreateFixtureAsync();
@@ -944,6 +1163,30 @@ public sealed class InterviewTurnWorkflowTests
 
         Assert.Equal(0, fixture.AudioStore.AppendCount);
         Assert.Equal(0, fixture.SpeechToText.CallCount);
+    }
+
+    [Fact]
+    public async Task Simultaneous_audio_completion_requests_commit_one_processing_lease()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.SpeechToText.PauseNextCall();
+
+        var firstCompletion = audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await fixture.SpeechToText.WaitUntilPausedAsync();
+        var secondCompletion = await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        fixture.SpeechToText.Release();
+        var firstResult = await firstCompletion;
+
+        Assert.False(firstResult.Duplicate);
+        Assert.True(secondCompletion.Duplicate);
+        Assert.Equal(1, fixture.SpeechToText.CallCount);
+        Assert.Single(fixture.Db.CriterionScores);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
     }
 
     [Fact]
@@ -996,7 +1239,8 @@ public sealed class InterviewTurnWorkflowTests
         int maxFollowUps = 0,
         int maximumTurnRetries = 3,
         int initialRetryDelaySeconds = 5,
-        int maximumRetryDelaySeconds = 300)
+        int maximumRetryDelaySeconds = 300,
+        IAuditLogWriter? auditLogWriter = null)
     {
         var now = StartTime;
         var clock = new TestClock(now);
@@ -1031,6 +1275,7 @@ public sealed class InterviewTurnWorkflowTests
         var configuration = new TestExamConfiguration(session);
         var audioStore = new TestAudioChunkStore();
         var speechToText = new TestSpeechToText();
+        var logger = new TestLogger();
         var interviewOptions = new InterviewOptions
         {
             AllowRetake = allowRetake,
@@ -1040,11 +1285,11 @@ public sealed class InterviewTurnWorkflowTests
             MaximumTurnRetryDelaySeconds = maximumRetryDelaySeconds
         };
         var service = new InterviewService(db, configuration, analyzer, scorer,
-            events, new TestUser(studentId, Roles.Student), clock,
+            audioStore, speechToText, events, auditLogWriter ?? new TestAuditLogWriter(), new TestUser(studentId, Roles.Student), clock,
             Options.Create(interviewOptions),
-            NullLogger<InterviewService>.Instance);
+            logger);
         return new Fixture(db, service, clock, analyzer, scorer, configuration, session, events,
-            audioStore, speechToText, databaseName);
+            audioStore, speechToText, databaseName, auditLogWriter ?? new TestAuditLogWriter(), logger);
     }
 
     private sealed class Fixture(
@@ -1058,7 +1303,9 @@ public sealed class InterviewTurnWorkflowTests
         TestEventPublisher events,
         TestAudioChunkStore audioStore,
         TestSpeechToText speechToText,
-        string databaseName) : IAsyncDisposable
+        string databaseName,
+        IAuditLogWriter auditLogWriter,
+        TestLogger logger) : IAsyncDisposable
     {
         public InterviewDbContext Db { get; } = db;
         public InterviewService Service { get; } = service;
@@ -1070,20 +1317,38 @@ public sealed class InterviewTurnWorkflowTests
         public TestEventPublisher Events { get; } = events;
         public TestAudioChunkStore AudioStore { get; } = audioStore;
         public TestSpeechToText SpeechToText { get; } = speechToText;
+        public IAuditLogWriter AuditLogWriter { get; } = auditLogWriter;
+        public TestLogger Logger { get; } = logger;
         public InterviewDbContext CreateIndependentDb() => new(new DbContextOptionsBuilder<InterviewDbContext>()
             .UseInMemoryDatabase(databaseName)
             .Options);
         public InterviewService CreateIndependentService(InterviewDbContext db) => new(db, Configuration,
-            new TestAnalyzer(), Scorer, new TestEventPublisher(db),
-            new TestUser(Db.Participants.Single().StudentId, Roles.Student), Clock,
+            new TestAnalyzer(), Scorer, AudioStore, SpeechToText, new TestEventPublisher(db),
+            AuditLogWriter, new TestUser(Db.Participants.Single().StudentId, Roles.Student), Clock,
             Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
             NullLogger<InterviewService>.Instance);
         public InterviewService CreateService(TestUser user) => new(Db, Configuration, Analyzer, Scorer,
-            Events, user, Clock, Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
-            NullLogger<InterviewService>.Instance);
-        public InterviewAudioSubmissionService CreateAudioService(TestUser user, IAudioChunkStore? audioStore = null) => new(Db, Configuration,
-            user, audioStore ?? AudioStore, SpeechToText, Service, Events, Clock,
-            Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }));
+            AudioStore, SpeechToText, Events, AuditLogWriter, user, Clock, Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
+            Logger);
+        public InterviewAudioSubmissionService CreateAudioService(TestUser user, IAudioChunkStore? audioStore = null)
+        {
+            var store = audioStore ?? AudioStore;
+            var workflowService = ReferenceEquals(store, AudioStore)
+                ? Service
+                : new InterviewService(Db, Configuration, Analyzer, Scorer,
+                    store, SpeechToText, Events, new TestAuditLogWriter(), user, Clock,
+                    Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
+                    NullLogger<InterviewService>.Instance);
+            return new InterviewAudioSubmissionService(Db, Configuration,
+                user, store, workflowService, Clock,
+                Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }));
+        }
+
+    private sealed class ThrowingAuditLogWriter : IAuditLogWriter
+    {
+        public Task AppendAsync(AuditLogEntry entry, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Audit append failure.");
+    }
         public ValueTask DisposeAsync() => Db.DisposeAsync();
     }
 
@@ -1092,6 +1357,31 @@ public sealed class InterviewTurnWorkflowTests
         private readonly Dictionary<(Guid AttemptId, Guid TurnId), AudioUpload> _uploads = [];
         public int AppendCount { get; private set; }
         public int CompleteCount { get; private set; }
+        public bool FailNextCompletionAsEmpty { get; set; }
+        private TaskCompletionSource? _completionStarted;
+        private TaskCompletionSource? _completionRelease;
+
+        public void PauseNextCompletion()
+        {
+            _completionStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _completionRelease = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public Task WaitUntilCompletionStartedAsync()
+        {
+            if (_completionStarted is null)
+                throw new InvalidOperationException("Audio completion is not paused.");
+            return _completionStarted.Task;
+        }
+
+        public void ReleaseCompletion()
+        {
+            _completionRelease?.TrySetResult();
+            _completionRelease = null;
+        }
+
+        public void RemoveUpload(Guid attemptId, Guid turnId) =>
+            _uploads.Remove((attemptId, turnId));
 
         public Task<AudioChunkAppendResult> AppendAsync(
             Guid attemptId, Guid turnId, int sequence, byte[] chunk, string contentType, CancellationToken ct)
@@ -1126,15 +1416,25 @@ public sealed class InterviewTurnWorkflowTests
                 ? upload.ToCheckpoint()
                 : null);
 
-        public Task<CompletedAudio> CompleteUploadAsync(Guid attemptId, Guid turnId, CancellationToken ct)
+        public async Task<CompletedAudio> CompleteUploadAsync(Guid attemptId, Guid turnId, CancellationToken ct)
         {
             CompleteCount++;
+            if (_completionRelease is { } release)
+            {
+                _completionStarted!.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            }
+            if (FailNextCompletionAsEmpty)
+            {
+                FailNextCompletionAsEmpty = false;
+                throw new ConflictException("audio_upload_empty", "Upload at least one audio chunk before completing.");
+            }
             if (!_uploads.TryGetValue((attemptId, turnId), out var upload) || upload.Chunks.Count == 0)
                 throw new ConflictException("audio_upload_empty", "Upload at least one audio chunk before completing.");
             upload.IsCompleted = true;
             var bytes = upload.Chunks.SelectMany(chunk => chunk).ToArray();
-            return Task.FromResult(new CompletedAudio(new MemoryStream(bytes, writable: false),
-                upload.ContentType, upload.Transcript));
+            return new CompletedAudio(new MemoryStream(bytes, writable: false),
+                upload.ContentType, upload.Transcript);
         }
 
         public Task<string> SaveTranscriptIfAbsentAsync(
@@ -1160,15 +1460,42 @@ public sealed class InterviewTurnWorkflowTests
     {
         public int CallCount { get; private set; }
         public bool FailNext { get; set; }
-        public Task<string> TranscribeAsync(Stream audio, string contentType, string language, CancellationToken ct = default)
+        private TaskCompletionSource? _started;
+        private TaskCompletionSource? _release;
+
+        public void PauseNextCall()
+        {
+            _started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            _release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        }
+
+        public Task WaitUntilPausedAsync()
+        {
+            if (_started is null)
+                throw new InvalidOperationException("Speech-to-text is not paused.");
+            return _started.Task;
+        }
+
+        public void Release()
+        {
+            _release?.TrySetResult();
+            _release = null;
+        }
+
+        public async Task<string> TranscribeAsync(Stream audio, string contentType, string language, CancellationToken ct = default)
         {
             CallCount++;
+            if (_release is { } release)
+            {
+                _started!.TrySetResult();
+                await release.Task.WaitAsync(ct);
+            }
             if (FailNext)
             {
                 FailNext = false;
                 throw new InvalidOperationException("Speech-to-text failure.");
             }
-            return Task.FromResult("transcribed answer");
+            return "transcribed answer";
         }
     }
 
@@ -1276,6 +1603,8 @@ public sealed class InterviewTurnWorkflowTests
 
     private sealed class TestExamConfiguration(ExamSessionInfo session) : IExamConfigurationApi
     {
+        public Guid? AssignedLecturerId { get; set; }
+
         public Task<ExamSessionInfo?> GetSessionAsync(Guid examSessionId, CancellationToken ct = default) =>
             Task.FromResult<ExamSessionInfo?>(examSessionId == session.Id ? session : null);
 
@@ -1284,7 +1613,8 @@ public sealed class InterviewTurnWorkflowTests
             Task.FromResult<IReadOnlyList<ExamSessionInfo>>(examSessionIds.Contains(session.Id) ? [session] : []);
 
         public Task<bool> IsLecturerOfSessionAsync(Guid lecturerId, Guid examSessionId, CancellationToken ct = default) =>
-            Task.FromResult(examSessionId == session.Id);
+            Task.FromResult(examSessionId == session.Id
+                && (AssignedLecturerId is null || AssignedLecturerId == lecturerId));
 
         public Task<IReadOnlyList<UserBasicInfo>> GetUsersAsync(
             IReadOnlyCollection<Guid> userIds, CancellationToken ct = default) =>
@@ -1292,5 +1622,367 @@ public sealed class InterviewTurnWorkflowTests
 
         public Task<UserAccessInfo?> GetUserAccessAsync(Guid userId, CancellationToken ct = default) =>
             Task.FromResult<UserAccessInfo?>(new UserAccessInfo(Roles.Lecturer, true));
+    }
+
+    private sealed class TestAuditLogWriter : IAuditLogWriter
+    {
+        public Task AppendAsync(AuditLogEntry entry, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    private sealed class ThrowingAuditLogWriter : IAuditLogWriter
+    {
+        public Task AppendAsync(AuditLogEntry entry, CancellationToken ct = default) =>
+            throw new InvalidOperationException("Audit append failure.");
+    }
+
+    private sealed class TestLogger : ILogger<InterviewService>
+    {
+        public Exception? Exception { get; private set; }
+        public IReadOnlyDictionary<string, object?> Properties { get; private set; } =
+            new Dictionary<string, object?>();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+
+        public void Log<TState>(
+            LogLevel logLevel,
+            EventId eventId,
+            TState state,
+            Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            if (!IsEnabled(logLevel))
+                return;
+
+            Exception = exception;
+            Properties = state is IEnumerable<KeyValuePair<string, object?>> values
+                ? values.Where(item => item.Key != "{OriginalFormat}")
+                    .ToDictionary(item => item.Key, item => item.Value)
+                : new Dictionary<string, object?>();
+        }
+
+        private sealed class NullScope : IDisposable
+        {
+            internal static readonly NullScope Instance = new();
+
+            public void Dispose()
+            {
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Audio_completion_accepted_before_deadline_survives_stt_finishing_after_deadline_and_worker_poll()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+
+        fixture.SpeechToText.PauseNextCall();
+        var completion = audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await fixture.SpeechToText.WaitUntilPausedAsync();
+
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        var duringProcessing = fixture.Db.InterviewTurns.Single();
+        Assert.False(duringProcessing.IsTimedOut);
+        Assert.Equal(TurnProcessingStatus.Processing, duringProcessing.ProcessingStatus);
+        Assert.NotNull(duringProcessing.AudioAcceptedAt);
+        Assert.Null(duringProcessing.AnsweredAt);
+
+        fixture.SpeechToText.Release();
+        var result = await completion;
+
+        Assert.Equal(SubmitOutcome.Completed, result.Outcome);
+        var turn = fixture.Db.InterviewTurns.Single();
+        Assert.NotNull(turn.AudioAcceptedAt);
+        Assert.Equal(turn.AudioAcceptedAt, turn.AnsweredAt);
+        Assert.Equal("transcribed answer", turn.AnswerTranscript);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+    }
+
+    [Fact]
+    public async Task Audio_completion_received_before_deadline_is_not_timed_out_while_upload_finalization_is_in_flight()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.AudioStore.PauseNextCompletion();
+
+        var completion = audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await fixture.AudioStore.WaitUntilCompletionStartedAsync();
+
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        var inFlight = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Processing, inFlight.ProcessingStatus);
+        Assert.False(inFlight.IsTimedOut);
+        Assert.Null(inFlight.AudioAcceptedAt);
+
+        fixture.AudioStore.ReleaseCompletion();
+        var result = await completion;
+
+        Assert.Equal(SubmitOutcome.Completed, result.Outcome);
+        var committed = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(StartTime, committed.AudioAcceptedAt);
+        Assert.False(committed.IsTimedOut);
+        Assert.Equal(TurnProcessingStatus.Completed, committed.ProcessingStatus);
+    }
+
+    [Fact]
+    public async Task Audio_completion_validation_failure_releases_the_claim_and_allows_deadline_recovery()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.AudioStore.FailNextCompletionAsEmpty = true;
+
+        var error = await Assert.ThrowsAsync<ConflictException>(() =>
+            audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId));
+
+        Assert.Equal("audio_upload_empty", error.Code);
+        var released = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.AwaitingAnswer, released.ProcessingStatus);
+        Assert.Null(released.ProcessingToken);
+        Assert.Null(released.AudioAcceptedAt);
+
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+        Assert.Equal(1, await fixture.Service.ExpireOverdueAttemptsAsync());
+        Assert.True(fixture.Db.InterviewTurns.Single().IsTimedOut);
+    }
+
+    [Fact]
+    public async Task Simultaneous_audio_completion_requests_during_upload_validation_are_idempotent()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.AudioStore.PauseNextCompletion();
+
+        var first = audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await fixture.AudioStore.WaitUntilCompletionStartedAsync();
+        var second = await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+
+        fixture.AudioStore.ReleaseCompletion();
+        var primary = await first;
+
+        Assert.False(primary.Duplicate);
+        Assert.True(second.Duplicate);
+        Assert.Equal(2, fixture.AudioStore.CompleteCount);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+    }
+
+    [Fact]
+    public async Task Abandoned_upload_validation_claim_is_recovered_and_does_not_block_later_completion()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 600);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.AudioStore.PauseNextCompletion();
+
+        var abandoned = audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await fixture.AudioStore.WaitUntilCompletionStartedAsync();
+
+        fixture.Clock.Set(StartTime.AddMinutes(3));
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        var released = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Retry, released.ProcessingStatus);
+        Assert.Null(released.ProcessingToken);
+        Assert.Equal(StartTime, released.AudioCompletionReceivedAt);
+
+        fixture.AudioStore.ReleaseCompletion();
+        var abandonedResult = await abandoned;
+        Assert.True(abandonedResult.Duplicate);
+
+        fixture.Clock.Set(released.NextRetryAt!.Value);
+        var recovered = await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        Assert.Equal(SubmitOutcome.Completed, recovered.Outcome);
+        Assert.Equal(TurnProcessingStatus.Completed, fixture.Db.InterviewTurns.Single().ProcessingStatus);
+    }
+
+    [Fact]
+    public async Task Audio_validation_retry_preserves_original_receipt_after_deadline()
+    {
+        await using var fixture = await CreateFixtureAsync(timeLimitSeconds: 1,
+            maximumTurnRetries: 2, initialRetryDelaySeconds: 0, maximumRetryDelaySeconds: 0);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+        fixture.AudioStore.PauseNextCompletion();
+        var abandoned = audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await fixture.AudioStore.WaitUntilCompletionStartedAsync();
+        fixture.Clock.Set(StartTime.AddMinutes(3));
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+        var pending = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Retry, pending.ProcessingStatus);
+        Assert.Equal(StartTime, pending.AudioCompletionReceivedAt);
+        fixture.AudioStore.ReleaseCompletion();
+        Assert.True((await abandoned).Duplicate);
+        var result = await audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        Assert.Equal(SubmitOutcome.Completed, result.Outcome);
+        Assert.Equal(StartTime, fixture.Db.InterviewTurns.Single().AudioAcceptedAt);
+    }
+
+    [Fact]
+    public async Task Audio_transcription_result_is_rejected_when_processing_token_is_reclaimed()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+
+        fixture.SpeechToText.PauseNextCall();
+        var completion = audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId);
+        await fixture.SpeechToText.WaitUntilPausedAsync();
+
+        await using (var db = fixture.CreateIndependentDb())
+        {
+            var turn = await db.InterviewTurns.SingleAsync();
+            turn.ProcessingToken = Guid.NewGuid();
+            await db.SaveChangesAsync();
+        }
+
+        fixture.SpeechToText.Release();
+        var duplicate = await completion;
+
+        Assert.True(duplicate.Duplicate);
+        var stored = fixture.Db.InterviewTurns.Single();
+        Assert.Null(stored.AnswerTranscript);
+        Assert.Null(stored.AnsweredAt);
+        Assert.Equal(TurnProcessingStatus.Processing, stored.ProcessingStatus);
+        Assert.Equal(0, fixture.Scorer.CallCount);
+        Assert.Empty(fixture.Db.CriterionScores);
+    }
+
+    [Fact]
+    public async Task Transcription_retries_are_bounded_and_stop_after_the_configured_limit()
+    {
+        await using var fixture = await CreateFixtureAsync(
+            maximumTurnRetries: 1, initialRetryDelaySeconds: 0, maximumRetryDelaySeconds: 0);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+
+        fixture.SpeechToText.FailNext = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId));
+        var retryTurn = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Retry, retryTurn.ProcessingStatus);
+        Assert.Equal(1, retryTurn.TranscriptionRetryCount);
+
+        fixture.Clock.Set(retryTurn.NextRetryAt!.Value);
+        fixture.SpeechToText.FailNext = true;
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        var failed = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Failed, failed.ProcessingStatus);
+        Assert.Equal(2, failed.TranscriptionRetryCount);
+        Assert.Null(failed.NextRetryAt);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+    }
+
+    [Fact]
+    public async Task Missing_audio_on_transcription_retry_marks_the_turn_failed_once_budget_is_exhausted_safely()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turnId = started.State.CurrentTurn!.TurnId;
+        var audio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await audio.SendAudioChunkAsync(started.State.AttemptId, turnId, 0, [1, 2, 3], "audio/webm");
+
+        fixture.SpeechToText.FailNext = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            audio.CompleteAudioAnswerAsync(started.State.AttemptId, turnId));
+
+        var retryTurn = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Retry, retryTurn.ProcessingStatus);
+        Assert.Equal(1, retryTurn.TranscriptionRetryCount);
+        Assert.NotNull(retryTurn.NextRetryAt);
+
+        fixture.AudioStore.RemoveUpload(started.State.AttemptId, turnId);
+        fixture.Clock.Set(retryTurn.NextRetryAt!.Value);
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        var failed = fixture.Db.InterviewTurns.Single();
+        Assert.Equal(TurnProcessingStatus.Failed, failed.ProcessingStatus);
+        Assert.Null(failed.NextRetryAt);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+    }
+
+    [Fact]
+    public async Task Expiry_sweep_continues_when_one_transcription_recovery_fails_and_another_attempt_is_due()
+    {
+        await using var fixture = await CreateFixtureAsync(
+            maximumTurnRetries: 1, initialRetryDelaySeconds: 0, maximumRetryDelaySeconds: 0);
+        var firstAttempt = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var firstTurnId = firstAttempt.State.CurrentTurn!.TurnId;
+        var firstAudio = fixture.CreateAudioService(new TestUser(
+            fixture.Db.Participants.Single().StudentId, Roles.Student));
+        await firstAudio.SendAudioChunkAsync(firstAttempt.State.AttemptId, firstTurnId, 0, [1, 2, 3], "audio/webm");
+        fixture.SpeechToText.FailNext = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            firstAudio.CompleteAudioAnswerAsync(firstAttempt.State.AttemptId, firstTurnId));
+        fixture.AudioStore.RemoveUpload(firstAttempt.State.AttemptId, firstTurnId);
+
+        var secondStudentId = Guid.NewGuid();
+        fixture.Db.Participants.Add(new Participant
+        {
+            Id = Guid.NewGuid(),
+            ExamSessionId = fixture.Session.Id,
+            StudentId = secondStudentId,
+            JoinedAt = StartTime,
+            Status = ParticipantStatus.Registered
+        });
+        await fixture.Db.SaveChangesAsync();
+
+        var secondService = fixture.CreateService(new TestUser(secondStudentId, Roles.Student));
+        var secondAttempt = await secondService.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Scorer.FailNext = true;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => secondService.SubmitAnswerAsync(
+            secondAttempt.State.AttemptId, new SubmitAnswerRequest("Retryable", secondAttempt.State.CurrentTurn!.TurnId)));
+
+        var dueAt = fixture.Db.InterviewTurns
+            .Where(turn => turn.Id == firstTurnId || turn.Id == secondAttempt.State.CurrentTurn!.TurnId)
+            .Select(turn => turn.NextRetryAt)
+            .Max()!.Value;
+        fixture.Clock.Set(dueAt);
+
+        var processed = await fixture.Service.ExpireOverdueAttemptsAsync();
+
+        var firstTurn = fixture.Db.InterviewTurns.Single(turn => turn.Id == firstTurnId);
+        Assert.Equal(TurnProcessingStatus.Failed, firstTurn.ProcessingStatus);
+        Assert.Equal(AttemptStatus.Interrupted,
+            fixture.Db.InterviewAttempts.Single(attempt => attempt.Id == firstAttempt.State.AttemptId).Status);
+
+        var secondTurn = fixture.Db.InterviewTurns.Single(turn => turn.Id == secondAttempt.State.CurrentTurn!.TurnId);
+        Assert.Equal(TurnProcessingStatus.Completed, secondTurn.ProcessingStatus);
+        Assert.Equal(AttemptStatus.PendingReview,
+            fixture.Db.InterviewAttempts.Single(attempt => attempt.Id == secondAttempt.State.AttemptId).Status);
+        Assert.Equal(1, processed);
     }
 }

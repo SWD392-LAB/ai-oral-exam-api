@@ -23,6 +23,7 @@ public class InterviewAttempt
     {
         (AttemptStatus.InProgress, AttemptStatus.PendingReview) => true,
         (AttemptStatus.InProgress, AttemptStatus.Interrupted) => true,
+        (AttemptStatus.Interrupted, AttemptStatus.PendingReview) => true,
         (AttemptStatus.PendingReview, AttemptStatus.Finalized) => true,
         _ => false
     };
@@ -38,6 +39,15 @@ public class InterviewAttempt
     /// <summary>No questions left -> waits for lecturer review.</summary>
     public void Complete(DateTime utcNow)
     {
+        TransitionTo(AttemptStatus.PendingReview);
+        CompletedAt = utcNow;
+    }
+
+    /// <summary>Completes an explicitly recovered attempt without reopening student exam flow.</summary>
+    public void CompleteRecovered(DateTime utcNow)
+    {
+        if (Status != AttemptStatus.Interrupted)
+            throw new ConflictException("attempt_not_interrupted", "Only interrupted attempts can be completed through recovery.");
         TransitionTo(AttemptStatus.PendingReview);
         CompletedAt = utcNow;
     }

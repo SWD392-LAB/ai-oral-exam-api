@@ -42,14 +42,62 @@ dotnet run --project src/AiOralExam.Api --launch-profile http
 
 Check that the API can reach the database: open http://localhost:5080/health. It should say `Healthy`.
 
-For an existing database, apply the role/code validation upgrade with
-`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/03_user_role_code_constraint.sql`.
-The script reports any existing users that need correction before it installs the trigger.
-Fresh databases get this trigger automatically from `database/01_schema.sql`.
+`database/01_schema.sql` is the final fresh-install schema. Docker runs it followed by
+`database/02_seed.sql`; it includes the current EF columns, including durable audio
+acceptance, transcription-retry, and manual-recovery metadata.
 
-For existing databases, also apply `database/04_audit_log_description.sql` to add the audit-log description column. Fresh databases get it from `database/01_schema.sql`.
+For an existing database, apply the forward-only scripts in numeric order from `03` through
+`14`. Do not rerun `database/01_schema.sql` against existing data. Scripts `03` and `04`
+use the session `search_path`, so set it to the application schema before running them.
+Scripts `05` through `14` additionally require the psql variable `app_schema`; each script
+validates that schema and sets its own session `search_path` to `<app_schema>, pg_catalog`.
+The guarded application-schema migrations reject unsafe schemas such as
+`information_schema` and `pg_*`; migration `14` explicitly rejects `public`. Migration `14` adds the bounded
+`manual_recovery_count` column and constraint required for one manual interrupted-turn
+recovery; it must run after migration `13` and requires an explicitly supplied non-public
+`app_schema`.
 
-For the retake schema change on an existing database, identify the application schema and apply `database/05_allow_interview_attempt_retakes.sql` as described in [Changing the database](#6-changing-the-database). Do not rerun `database/01_schema.sql` against existing data.
+For example, with an application schema named `aives_app`:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -c 'SET search_path TO aives_app, pg_catalog' \
+  -f database/03_user_role_code_constraint.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -c 'SET search_path TO aives_app, pg_catalog' \
+  -f database/04_audit_log_description.sql
+for script in database/{05..14}_*.sql; do
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v app_schema=aives_app -f "$script"
+done
+```
+
+The ordered upgrades are: role/code validation (`03`), audit and retake changes (`04`-`05`),
+rubric changes (`06`, `08`, and `10`), and F3 processing, lease, retry, interrupted-attempt,
+and durable-audio changes (`07`, `09`, and `11`-`13`), followed by manual interrupted-turn
+recovery (`14`). Migrations `13` and `14` remain compatible with the final `01_schema.sql`
+because they use guarded column/constraint operations; both require a non-public `app_schema`.
+
+### Isolated PostgreSQL test database
+
+The PostgreSQL recovery tests are opt-in. Create a fresh, dedicated database and set
+`AIVES_POSTGRES_TEST_CONNECTION_STRING` to it; never use the development database `aives`.
+Use a disposable database per test run and do not share it with the API, development tools,
+or another test process. Prepare it from the fresh-install schema without running any upgrade
+migrations:
+
+```powershell
+$env:AIVES_POSTGRES_TEST_CONNECTION_STRING = "Host=localhost;Port=5432;Database=r3_phase2_test;Username=<test-role>;Password=<test-password>;Search Path=r3_phase2_app,pg_catalog"
+dotnet test tests/AiOralExam.IntegrationTests/AiOralExam.IntegrationTests.csproj
+Remove-Item Env:AIVES_POSTGRES_TEST_CONNECTION_STRING
+```
+
+The database must be exactly `r3_phase2_test` for the focused Round 3 recovery tests, and the
+search path must include the non-public `r3_phase2_app` schema and must not use `public`.
+Verify the connection string before starting the tests. The tests create uniquely named rows
+but do not clean them up; isolate each run and drop only this dedicated test database manually
+after the run. No test setup should execute migrations against an existing development or
+production database. The successful manual-recovery audit integration test is implemented and
+build-verified, but is not considered executed unless this connection string is available.
 
 In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 
@@ -111,15 +159,18 @@ docker compose up -d       # runs 01_schema.sql + 02_seed.sql and imports the Ke
 ai-oral-exam-api/
 ├── AiOralExam.sln
 ├── docker-compose.yml               # PostgreSQL 16 + pgAdmin + Keycloak (+ its database, Mailpit)
-├── keycloak/                        # Keycloak realm (clients, roles, demo users) + its README
-├── Directory.Build.props            # shared settings: net8.0, nullable...
+├── keycloak/                        # Keycloak rea│   ├── 13_f3_durable_audio_acceptance.sql # durable audio/retry metadata
+│   └── 14_f3_manual_turn_recovery.sql # one bounded manual recovery per turn
+        # shared settings: net8.0, nullable...
 ├── Directory.Packages.props         # NuGet versions declared once (Central Package Management)
 ├── database/
 │   ├── 01_schema.sql                # SOURCE OF TRUTH for the schema (16 tables)
 │   ├── 02_seed.sql                  # demo data
 │   ├── 03_user_role_code_constraint.sql # upgrade for existing databases
 │   ├── 04_audit_log_description.sql # adds audit log descriptions to existing databases
-│   └── 05_allow_interview_attempt_retakes.sql # removes the old one-attempt constraint
+│   ├── 05_allow_interview_attempt_retakes.sql # removes the old one-attempt constraint
+│   ├── 06_rubric_versions.sql ... 12_f3_interrupted_attempts.sql # forward-only upgrades
+│   └── 13_f3_durable_audio_acceptance.sql # durable audio/retry metadata
 ├── src/
 │   ├── AiOralExam.Api/              # Host: Program.cs, Keycloak token validation, Swagger, CORS, error middleware
 │   ├── Shared/
@@ -237,6 +288,13 @@ There is no way back. Each submitted answer returns an `outcome`:
 - `FollowUp`: the AI asks a follow-up; `currentTurn.type = "FollowUp"`
 - `NextQuestion`: moves on to the next main question
 - `Completed`: no questions left; the attempt moves to `PendingReview`
+
+### Audio retry and recovery notes (current phase)
+
+- Turn-processing retries are bounded by `Interview:MaximumTurnRetries`; terminal failures move the attempt to `Interrupted`.
+- Missing audio on a retry is treated as terminal and does not loop forever.
+- Restart recovery depends on a durable `IAudioChunkStore` implementation and a real `ISpeechToTextService` provider.
+- The default in-memory adapters are development-only and are not a production durability guarantee.
 
 ### F6 reporting and F3 Score Review
 

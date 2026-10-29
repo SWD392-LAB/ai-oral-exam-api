@@ -10,6 +10,12 @@ public interface IInterviewService
     /// <summary>POST /api/interview-attempts/{id}/responses (BE-AI-05).</summary>
     Task<SubmitAnswerResponse> SubmitAnswerAsync(Guid attemptId, SubmitAnswerRequest request, CancellationToken ct = default);
 
+    Task<SubmitAnswerResponse> SubmitAudioAnswerAsync(
+        Guid attemptId, Guid turnId, DateTime receiptAt, CancellationToken ct = default);
+
+    Task<SubmitAnswerResponse> RecoverInterruptedTurnAsync(
+        Guid attemptId, Guid turnId, CancellationToken ct = default);
+
     Task<AttemptStateDto> GetAttemptStateAsync(Guid attemptId, CancellationToken ct = default);
 
     Task<Guid> AuthorizeAttemptSubscriptionAsync(Guid attemptId, CancellationToken ct = default);

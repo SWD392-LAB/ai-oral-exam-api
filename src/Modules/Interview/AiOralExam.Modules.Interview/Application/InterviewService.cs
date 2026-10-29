@@ -1,6 +1,7 @@
 using System.Text.Json;
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.Interview.Application.Ai;
+using AiOralExam.Modules.Interview.Application.Audio;
 using AiOralExam.Modules.Interview.Application.Events;
 using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.Modules.Interview.Domain;
@@ -25,7 +26,10 @@ internal sealed class InterviewService(
     IExamConfigurationApi examConfig,
     IAnswerAnalyzer analyzer,
     IRubricScorer scorer,
+    IAudioChunkStore audioStore,
+    ISpeechToTextService speechToText,
     IInterviewEventPublisher eventPublisher,
+    IAuditLogWriter auditLogWriter,
     ICurrentUser currentUser,
     TimeProvider clock,
     IOptions<InterviewOptions> options,
@@ -232,18 +236,207 @@ internal sealed class InterviewService(
         return await ProcessClaimedTurnAsync(attemptId, claim.Processing!, ct);
     }
 
+    public async Task<SubmitAnswerResponse> SubmitAudioAnswerAsync(
+        Guid attemptId,
+        Guid turnId,
+        DateTime receiptAt,
+        CancellationToken ct = default)
+    {
+        if (turnId == Guid.Empty)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                [nameof(turnId)] = ["turnId is required and must be a non-empty GUID."]
+            });
+        EnsureAudioStudent();
+
+        var claim = await WithAttemptLockAsync(attemptId, async () =>
+        {
+            var attempt = await LoadAttemptAsync(attemptId, ct);
+            EnsureAudioStudent();
+            if (attempt.Participant.StudentId != currentUser.Id)
+                throw new NotFoundException("attempt_not_found", "Attempt not found.");
+
+            var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+            var turn = attempt.Responses.SelectMany(r => r.Turns)
+                .FirstOrDefault(t => t.Id == turnId)
+                ?? throw new ConflictException("turn_not_found", "The submitted turn does not belong to this attempt.");
+            var response = attempt.Responses.Single(r => r.Turns.Any(t => t.Id == turnId));
+
+            if (turn.ProcessingStatus == TurnProcessingStatus.Completed)
+                return new AudioSubmissionClaim(null, GetOriginalResponse(attempt, response, turn, session));
+            if (turn.ProcessingStatus == TurnProcessingStatus.Failed)
+                throw new ConflictException("turn_processing_failed", "Turn processing has permanently failed.");
+            if (turn.IsTimedOut || turn.AnsweredAt is not null && turn.AudioAcceptedAt is null)
+                throw new ConflictException("turn_submission_conflict", "This turn was already submitted.");
+            if (turn.ProcessingStatus == TurnProcessingStatus.Processing
+                || turn.ProcessingStatus == TurnProcessingStatus.Retry
+                    && turn.NextRetryAt is DateTime retryAt && retryAt > UtcNow)
+                return new AudioSubmissionClaim(null, DuplicateResponse(attempt, response, turn, session));
+
+            attempt.EnsureInProgress();
+            if (turn.AudioAcceptedAt is null)
+            {
+                if (turn.AudioCompletionReceivedAt is null)
+                {
+                    if (attempt.CurrentResponse?.Id != response.Id
+                        || response.CurrentTurn?.Id != turn.Id)
+                        throw new ConflictException(
+                            "turn_not_current",
+                            "The submitted turn is no longer current.");
+
+                    if (!session.IsOpenAt(receiptAt)
+                        || receiptAt > GetTurnDeadline(turn, session))
+                        throw new ConflictException(
+                            "answer_deadline_passed",
+                            "The answer deadline has passed.");
+
+                    turn.AudioCompletionReceivedAt = receiptAt;
+                }
+            }
+            else if (turn.ProcessingStatus != TurnProcessingStatus.Retry)
+                throw new ConflictException("turn_processing_failed", "The accepted audio turn cannot be reclaimed.");
+
+            var now = UtcNow;
+            turn.ProcessingStatus = TurnProcessingStatus.Processing;
+            turn.ProcessingStartedAt = now;
+            turn.NextRetryAt = null;
+            turn.ProcessingToken = Guid.NewGuid();
+            return new AudioSubmissionClaim(new TurnProcessingClaim(attempt, response, turn, session,
+                turn.AnswerTranscript, now, turn.IsTimedOut, session.IsOpenAt(now),
+                turn.ProcessingToken.Value, turn.ProcessingStage), null);
+        }, ct);
+
+        if (claim.Response is not null)
+            return claim.Response;
+        return await ProcessClaimedTurnAsync(attemptId, claim.Processing!, ct);
+    }
+
+    public async Task<SubmitAnswerResponse> RecoverInterruptedTurnAsync(
+        Guid attemptId, Guid turnId, CancellationToken ct = default)
+    {
+        EnsureRecoveryActor();
+
+        var claim = await WithAttemptLockAsync(attemptId, async () =>
+        {
+            var attempt = await LoadAttemptAsync(attemptId, ct);
+            var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
+            await EnsureRecoveryActorAsync(session.Id, ct);
+
+            if (attempt.Status != AttemptStatus.Interrupted)
+                throw new ConflictException("attempt_not_interrupted", "Only interrupted attempts can be recovered.");
+
+            var response = attempt.Responses.SingleOrDefault(r => r.Turns.Any(t => t.Id == turnId))
+                ?? throw new ConflictException("turn_not_found", "The selected turn does not belong to this attempt.");
+            var turn = response.Turns.Single(t => t.Id == turnId);
+            var stage = turn.ProcessingStage;
+            var recoveryAudit = new RecoveryAuditData(
+                attempt.Id,
+                turn.Id,
+                attempt.Status.ToString(),
+                turn.ProcessingStatus.ToString(),
+                turn.RetryCount,
+                turn.TranscriptionRetryCount,
+                stage.ToString());
+
+            if (stage == TurnProcessingStage.AwaitingAnswer || stage == TurnProcessingStage.TimeoutEvaluation)
+                throw new ConflictException("turn_recovery_stage_invalid", "The failed turn has no recoverable processing stage.");
+            if (stage == TurnProcessingStage.Transcription && turn.AudioAcceptedAt is null)
+                throw new ConflictException("audio_answer_not_accepted", "Transcription recovery requires accepted audio.");
+            if (stage == TurnProcessingStage.AiEvaluation
+                && (turn.AnsweredAt is null || turn.AnswerTranscript is null))
+                throw new ConflictException("transcript_not_persisted", "AI recovery requires a persisted transcript.");
+            if (stage == TurnProcessingStage.AudioValidation && turn.AudioCompletionReceivedAt is null)
+                throw new ConflictException("audio_answer_not_received", "Audio recovery requires a completed audio receipt.");
+
+            turn.PrepareManualRecovery(attempt.Status);
+            turn.ProcessingStatus = TurnProcessingStatus.Processing;
+            turn.ProcessingStartedAt = UtcNow;
+            turn.ProcessingToken = Guid.NewGuid();
+            var token = turn.ProcessingToken.Value;
+            return new TurnProcessingClaim(attempt, response, turn, session,
+                turn.AnswerTranscript, turn.ProcessingStartedAt.Value, turn.IsTimedOut,
+                session.IsOpenAt(turn.ProcessingStartedAt.Value), token, stage, ManualRecovery: true,
+                RecoveryAudit: recoveryAudit);
+        }, ct);
+
+        SubmitAnswerResponse result;
+        try
+        {
+            result = await ProcessClaimedTurnAsync(attemptId, claim, ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            try
+            {
+                var failed = await LoadAttemptAsync(attemptId, CancellationToken.None);
+                var failedTurn = failed.Responses.SelectMany(r => r.Turns).Single(t => t.Id == turnId);
+                await WriteRecoveryAuditAsync(claim.RecoveryAudit!, AuditLogActions.ManualRecoveryFailed,
+                    failedTurn.ProcessingStatus.ToString(), CancellationToken.None);
+            }
+            catch (Exception auditException)
+            {
+                logger.LogError(auditException, "Failed to audit manual recovery failure for attempt {AttemptId}, turn {TurnId}.",
+                    attemptId, turnId);
+            }
+            throw;
+        }
+
+        var completed = await LoadAttemptAsync(attemptId, CancellationToken.None);
+        var completedTurn = completed.Responses.SelectMany(r => r.Turns).Single(t => t.Id == turnId);
+        if (completed.Status == AttemptStatus.PendingReview
+            && completedTurn.ProcessingStatus == TurnProcessingStatus.Completed)
+        {
+            try
+            {
+                await WriteRecoveryAuditAsync(claim.RecoveryAudit!, AuditLogActions.ManualRecoverySucceeded,
+                    "Completed", CancellationToken.None);
+            }
+            catch (Exception auditException)
+            {
+                logger.LogError(auditException,
+                    "Failed to audit successful manual recovery for attempt {AttemptId}, turn {TurnId}, actor {ActorId}, action {AuditAction}.",
+                    attemptId, turnId, currentUser.Id, AuditLogActions.ManualRecoverySucceeded);
+                throw;
+            }
+        }
+        else
+        {
+            await WriteRecoveryAuditAsync(claim.RecoveryAudit!, AuditLogActions.ManualRecoveryFailed,
+                completedTurn.ProcessingStatus.ToString(), CancellationToken.None);
+        }
+        return result;
+    }
+
     public async Task<int> ExpireOverdueAttemptsAsync(CancellationToken ct = default)
     {
         var attemptIds = await db.InterviewAttempts.AsNoTracking()
-            .Where(a => a.Status == AttemptStatus.InProgress)
+            .Where(a => a.Status == AttemptStatus.InProgress
+                || a.Status == AttemptStatus.Interrupted
+                    && a.Responses.SelectMany(r => r.Turns).Any(t => t.ManualRecoveryCount > 0
+                        && (t.ProcessingStatus == TurnProcessingStatus.Retry
+                            || t.ProcessingStatus == TurnProcessingStatus.Processing)))
             .Select(a => a.Id)
             .ToListAsync(ct);
 
         var expiredCount = 0;
         foreach (var attemptId in attemptIds)
         {
-            if (await ProcessOverdueAttemptAsync(attemptId, ct))
-                expiredCount++;
+            try
+            {
+                if (await ProcessOverdueAttemptAsync(attemptId, ct))
+                    expiredCount++;
+            }
+            catch (OperationCanceledException exception)
+                when (ct.IsCancellationRequested && exception.CancellationToken == ct)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogError(exception,
+                    "Failed to process overdue interview attempt {AttemptId}; continuing with remaining attempts.",
+                    attemptId);
+            }
         }
 
         return expiredCount;
@@ -254,12 +447,15 @@ internal sealed class InterviewService(
         var claim = await WithAttemptLockAsync(attemptId, async () =>
         {
             var attempt = await LoadAttemptAsync(attemptId, ct);
-            if (attempt.Status != AttemptStatus.InProgress)
+            var manualRecoveryAttempt = attempt.Status == AttemptStatus.Interrupted
+                && attempt.Responses.SelectMany(r => r.Turns).Any(t => t.ManualRecoveryCount > 0);
+            if (attempt.Status != AttemptStatus.InProgress && !manualRecoveryAttempt)
                 return null;
 
             var now = UtcNow;
-            if (attempt.Responses.SelectMany(r => r.Turns)
-                .Any(t => t.ProcessingStatus == TurnProcessingStatus.Failed))
+            if (attempt.Status == AttemptStatus.InProgress
+                && attempt.Responses.SelectMany(r => r.Turns)
+                    .Any(t => t.ProcessingStatus == TurnProcessingStatus.Failed))
             {
                 attempt.Interrupt(now);
                 attempt.Participant.ReconcileStatus();
@@ -272,26 +468,45 @@ internal sealed class InterviewService(
                         && (t.NextRetryAt == null || t.NextRetryAt <= now)
                     || t.ProcessingStatus == TurnProcessingStatus.Processing
                         && t.ProcessingStartedAt < staleProcessingCutoff)
+                .Where(t => attempt.Status == AttemptStatus.InProgress || t.ManualRecoveryCount > 0)
                 .OrderBy(t => t.NextRetryAt ?? t.ProcessingStartedAt)
                 .FirstOrDefault();
             if (pendingTurn is not null)
             {
                 if (pendingTurn.ProcessingStatus == TurnProcessingStatus.Processing)
                 {
-                    pendingTurn.RetryCount++;
+                    if (pendingTurn.AudioAcceptedAt is null
+                        && pendingTurn.AudioCompletionReceivedAt is null
+                        && pendingTurn.AnsweredAt is null
+                        && !pendingTurn.IsTimedOut)
+                    {
+                        pendingTurn.ProcessingStatus = TurnProcessingStatus.AwaitingAnswer;
+                        pendingTurn.ProcessingStartedAt = null;
+                        pendingTurn.ProcessingToken = null;
+                        pendingTurn.NextRetryAt = null;
+                        return null;
+                    }
+
+                    var stage = pendingTurn.ProcessingStage;
+                    var retryCount = stage == TurnProcessingStage.Transcription
+                        ? ++pendingTurn.TranscriptionRetryCount
+                        : ++pendingTurn.RetryCount;
                     pendingTurn.ProcessingStartedAt = null;
                     pendingTurn.ProcessingToken = null;
-                    if (pendingTurn.RetryCount > Math.Max(0, _options.MaximumTurnRetries))
+                    if (retryCount > Math.Max(0, _options.MaximumTurnRetries))
                     {
                         pendingTurn.ProcessingStatus = TurnProcessingStatus.Failed;
                         pendingTurn.NextRetryAt = null;
-                        attempt.Interrupt(now);
-                        attempt.Participant.ReconcileStatus();
+                        if (attempt.Status == AttemptStatus.InProgress)
+                        {
+                            attempt.Interrupt(now);
+                            attempt.Participant.ReconcileStatus();
+                        }
                         return null;
                     }
 
                     pendingTurn.ProcessingStatus = TurnProcessingStatus.Retry;
-                    pendingTurn.NextRetryAt = now.Add(CalculateRetryDelay(pendingTurn.RetryCount, _options));
+                    pendingTurn.NextRetryAt = now.Add(CalculateRetryDelay(retryCount, _options));
                     return null;
                 }
 
@@ -303,7 +518,8 @@ internal sealed class InterviewService(
                 var pendingSession = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
                 return new TurnProcessingClaim(attempt, pendingResponse, pendingTurn, pendingSession,
                     pendingTurn.AnswerTranscript, now, pendingTurn.IsTimedOut, pendingSession.IsOpenAt(now),
-                    pendingTurn.ProcessingToken.Value);
+                    pendingTurn.ProcessingToken.Value, pendingTurn.ProcessingStage,
+                    ManualRecovery: attempt.Status == AttemptStatus.Interrupted);
             }
 
             var response = attempt.CurrentResponse;
@@ -321,7 +537,8 @@ internal sealed class InterviewService(
             turn.ProcessingStartedAt = now;
             turn.ProcessingToken = Guid.NewGuid();
             return new TurnProcessingClaim(attempt, response, turn, session, Answer: null, now,
-                TimedOut: true, SessionOpen: sessionOpen, ProcessingToken: turn.ProcessingToken.Value);
+                TimedOut: true, SessionOpen: sessionOpen, ProcessingToken: turn.ProcessingToken.Value,
+                Stage: TurnProcessingStage.TimeoutEvaluation);
         }, ct);
 
         if (claim is null)
@@ -392,6 +609,47 @@ internal sealed class InterviewService(
         return attempt;
     }
 
+    private async Task<(InterviewAttempt Attempt, InterviewTurn Turn)> LoadOwnedTurnAsync(
+        Guid attemptId, Guid turnId, CancellationToken ct)
+    {
+        var attempt = await db.InterviewAttempts.AsNoTracking()
+            .Include(item => item.Participant)
+            .Include(item => item.Responses).ThenInclude(response => response.Turns)
+            .AsSplitQuery()
+            .FirstOrDefaultAsync(item => item.Id == attemptId, ct)
+            ?? throw new NotFoundException("attempt_not_found", "Attempt not found.");
+        if (attempt.Participant.StudentId != currentUser.Id)
+            throw new NotFoundException("attempt_not_found", "Attempt not found.");
+        var turn = attempt.Responses.SelectMany(response => response.Turns)
+            .FirstOrDefault(candidate => candidate.Id == turnId)
+            ?? throw new ConflictException("turn_not_current", "The submitted turn does not belong to this attempt.");
+        return (attempt, turn);
+    }
+
+    private void EnsureAudioStudent()
+    {
+        if (!currentUser.IsAuthenticated)
+            throw new UnauthorizedException("unauthenticated", "You need to sign in.");
+        if (!currentUser.IsInRole(Roles.Student))
+            throw new ForbiddenException("Only the student taking the attempt can submit audio.");
+    }
+
+    private void EnsureRecoveryActor()
+    {
+        if (!currentUser.IsAuthenticated)
+            throw new UnauthorizedException("unauthenticated", "You need to sign in.");
+        if (!currentUser.IsInRole(Roles.Administrator) && !currentUser.IsInRole(Roles.Lecturer))
+            throw new ForbiddenException("Only administrators and assigned lecturers can recover turns.");
+    }
+
+    private async Task EnsureRecoveryActorAsync(Guid sessionId, CancellationToken ct)
+    {
+        EnsureRecoveryActor();
+        if (currentUser.IsInRole(Roles.Lecturer)
+            && !await examConfig.IsLecturerOfSessionAsync(currentUser.Id, sessionId, ct))
+            throw new ForbiddenException("Only lecturers assigned to the session can recover turns.");
+    }
+
     private async Task<InterviewAttempt> LoadAttemptAsync(Guid attemptId, CancellationToken ct) =>
         await db.InterviewAttempts
             .Include(a => a.Participant).ThenInclude(p => p.Attempts)
@@ -414,6 +672,7 @@ internal sealed class InterviewService(
         DateTime now,
         bool timedOut,
         bool sessionOpen,
+        bool manualRecovery,
         List<InterviewAttemptEvent> events,
         CancellationToken ct)
     {
@@ -434,7 +693,7 @@ internal sealed class InterviewService(
             response.FollowUpCount, session.MaxFollowUps, DefaultLanguage), ct);
 
         var followUpOpenedAt = UtcNow;
-        if (!timedOut && sessionOpen && session.IsOpenAt(followUpOpenedAt)
+        if (!manualRecovery && !timedOut && sessionOpen && session.IsOpenAt(followUpOpenedAt)
             && analysis.NeedsFollowUp && response.FollowUpCount < session.MaxFollowUps
             && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
         {
@@ -461,7 +720,7 @@ internal sealed class InterviewService(
         var suggested = response.AiSuggestedScore!.Value;
 
         var nextOpenedAt = UtcNow;
-        var canAskNextQuestion = sessionOpen && session.IsOpenAt(nextOpenedAt);
+        var canAskNextQuestion = !manualRecovery && sessionOpen && session.IsOpenAt(nextOpenedAt);
         var next = canAskNextQuestion
             ? session.Questions.FirstOrDefault(q => q.OrderNo > question.OrderNo)
             : null;
@@ -474,7 +733,10 @@ internal sealed class InterviewService(
         }
         else
         {
-            attempt.Complete(now);
+            if (manualRecovery)
+                attempt.CompleteRecovered(now);
+            else
+                attempt.Complete(now);
             attempt.Participant.ReconcileStatus();
             events.Add(CreateEvent(attempt, session.Id, canAskNextQuestion ? "attempt.completed" : "attempt.expired",
                 InterviewEventSequence.AttemptCompleted(turnCount), now));
@@ -509,12 +771,18 @@ internal sealed class InterviewService(
     private async Task<SubmitAnswerResponse> ProcessClaimedTurnAsync(
         Guid attemptId, TurnProcessingClaim claim, CancellationToken ct)
     {
+        if (claim.Stage == TurnProcessingStage.AudioValidation)
+            return await ProcessClaimedAudioValidationAsync(attemptId, claim, ct);
+        if (claim.Stage == TurnProcessingStage.Transcription)
+            return await ProcessClaimedAudioTranscriptionAsync(attemptId, claim, ct);
+        if (claim.Stage is not (TurnProcessingStage.AiEvaluation or TurnProcessingStage.TimeoutEvaluation))
+            throw new InvalidOperationException($"Unsupported turn processing stage: {claim.Stage}");
         var events = new List<InterviewAttemptEvent>();
         SubmitAnswerResponse result;
         try
         {
             result = await ProcessTurnAsync(claim.Attempt, claim.Response, claim.Turn, claim.Session,
-                claim.Answer, claim.Now, claim.TimedOut, claim.SessionOpen, events, ct);
+                claim.Answer, claim.Now, claim.TimedOut, claim.SessionOpen, claim.ManualRecovery, events, ct);
             claim.Turn.ProcessingStatus = TurnProcessingStatus.Completed;
             claim.Turn.ProcessingStartedAt = null;
             claim.Turn.NextRetryAt = null;
@@ -528,13 +796,7 @@ internal sealed class InterviewService(
         }
         catch (TurnProcessingLeaseLostException)
         {
-            db.ChangeTracker.Clear();
-            var currentAttempt = await LoadOwnAttemptAsync(attemptId, CancellationToken.None);
-            var currentTurn = currentAttempt.Responses.SelectMany(response => response.Turns)
-                .Single(turn => turn.Id == claim.Turn.Id);
-            var currentResponse = currentAttempt.Responses.Single(response => response.Id == currentTurn.QuestionResponseId);
-            var currentSession = await GetSessionAsync(currentAttempt.Participant.ExamSessionId, CancellationToken.None);
-            return GetOriginalResponse(currentAttempt, currentResponse, currentTurn, currentSession);
+            return await GetCurrentClaimResponseAsync(attemptId, claim.Turn.Id);
         }
         catch
         {
@@ -555,8 +817,11 @@ internal sealed class InterviewService(
                         : null;
                     if (claim.Turn.ProcessingStatus == TurnProcessingStatus.Failed)
                     {
-                        claim.Attempt.Interrupt(retryNow);
-                        claim.Attempt.Participant.ReconcileStatus();
+                        if (claim.Attempt.Status == AttemptStatus.InProgress)
+                        {
+                            claim.Attempt.Interrupt(retryNow);
+                            claim.Attempt.Participant.ReconcileStatus();
+                        }
                     }
                     return true;
                 }, CancellationToken.None);
@@ -574,7 +839,221 @@ internal sealed class InterviewService(
         }
 
         await PublishEventsAsync(events, ct);
+        if (claim.Turn.AudioAcceptedAt is not null && claim.Turn.AnswerTranscript is { } transcript)
+            await eventPublisher.PublishTranscriptUpdatedAsync(
+                new TranscriptUpdatedEvent(attemptId, claim.Turn.Id, transcript), ct);
         return result;
+    }
+
+    private async Task<SubmitAnswerResponse> ProcessClaimedAudioValidationAsync(
+        Guid attemptId, TurnProcessingClaim claim, CancellationToken ct)
+    {
+        TurnProcessingClaim transcriptionClaim;
+        try
+        {
+            var completed = await audioStore.CompleteUploadAsync(attemptId, claim.Turn.Id, ct);
+            await completed.Audio.DisposeAsync();
+
+            transcriptionClaim = await WithAttemptLockAsync(attemptId, async () =>
+            {
+                await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, ct);
+                var attemptStatus = await db.InterviewAttempts.AsNoTracking()
+                    .Where(a => a.Id == attemptId).Select(a => a.Status).SingleAsync(ct);
+                if (attemptStatus != AttemptStatus.InProgress
+                    && !(claim.ManualRecovery && attemptStatus == AttemptStatus.Interrupted)
+                    || claim.Turn.ProcessingStage != TurnProcessingStage.AudioValidation
+                    || claim.Turn.AudioCompletionReceivedAt is null
+                    || claim.Turn.AudioAcceptedAt is not null
+                    || claim.Turn.AnsweredAt is not null || claim.Turn.IsTimedOut)
+                    throw new TurnProcessingLeaseLostException();
+
+                var now = UtcNow;
+                claim.Turn.AudioAcceptedAt = claim.Turn.AudioCompletionReceivedAt.Value;
+                claim.Turn.ProcessingStartedAt = now;
+                claim.Turn.NextRetryAt = null;
+                claim.Turn.ProcessingToken = Guid.NewGuid();
+                return claim with
+                {
+                    Now = now,
+                    SessionOpen = claim.Session.IsOpenAt(now),
+                    ProcessingToken = claim.Turn.ProcessingToken.Value,
+                    Stage = TurnProcessingStage.Transcription
+                };
+            }, ct);
+        }
+        catch (TurnProcessingLeaseLostException)
+        {
+            return await GetCurrentClaimResponseAsync(attemptId, claim.Turn.Id);
+        }
+        catch (Exception exception)
+        {
+            var missingAudio = exception is ConflictException { Code: "audio_upload_empty" };
+            try
+            {
+                using var recoveryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                await WithAttemptLockAsync(attemptId, async () =>
+                {
+                    await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, recoveryTimeout.Token);
+                    var now = UtcNow;
+                    if (missingAudio && !claim.ManualRecovery)
+                    {
+                        // A missing upload is not accepted. The caller may retry before deadline.
+                        claim.Turn.AudioCompletionReceivedAt = null;
+                        claim.Turn.ProcessingStatus = TurnProcessingStatus.AwaitingAnswer;
+                        claim.Turn.NextRetryAt = null;
+                    }
+                    else
+                    {
+                        claim.Turn.RetryCount++;
+                        var exhausted = claim.Turn.RetryCount > Math.Max(0, _options.MaximumTurnRetries);
+                        claim.Turn.ProcessingStatus = exhausted
+                            ? TurnProcessingStatus.Failed : TurnProcessingStatus.Retry;
+                        claim.Turn.NextRetryAt = exhausted ? null
+                            : now.Add(CalculateRetryDelay(claim.Turn.RetryCount, _options));
+                        if (exhausted)
+                        {
+                            if (claim.Attempt.Status == AttemptStatus.InProgress)
+                            {
+                                claim.Attempt.Interrupt(now);
+                                claim.Attempt.Participant.ReconcileStatus();
+                            }
+                        }
+                    }
+                    claim.Turn.ProcessingStartedAt = null;
+                    claim.Turn.ProcessingToken = null;
+                    return true;
+                }, recoveryTimeout.Token);
+            }
+            catch (TurnProcessingLeaseLostException)
+            {
+                db.ChangeTracker.Clear();
+                throw new ConflictException("turn_processing_reclaimed",
+                    "Turn processing was recovered by another worker; retry the request.");
+            }
+            catch (Exception recoveryException)
+            {
+                logger.LogError(recoveryException,
+                    "Failed to checkpoint audio validation for attempt {AttemptId}, turn {TurnId}.",
+                    attemptId, claim.Turn.Id);
+            }
+            throw;
+        }
+        return await ProcessClaimedTurnAsync(attemptId, transcriptionClaim, ct);
+    }
+
+    private async Task<SubmitAnswerResponse> ProcessClaimedAudioTranscriptionAsync(
+        Guid attemptId, TurnProcessingClaim claim, CancellationToken ct)
+    {
+        TurnProcessingClaim evaluationClaim;
+        try
+        {
+            var completed = await audioStore.CompleteUploadAsync(attemptId, claim.Turn.Id, ct);
+            string transcript;
+            await using (completed.Audio)
+            {
+                transcript = await speechToText.TranscribeAsync(
+                    completed.Audio, completed.ContentType, DefaultLanguage, ct)
+                    ?? throw new AppException(502, "speech_to_text_invalid_response",
+                        "Speech-to-text returned no transcript result.");
+            }
+
+            if (transcript.Length > 10000)
+                throw new ValidationException(new Dictionary<string, string[]>
+                {
+                    [nameof(SubmitAnswerRequest.AnswerText)] = ["Transcribed answers cannot exceed 10000 characters."]
+                });
+
+            evaluationClaim = await WithAttemptLockAsync(attemptId, async () =>
+            {
+                await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, ct);
+                var now = UtcNow;
+                var attemptStatus = await db.InterviewAttempts.AsNoTracking()
+                    .Where(attempt => attempt.Id == attemptId)
+                    .Select(attempt => attempt.Status)
+                    .SingleAsync(ct);
+                if (claim.Turn.ProcessingStage != TurnProcessingStage.Transcription
+                    || claim.Turn.AudioAcceptedAt is null
+                    || attemptStatus != AttemptStatus.InProgress
+                        && !(claim.ManualRecovery && attemptStatus == AttemptStatus.Interrupted))
+                    throw new TurnProcessingLeaseLostException();
+
+                claim.Turn.AnswerTranscript = transcript;
+                claim.Turn.AnsweredAt = claim.Turn.AudioAcceptedAt;
+                claim.Turn.ProcessingStartedAt = now;
+                claim.Turn.NextRetryAt = null;
+                claim.Turn.ProcessingToken = Guid.NewGuid();
+                var token = claim.Turn.ProcessingToken.Value;
+                return claim with
+                {
+                    Answer = transcript,
+                    Now = now,
+                    SessionOpen = claim.Session.IsOpenAt(now),
+                    ProcessingToken = token,
+                    Stage = TurnProcessingStage.AiEvaluation
+                };
+            }, ct);
+        }
+        catch (TurnProcessingLeaseLostException)
+        {
+            return await GetCurrentClaimResponseAsync(attemptId, claim.Turn.Id);
+        }
+        catch (Exception exception)
+        {
+            var missingAudio = exception is ConflictException { Code: "audio_upload_empty" };
+            try
+            {
+                await WithAttemptLockAsync(attemptId, async () =>
+                {
+                    await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, CancellationToken.None);
+                    var retryCount = missingAudio
+                        ? claim.Turn.TranscriptionRetryCount
+                        : ++claim.Turn.TranscriptionRetryCount;
+                    claim.Turn.ProcessingStatus = missingAudio
+                        || retryCount > Math.Max(0, _options.MaximumTurnRetries)
+                        ? TurnProcessingStatus.Failed
+                        : TurnProcessingStatus.Retry;
+                    claim.Turn.ProcessingStartedAt = null;
+                    claim.Turn.ProcessingToken = null;
+                    var retryNow = UtcNow;
+                    claim.Turn.NextRetryAt = claim.Turn.ProcessingStatus == TurnProcessingStatus.Retry
+                        ? retryNow.Add(CalculateRetryDelay(retryCount, _options))
+                        : null;
+                    if (claim.Turn.ProcessingStatus == TurnProcessingStatus.Failed)
+                    {
+                        if (claim.Attempt.Status == AttemptStatus.InProgress)
+                        {
+                            claim.Attempt.Interrupt(retryNow);
+                            claim.Attempt.Participant.ReconcileStatus();
+                        }
+                    }
+                    return true;
+                }, CancellationToken.None);
+            }
+            catch (TurnProcessingLeaseLostException)
+            {
+                db.ChangeTracker.Clear();
+                throw new ConflictException("turn_processing_reclaimed",
+                    "Turn processing was recovered by another worker; retry the request.");
+            }
+
+            var sequence = InterviewEventSequence.Current(claim.Attempt);
+            await eventPublisher.PublishAsync(new InterviewAttemptEvent(Guid.NewGuid(), attemptId,
+                claim.Session.Id, sequence, claim.Turn.Id, sequence, "InterviewError", UtcNow), CancellationToken.None);
+            throw;
+        }
+
+        return await ProcessClaimedTurnAsync(attemptId, evaluationClaim, ct);
+    }
+
+    private async Task<SubmitAnswerResponse> GetCurrentClaimResponseAsync(Guid attemptId, Guid turnId)
+    {
+        db.ChangeTracker.Clear();
+        var currentAttempt = await LoadAttemptAsync(attemptId, CancellationToken.None);
+        var currentTurn = currentAttempt.Responses.SelectMany(response => response.Turns)
+            .Single(turn => turn.Id == turnId);
+        var currentResponse = currentAttempt.Responses.Single(response => response.Id == currentTurn.QuestionResponseId);
+        var currentSession = await GetSessionAsync(currentAttempt.Participant.ExamSessionId, CancellationToken.None);
+        return GetOriginalResponse(currentAttempt, currentResponse, currentTurn, currentSession);
     }
 
     private sealed record TurnProcessingClaim(
@@ -586,7 +1065,38 @@ internal sealed class InterviewService(
         DateTime Now,
         bool TimedOut,
         bool SessionOpen,
-        Guid ProcessingToken);
+        Guid ProcessingToken,
+        TurnProcessingStage Stage = TurnProcessingStage.AiEvaluation,
+        bool ManualRecovery = false,
+        RecoveryAuditData? RecoveryAudit = null);
+
+    private sealed record RecoveryAuditData(
+        Guid AttemptId,
+        Guid TurnId,
+        string PreviousAttemptState,
+        string PreviousTurnState,
+        int RetryCount,
+        int TranscriptionRetryCount,
+        string ResumedStage);
+
+    private async Task WriteRecoveryAuditAsync(
+        RecoveryAuditData audit, string action, string outcome, CancellationToken ct)
+    {
+        var description = JsonSerializer.Serialize(new
+        {
+            attempt = audit.AttemptId,
+            turn = audit.TurnId,
+            reason = "Interrupted turn manual recovery",
+            previousAttemptState = audit.PreviousAttemptState,
+            previousTurnState = audit.PreviousTurnState,
+            retryCount = audit.RetryCount,
+            transcriptionRetryCount = audit.TranscriptionRetryCount,
+            resumedStage = audit.ResumedStage,
+            outcome
+        });
+        await auditLogWriter.AppendAsync(new AuditLogEntry(
+            currentUser.Id, action, AuditLogEntities.InterviewAttempt, audit.AttemptId, description), ct);
+    }
 
     internal static TimeSpan CalculateRetryDelay(int retryCount, InterviewOptions options)
     {
@@ -601,6 +1111,11 @@ internal sealed class InterviewService(
         TurnProcessingClaim? Processing,
         SubmitAnswerResponse? Response,
         InterviewAttemptEvent? Event = null);
+
+    private sealed record AudioSubmissionClaim(
+        TurnProcessingClaim? Processing,
+        SubmitAnswerResponse? Response,
+        bool PendingUploadValidation = false);
 
     private SubmitAnswerResponse DuplicateResponse(
         InterviewAttempt attempt,
