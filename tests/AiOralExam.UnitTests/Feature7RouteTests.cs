@@ -29,6 +29,12 @@ public class Feature7RouteTests
             "POST", "api/exam-sessions/{sessionId:guid}/participants/import");
         AssertRoute(typeof(ExamSessionCommandsController), nameof(ExamSessionCommandsController.Publish),
             "POST", "api/exam-sessions/{id:guid}/publish");
+        AssertRoute(typeof(RubricTemplatesController), nameof(RubricTemplatesController.CreateVersion),
+            "POST", "api/rubric-templates/{templateId:guid}/versions");
+        AssertRoute(typeof(RubricTemplatesController), nameof(RubricTemplatesController.ListVersions),
+            "GET", "api/rubric-templates/{templateId:guid}/versions");
+        AssertRoute(typeof(RubricTemplatesController), nameof(RubricTemplatesController.GetVersion),
+            "GET", "api/rubric-templates/{templateId:guid}/versions/{versionId:guid}");
     }
 
     [Fact]
@@ -38,6 +44,7 @@ public class Feature7RouteTests
         AssertRoles(typeof(QuestionsController), Roles.LecturerOrAdmin);
         AssertRoles(typeof(RubricsController), Roles.LecturerOrAdmin);
         AssertRoles(typeof(ParticipantsController), Roles.LecturerOrAdmin);
+        AssertRoles(typeof(RubricTemplatesController), Roles.LecturerOrAdmin);
     }
 
     [Fact]

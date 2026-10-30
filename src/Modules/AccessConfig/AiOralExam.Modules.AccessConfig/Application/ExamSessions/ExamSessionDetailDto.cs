@@ -11,4 +11,6 @@ public sealed record ExamSessionDetailDto(
     int TimeLimitPerAnswerSeconds,
     int MaxFollowUps,
     string Status,
-    IReadOnlyList<QuestionDto> Questions);
+    IReadOnlyList<QuestionDto> Questions,
+    string RubricMode = "Legacy",
+    Guid? RubricVersionId = null);

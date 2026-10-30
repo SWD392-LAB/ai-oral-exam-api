@@ -1,6 +1,7 @@
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Participants;
 using AiOralExam.Modules.AccessConfig.Application.Rubrics;
+using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Security;
@@ -11,6 +12,29 @@ namespace AiOralExam.UnitTests;
 
 public class AuditLogDescriptionTests
 {
+    [Fact]
+    public async Task Audit_writer_persists_manual_recovery_entry()
+    {
+        await using var db = CreateDbContext();
+        var writer = new AuditLogService(db);
+        var actorId = Guid.NewGuid();
+        var attemptId = Guid.NewGuid();
+
+        await writer.AppendAsync(new AuditLogEntry(
+            actorId,
+            AuditLogActions.ManualRecoverySucceeded,
+            AuditLogEntities.InterviewAttempt,
+            attemptId,
+            "{\"outcome\":\"Completed\"}"));
+
+        var audit = Assert.Single(db.AuditLogs);
+        Assert.Equal(actorId, audit.UserId);
+        Assert.Equal(AuditLogActions.ManualRecoverySucceeded, audit.Action);
+        Assert.Equal(AuditLogEntities.InterviewAttempt, audit.TargetEntity);
+        Assert.Equal(attemptId, audit.TargetId);
+        Assert.Contains("Completed", audit.Description);
+    }
+
     [Fact]
     public async Task Saving_rubric_uses_create_then_update_actions()
     {
@@ -105,6 +129,7 @@ public class AuditLogDescriptionTests
             Id = Guid.NewGuid(),
             CourseId = course.Id,
             Course = course,
+            RubricMode = RubricMode.Legacy,
             CreatedBy = lecturer.Id,
             Title = "Midterm",
             StartTime = DateTime.UtcNow,

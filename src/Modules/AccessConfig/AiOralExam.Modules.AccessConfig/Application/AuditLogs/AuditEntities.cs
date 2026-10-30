@@ -7,5 +7,7 @@ internal static class AuditEntities
     public const string ExamSession = "ExamSession";
     public const string Question = "Question";
     public const string Rubric = "Rubric";
+    public const string RubricTemplate = "RubricTemplate";
+    public const string RubricVersion = "RubricVersion";
     public const string AiServiceConfig = "AiServiceConfig";
 }
