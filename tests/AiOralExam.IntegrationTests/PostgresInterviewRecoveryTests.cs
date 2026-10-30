@@ -12,7 +12,10 @@ using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using System.Security.Claims;
+using System.Net;
 using System.Net.Http.Json;
+using Microsoft.AspNetCore.Http;
 
 namespace AiOralExam.IntegrationTests;
 
@@ -54,6 +57,7 @@ public sealed class PostgresInterviewRecoveryTests
     public async Task Recovery_keeps_the_audio_receipt_when_transcription_is_retried()
     {
         await using var scenario = await CreateScenarioAsync();
+        scenario.FailSpeechToText();
         var original = await scenario.MakeStaleAudioTurnAsync(uploadAudio: true);
 
         await scenario.RunCurrentAsync();
@@ -85,6 +89,7 @@ public sealed class PostgresInterviewRecoveryTests
     public async Task Transcription_failure_increments_the_transcription_retry_counter()
     {
         await using var scenario = await CreateScenarioAsync();
+        scenario.FailSpeechToText();
         await scenario.MakeStaleAudioTurnAsync(uploadAudio: true);
 
         await scenario.RunCurrentAsync();
@@ -127,6 +132,81 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Equal(scenario.AttemptId, audit.TargetId);
         Assert.Contains($"\"turn\":\"{failedTurn.Id}\"", audit.Description);
         Assert.Contains("\"outcome\":\"Completed\"", audit.Description);
+    }
+
+    [Fact]
+    public async Task Concurrent_start_requests_resume_one_attempt_without_creating_a_second_attempt()
+    {
+        await using var scenario = await CreateScenarioAsync();
+        var results = await scenario.StartConcurrentlyAsync();
+
+        Assert.All(results, result => Assert.Equal(scenario.AttemptId, result.State.AttemptId));
+        Assert.All(results, result => Assert.False(result.Created));
+    }
+
+    [Fact]
+    public async Task Audio_receipt_before_the_deadline_is_accepted_when_processing_starts_after_it()
+    {
+        await using var scenario = await CreateScenarioAsync();
+        var (turnId, receiptAt) = await scenario.PrepareAudioReceiptBeforeDeadlineAsync();
+
+        await scenario.SubmitAudioAsync(turnId, receiptAt);
+
+        var turn = await scenario.ReadTurnAsync();
+        Assert.Equal(receiptAt, turn.AudioCompletionReceivedAt);
+        Assert.NotNull(turn.AudioAcceptedAt);
+    }
+
+    [Fact]
+    public async Task Concurrent_retry_exhaustion_workers_fail_the_turn_once()
+    {
+        await using var scenario = await CreateScenarioAsync();
+        await scenario.MakeRetryExhaustionTurnAsync();
+
+        await Task.WhenAll(scenario.RunWorkerAsync(), scenario.RunWorkerAsync());
+
+        var turn = await scenario.ReadTurnAsync();
+        Assert.Equal(TurnProcessingStatus.Failed, turn.ProcessingStatus);
+        Assert.Null(turn.ProcessingToken);
+    }
+
+    [Fact]
+    public async Task Concurrent_submissions_for_the_same_turn_persist_one_accepted_transition()
+    {
+        await using var scenario = await CreateScenarioAsync();
+        var turn = await scenario.ReadTurnAsync();
+
+        var results = await scenario.SubmitConcurrentlyAsync(turn.Id, "concurrent answer");
+
+        Assert.All(results, result => Assert.True(result.IsSuccessStatusCode));
+        Assert.Single(results, result => result.Response?.Duplicate == false);
+        Assert.Single(results, result => result.Response?.Duplicate == true);
+
+        var persisted = await scenario.ReadTurnAsync();
+        Assert.Equal("concurrent answer", persisted.AnswerTranscript);
+        Assert.NotNull(persisted.AnsweredAt);
+        Assert.Equal(TurnProcessingStatus.Completed, persisted.ProcessingStatus);
+        Assert.NotNull(persisted.SubmissionResultJson);
+    }
+
+    [Fact]
+    public async Task Concurrent_submission_and_expiration_persist_only_the_deadline_transition()
+    {
+        await using var scenario = await CreateScenarioAsync();
+        var turn = await scenario.MakeDeadlineExpiredTurnAsync();
+
+        var (submission, expiredCount) = await scenario.SubmitAndExpireConcurrentlyAsync(turn.Id);
+
+        Assert.False(submission.IsSuccessStatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, submission.StatusCode);
+        Assert.Equal(1, expiredCount);
+
+        var persisted = await scenario.ReadTurnAsync();
+        Assert.True(persisted.IsTimedOut);
+        Assert.Null(persisted.AnswerTranscript);
+        Assert.Null(persisted.AnsweredAt);
+        Assert.Equal(TurnProcessingStatus.Completed, persisted.ProcessingStatus);
+        Assert.NotNull(persisted.SubmissionResultJson);
     }
 
     private static async Task<Scenario> CreateScenarioAsync()
@@ -265,7 +345,7 @@ public sealed class PostgresInterviewRecoveryTests
         var started = await startResponse.Content.ReadFromJsonAsync<AttemptStateDto>()
             ?? throw new InvalidOperationException("The authenticated test request returned no attempt state.");
         var scopeForAudio = factory.Services.CreateAsyncScope();
-        return new Scenario(factory, client, scopeForAudio, started.AttemptId, creatorId);
+        return new Scenario(factory, client, scopeForAudio, started.AttemptId, creatorId, sessionId);
     }
 
     private static async Task<Role> GetOrCreateRoleAsync(AccessConfigDbContext access, string name)
@@ -285,16 +365,84 @@ public sealed class PostgresInterviewRecoveryTests
         HttpClient Client,
         AsyncServiceScope Scope,
         Guid AttemptId,
-        Guid LecturerId) : IAsyncDisposable
+        Guid LecturerId,
+        Guid SessionId) : IAsyncDisposable
     {
         public HttpClient Client { get; } = Client;
         public Guid AttemptId { get; } = AttemptId;
+        public Guid SessionId { get; } = SessionId;
         public Guid LecturerId { get; } = LecturerId;
         public TestAiInvocationCounters AiInvocationCounters => Factory.AiInvocationCounters;
 
         public void AuthenticateAsLecturer() => Factory.AuthenticateAs(LecturerId, Roles.Lecturer);
 
+        public void FailSpeechToText() => Factory.FailSpeechToText();
+
         public void AuthenticateAsAdministrator() => Factory.AuthenticateAs(Guid.NewGuid(), Roles.Administrator);
+
+        public async Task<(AttemptStateDto State, bool Created)[]> StartConcurrentlyAsync()
+        {
+            var ready = new CountdownEvent(2);
+            var tasks = Enumerable.Range(0, 2).Select(async _ =>
+            {
+                await Task.Run(ready.Signal);
+                await Task.Run(ready.Wait);
+                using var response = await Client.PostAsJsonAsync(
+                    "/api/interview-attempts", new StartAttemptRequest(SessionId));
+                var state = await response.Content.ReadFromJsonAsync<AttemptStateDto>()
+                    ?? throw new InvalidOperationException("The concurrent start request returned no attempt state.");
+                return (state, response.StatusCode == HttpStatusCode.Created);
+            }).ToArray();
+            return await Task.WhenAll(tasks);
+        }
+
+        public async Task<SubmitRaceResult[]> SubmitConcurrentlyAsync(Guid turnId, string answer)
+        {
+            using var ready = new CountdownEvent(2);
+            var tasks = Enumerable.Range(0, 2).Select(async _ =>
+            {
+                await Task.Run(ready.Signal);
+                await Task.Run(ready.Wait);
+                using var response = await Client.PostAsJsonAsync(
+                    $"/api/interview-attempts/{AttemptId}/responses",
+                    new SubmitAnswerRequest(answer, turnId));
+                var result = response.IsSuccessStatusCode
+                    ? await response.Content.ReadFromJsonAsync<SubmitAnswerResponse>()
+                    : null;
+                return new SubmitRaceResult(response.StatusCode, result);
+            }).ToArray();
+            return await Task.WhenAll(tasks);
+        }
+
+        public async Task<InterviewTurn> MakeDeadlineExpiredTurnAsync()
+        {
+            await UpdateTurnAsync(turn => turn.AskedAt = DateTime.UtcNow.AddSeconds(-620));
+            return await ReadTurnAsync();
+        }
+
+        public async Task<(SubmitRaceResult Submission, int ExpiredCount)> SubmitAndExpireConcurrentlyAsync(Guid turnId)
+        {
+            using var ready = new CountdownEvent(2);
+            var submitTask = Task.Run(async () =>
+            {
+                await Task.Run(ready.Signal);
+                await Task.Run(ready.Wait);
+                using var response = await Client.PostAsJsonAsync(
+                    $"/api/interview-attempts/{AttemptId}/responses",
+                    new SubmitAnswerRequest("late answer", turnId));
+                return new SubmitRaceResult(response.StatusCode,
+                    response.IsSuccessStatusCode
+                        ? await response.Content.ReadFromJsonAsync<SubmitAnswerResponse>()
+                        : null);
+            });
+            var expirationTask = Task.Run(async () =>
+            {
+                await Task.Run(ready.Signal);
+                await Task.Run(ready.Wait);
+                return await RunWorkerAsync();
+            });
+            return (await submitTask, await expirationTask);
+        }
 
         public async Task<int> RunCurrentAsync()
         {
@@ -316,6 +464,58 @@ public sealed class PostgresInterviewRecoveryTests
             });
             Factory.AiInvocationCounters.SetTargetAnswerMarker(answerMarker);
             return await ReadTurnAsync();
+        }
+
+        public async Task<(Guid TurnId, DateTime ReceiptAt)> PrepareAudioReceiptBeforeDeadlineAsync()
+        {
+            var turn = await ReadTurnAsync();
+            var store = Scope.ServiceProvider.GetRequiredService<IAudioChunkStore>();
+            await store.AppendAsync(AttemptId, turn.Id, 0, [1, 2, 3], "audio/wav", CancellationToken.None);
+            var completed = await store.CompleteUploadAsync(AttemptId, turn.Id, CancellationToken.None);
+            await completed.Audio.DisposeAsync();
+
+            var askedAt = DateTime.UtcNow.AddSeconds(-620);
+            var receiptAt = DateTime.UtcNow.AddSeconds(-20);
+            await UpdateTurnAsync(current => current.AskedAt = askedAt);
+            return (turn.Id, receiptAt);
+        }
+
+        public async Task MakeRetryExhaustionTurnAsync()
+        {
+            await UpdateTurnAsync(turn =>
+            {
+                turn.AnswerTranscript = $"retry exhaustion {AttemptId:N}";
+                turn.AnsweredAt = DateTime.UtcNow.AddMinutes(-3);
+                turn.ProcessingStatus = TurnProcessingStatus.Processing;
+                turn.ProcessingStartedAt = DateTime.UtcNow.AddMinutes(-3);
+                turn.ProcessingToken = Guid.NewGuid();
+                turn.RetryCount = 3;
+            });
+        }
+
+        public async Task<SubmitAnswerResponse> SubmitAudioAsync(Guid turnId, DateTime receiptAt)
+        {
+            var accessor = Factory.Services.GetRequiredService<IHttpContextAccessor>();
+            var previous = accessor.HttpContext;
+            var context = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                [
+                    new Claim(AppClaims.UserId, Factory.AuthenticatedUserId.ToString()),
+                    new Claim(AppClaims.Role, Roles.Student)
+                ], TestAuthenticationHandler.SchemeName, AppClaims.Name, AppClaims.Role))
+            };
+            accessor.HttpContext = context;
+            try
+            {
+                await using var scope = Factory.Services.CreateAsyncScope();
+                return await scope.ServiceProvider.GetRequiredService<IInterviewService>()
+                    .SubmitAudioAnswerAsync(AttemptId, turnId, receiptAt);
+            }
+            finally
+            {
+                accessor.HttpContext = previous;
+            }
         }
 
         public async Task<InterviewTurn> MakeInterruptedAnswerTurnAsync()
@@ -401,6 +601,11 @@ public sealed class PostgresInterviewRecoveryTests
             Client.Dispose();
             await Scope.DisposeAsync();
             await Factory.DisposeAsync();
+        }
+
+        public sealed record SubmitRaceResult(HttpStatusCode StatusCode, SubmitAnswerResponse? Response)
+        {
+            public bool IsSuccessStatusCode => (int)StatusCode is >= 200 and < 300;
         }
     }
 

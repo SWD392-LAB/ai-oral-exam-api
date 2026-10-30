@@ -30,6 +30,7 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
     private string _authenticatedRole = Roles.Student;
     private bool _authenticated = true;
     private TestAuthenticationIdentity? _testIdentity;
+    private TestSpeechToTextService? _testSpeechToText;
 
     internal Guid AuthenticatedUserId => _authenticatedUserId;
     internal string AuthenticatedRole => _authenticatedRole;
@@ -56,6 +57,8 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
         _testIdentity?.SetAuthentication(false);
         return this;
     }
+
+    internal void FailSpeechToText() => _testSpeechToText?.FailTranscription();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -91,6 +94,12 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
             services.AddSingleton<IRubricScorer>(serviceProvider => new CountingRubricScorer(
                 CreateOriginalService<IRubricScorer>(serviceProvider, scorerDescriptor),
                 serviceProvider.GetRequiredService<TestAiInvocationCounters>()));
+
+            services.RemoveAll<ISpeechToTextService>();
+            _testSpeechToText = new TestSpeechToTextService();
+            services.AddSingleton(_testSpeechToText);
+            services.AddSingleton<ISpeechToTextService>(serviceProvider =>
+                serviceProvider.GetRequiredService<TestSpeechToTextService>());
 
             services.RemoveAll<AccessConfigDbContext>();
             services.RemoveAll<DbContextOptions<AccessConfigDbContext>>();
@@ -209,6 +218,19 @@ internal sealed class CountingRubricScorer(IRubricScorer inner, TestAiInvocation
             counters.RecordScorerCall();
         return inner.ScoreAsync(request, ct);
     }
+}
+
+internal sealed class TestSpeechToTextService : ISpeechToTextService
+{
+    private int _failTranscription;
+
+    internal void FailTranscription() => Interlocked.Exchange(ref _failTranscription, 1);
+
+    public Task<string> TranscribeAsync(
+        Stream audio, string contentType, string language, CancellationToken ct = default) =>
+        Volatile.Read(ref _failTranscription) == 1
+            ? throw new InvalidOperationException("Deterministic integration-test STT failure.")
+            : Task.FromResult("[Integration Test STT] deterministic transcript");
 }
 
 internal sealed class TestExceptionLoggerProvider(Action<Exception> capture) : ILoggerProvider

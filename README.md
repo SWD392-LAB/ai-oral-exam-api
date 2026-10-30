@@ -9,6 +9,37 @@ Backend of **AIVES – AI-powered Viva Exam System** (SWD392). An AI examiner as
 
 Frontend repo: `ai-oral-exam-web`.
 
+### Compatibility and Phase 5 scope
+
+The API currently supports two rubric workflows:
+
+- **Platform-rubric workflow:** new sessions use `RubricMode.SharedVersion` by
+  default and pin an administrator-managed rubric version. Platform rubric
+  templates and versions are managed under `/api/rubric-templates`; the
+  read-only platform view is `/api/platform-rubric`.
+- **Legacy per-question workflow:** existing sessions, and explicitly created
+  sessions with `RubricMode.Legacy`, continue to use
+  `PUT`/`DELETE /api/exam-sessions/{sessionId}/questions/{questionId}/rubric`.
+  These writes remain available only while the session is `Draft` and require
+  an administrator or the assigned lecturer. They are rejected for
+  `SharedVersion` sessions. Existing legacy data remains readable for
+  historical attempts.
+
+The compatibility policy is coexistence, not removal: legacy routes remain
+supported and have no sunset date or deprecation header. New clients should use
+the platform-rubric workflow; existing clients may continue using the legacy
+workflow for legacy sessions. `POST /api/exam-sessions` remains the session
+creation entry point and selects the workflow through `rubricMode` and the
+optional `rubricVersionId`.
+
+The Phase 5 audio path is not production-ready. Development and test
+environments use in-memory audio storage; the default production registration
+uses unavailable storage and STT adapters that return a configuration error.
+The repository therefore does not claim operational production audio upload or
+speech-to-text support. A provider, private object-storage configuration,
+credentials, and production adapter verification are required before that
+claim can be made.
+
 ---
 
 ## 1. Prerequisites
@@ -112,7 +143,7 @@ In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup pro
 2. Sign in on the Keycloak page with `han.hg@aives.edu.vn` / `Password@123`. Swagger then sends the Keycloak access token with every request.
 3. Call `GET /api/interview/my-sessions`. You should see 3 sessions: two open (S1, S4) and one not open yet (S6).
 4. Call `POST /api/interview-attempts` with `{ "examSessionId": "33333333-0000-0000-0000-000000000001" }`. You get `201`, an `attemptId` and the first question (`currentTurn`).
-5. Call `POST /api/interview-attempts/{attemptId}/responses` with `{ "answerText": "..." }`. You get the mock AI score and feedback, plus the next question. Repeat until `outcome = "Completed"`.
+5. Call `POST /api/interview-attempts/{attemptId}/responses` with `{ "answerText": "..." }`. The student receives the processing outcome and the next question, but not the provisional AI score or feedback. Repeat until `outcome = "Completed"`; the lecturer reviews and confirms the stored result separately.
 
 > Each question must be answered within `timeLimitPerQuestion` seconds (120 s for S1), plus a 15 s grace period. A later submission counts as timed out (`timedOut: true`) and the answer is not stored.
 
@@ -352,7 +383,6 @@ confirmed examples can be read without submitting a new review.
 | `Keycloak:Authority` | `http://localhost:8080/realms/aives` | Keycloak realm that issues the tokens; its signing keys are read from `{Authority}/.well-known/openid-configuration` |
 | `Keycloak:Audience` | `aives-api` | tokens must contain this audience |
 | `Keycloak:SwaggerClientId` | `aives-swagger` | client used by Swagger's **Authorize** button |
-| `Interview:ShowAiScoreToStudent` | `true` | M1 shows the mock score to the student right away. From M3 on, set `false` (students see scores only after the lecturer confirms them) |
 | `Interview:Mock:EnableFollowUps` | `false` | turn on to try the follow-up flow with the mock (answers under 15 words trigger a follow-up) |
 | `Interview:AllowRetake` | `false` | globally allows another attempt after a student's prior attempt is finished; not a per-session setting |
 | `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |

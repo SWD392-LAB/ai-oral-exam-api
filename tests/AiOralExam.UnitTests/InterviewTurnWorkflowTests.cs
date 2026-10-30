@@ -34,7 +34,9 @@ public sealed class InterviewTurnWorkflowTests
             new SubmitAnswerRequest("A clear answer", turnId));
 
         Assert.False(first.Duplicate);
+        Assert.Null(first.Evaluation);
         Assert.True(retry.Duplicate);
+        Assert.Null(retry.Evaluation);
         Assert.Equal(first.Attempt.AttemptId, retry.Attempt.AttemptId);
         Assert.Equal(AttemptStatus.PendingReview.ToString(), retry.Attempt.Status);
         Assert.Single(fixture.Db.InterviewAttempts);
