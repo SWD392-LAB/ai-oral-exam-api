@@ -22,7 +22,9 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
         builder.Properties<ParticipantStatus>().HaveConversion<string>();
         builder.Properties<AttemptStatus>().HaveConversion<string>();
         builder.Properties<TurnType>().HaveConversion<string>();
+        builder.Properties<TurnProcessingStatus>().HaveConversion<string>();
         builder.Properties<ReviewStatus>().HaveConversion<string>();
+        builder.Properties<AiEvaluationState>().HaveConversion<string>();
     }
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -50,6 +52,8 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.HasKey(x => x.Id);
             e.Ignore(x => x.CurrentTurn);
             e.Property(x => x.AiSuggestedScore).HasPrecision(5, 2);
+            e.Property(x => x.AiEvaluationState).HasMaxLength(20);
+            e.Property(x => x.AiEvaluationError).HasMaxLength(500);
             e.HasMany(x => x.Turns).WithOne().HasForeignKey(t => t.QuestionResponseId);
             e.HasMany(x => x.CriterionScores).WithOne().HasForeignKey(s => s.QuestionResponseId);
         });
@@ -58,6 +62,14 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
         {
             e.ToTable("interview_turns");
             e.HasKey(x => x.Id);
+            e.Property(x => x.ProcessingStatus).HasDefaultValue(TurnProcessingStatus.AwaitingAnswer);
+            e.Property(x => x.ProcessingToken).HasColumnName("processing_token");
+            e.Property(x => x.RetryCount).HasColumnName("retry_count");
+            e.Property(x => x.NextRetryAt).HasColumnName("next_retry_at");
+            e.Property(x => x.SubmissionResultJson).HasColumnName("submission_result").HasColumnType("jsonb");
+            e.HasIndex(x => new { x.ProcessingStatus, x.ProcessingStartedAt })
+                .HasFilter("processing_status IN ('Processing', 'Retry')")
+                .HasDatabaseName("ix_interview_turns_processing_recovery");
         });
 
         b.Entity<CriterionScore>(e =>

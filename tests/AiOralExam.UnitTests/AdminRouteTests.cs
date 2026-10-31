@@ -35,6 +35,20 @@ public class AdminRouteTests
     }
 
     [Fact]
+    public void Rubric_template_management_actions_are_admin_only_while_reads_remain_lecturer_accessible()
+    {
+        foreach (var actionName in new[] { "Create", "Update", "CreateVersion", "Delete" })
+        {
+            var action = typeof(RubricTemplatesController).GetMethod(actionName)!;
+            Assert.Contains(action.GetCustomAttributes<AuthorizeAttribute>(true),
+                attribute => attribute.Roles == Roles.Administrator);
+        }
+
+        Assert.Contains(typeof(RubricTemplatesController).GetCustomAttributes<AuthorizeAttribute>(true),
+            attribute => attribute.Roles == Roles.LecturerOrAdmin);
+    }
+
+    [Fact]
     public void Admin_course_list_is_not_anonymous()
     {
         var list = typeof(AdminCoursesController).GetMethod(nameof(AdminCoursesController.List))!;

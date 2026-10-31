@@ -5,7 +5,7 @@ using Microsoft.EntityFrameworkCore;
 namespace AiOralExam.Modules.AccessConfig.Infrastructure;
 
 /// <summary>
-/// DbContext of F7. NO EF migrations: tables are created by database/01_schema.sql.
+/// DbContext of F7/F1. NO EF migrations: tables are created by database/01_schema.sql.
 /// Table/column names are snake_case (UseSnakeCaseNamingConvention in AccessConfigModule).
 /// To change the schema: edit the SQL file first, then update the entities + mapping here to match.
 /// </summary>
@@ -16,11 +16,17 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<AiServiceConfig> AiServiceConfigs => Set<AiServiceConfig>();
     public DbSet<Course> Courses => Set<Course>();
+    public DbSet<QuestionBankItem> QuestionBankItems => Set<QuestionBankItem>();
+    public DbSet<QuestionBankRevision> QuestionBankRevisions => Set<QuestionBankRevision>();
+    public DbSet<CourseMaterial> CourseMaterials => Set<CourseMaterial>();
+    public DbSet<MaterialChunk> MaterialChunks => Set<MaterialChunk>();
     public DbSet<CourseLecturer> CourseLecturers => Set<CourseLecturer>();
     public DbSet<ExamSession> ExamSessions => Set<ExamSession>();
     public DbSet<Question> Questions => Set<Question>();
     public DbSet<Rubric> Rubrics => Set<Rubric>();
     public DbSet<RubricCriterion> RubricCriteria => Set<RubricCriterion>();
+    public DbSet<RubricTemplate> RubricTemplates => Set<RubricTemplate>();
+    public DbSet<RubricVersion> RubricVersions => Set<RubricVersion>();
     public DbSet<Participant> Participants => Set<Participant>();
 
     protected override void ConfigureConventions(ModelConfigurationBuilder builder)
@@ -29,7 +35,11 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
         builder.Properties<AiServiceType>().HaveConversion<string>();
         builder.Properties<SpeechLanguage>().HaveConversion<string>();
         builder.Properties<ExamSessionStatus>().HaveConversion<string>();
+        builder.Properties<RubricMode>().HaveConversion<string>();
         builder.Properties<ParticipantStatus>().HaveConversion<string>();
+        builder.Properties<QuestionBankOrigin>().HaveConversion<string>();
+        builder.Properties<QuestionBankStatus>().HaveConversion<string>();
+        builder.Properties<CourseMaterialStatus>().HaveConversion<string>();
     }
 
     protected override void OnModelCreating(ModelBuilder b)
@@ -103,6 +113,90 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
             e.HasIndex(x => x.Code).IsUnique();
         });
 
+        b.Entity<QuestionBankItem>(e =>
+        {
+            e.ToTable("question_bank_items");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Topic).HasMaxLength(200).IsRequired();
+            e.Property(x => x.Bloom).HasMaxLength(30).IsRequired();
+            e.Property(x => x.Content).IsRequired();
+            e.Property(x => x.Origin).HasMaxLength(20).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).IsRequired();
+            e.HasOne(x => x.Course).WithMany().HasForeignKey(x => x.CourseId).OnDelete(DeleteBehavior.Cascade);
+            e.HasMany(x => x.Revisions).WithOne(x => x.Item).HasForeignKey(x => x.QuestionBankItemId).OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.CourseId, x.Status });
+        });
+
+        b.Entity<QuestionBankRevision>(e =>
+        {
+            e.ToTable("question_bank_revisions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Content).IsRequired();
+            e.Property(x => x.ProvenanceJson).HasColumnType("jsonb");
+            e.HasIndex(x => new { x.QuestionBankItemId, x.RevisionNo }).IsUnique();
+        });
+
+        b.Entity<CourseMaterial>(e =>
+        {
+            e.ToTable("course_materials");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.FileName).HasMaxLength(255).IsRequired();
+            e.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+            e.Property(x => x.Sha256).HasMaxLength(64).IsRequired();
+            e.Property(x => x.StorageKey).HasMaxLength(500).IsRequired();
+            e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue(CourseMaterialStatus.Pending);
+            e.Property(x => x.IngestError).HasMaxLength(500);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+            e.HasOne(x => x.Course).WithMany().HasForeignKey(x => x.CourseId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.CreatedBy)
+                .OnDelete(DeleteBehavior.NoAction);
+            e.HasMany(x => x.Chunks).WithOne(x => x.Material).HasForeignKey(x => x.CourseMaterialId)
+                .OnDelete(DeleteBehavior.Cascade);
+            e.HasIndex(x => new { x.CourseId, x.Status }).HasDatabaseName("ix_course_materials_course_status");
+        });
+
+        b.Entity<MaterialChunk>(e =>
+        {
+            e.ToTable("material_chunks");
+            e.HasKey(x => x.Id);
+            e.HasIndex(x => new { x.CourseMaterialId, x.ChunkNo }).IsUnique();
+        });
+
+        b.Entity<RubricTemplate>(e =>
+        {
+            e.ToTable("rubric_templates");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.Name).HasMaxLength(200).IsRequired();
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+            e.HasOne(x => x.Course).WithMany(x => x.RubricTemplates).HasForeignKey(x => x.CourseId)
+                .OnDelete(DeleteBehavior.Restrict);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.CreatedBy)
+                .OnDelete(DeleteBehavior.NoAction);
+            e.HasMany(x => x.Versions).WithOne(x => x.Template).HasForeignKey(x => x.TemplateId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_rubric_versions_template");
+            e.HasIndex(x => x.CourseId).HasDatabaseName("ix_rubric_templates_course");
+        });
+
+        b.Entity<RubricVersion>(e =>
+        {
+            e.ToTable("rubric_versions");
+            e.HasKey(x => x.Id);
+            e.Property(x => x.MaxScore).HasPrecision(5, 2).HasDefaultValue(0m);
+            e.Property(x => x.IsSealed).HasDefaultValue(false);
+            e.Property(x => x.IsActive).HasDefaultValue(false);
+            e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.CreatedBy)
+                .OnDelete(DeleteBehavior.NoAction);
+            e.HasMany(x => x.Criteria).WithOne(x => x.RubricVersion).HasForeignKey(x => x.RubricVersionId)
+                .OnDelete(DeleteBehavior.Restrict).HasConstraintName("fk_rubric_criteria_version");
+            e.HasIndex(x => new { x.TemplateId, x.VersionNo }).IsUnique();
+            e.HasIndex(x => new { x.TemplateId, x.VersionNo })
+                .HasDatabaseName("ix_rubric_versions_template");
+            e.HasIndex(x => x.IsActive).IsUnique().HasFilter("is_active")
+                .HasDatabaseName("ux_rubric_versions_single_active");
+        });
+
         b.Entity<CourseLecturer>(e =>
         {
             e.ToTable("course_lecturers");
@@ -117,10 +211,18 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
 
         b.Entity<ExamSession>(e =>
         {
-            e.ToTable("exam_sessions");
+            e.ToTable("exam_sessions", table =>
+            {
+                table.HasCheckConstraint("ck_exam_sessions_rubric_mode", "rubric_mode IN ('Legacy', 'SharedVersion')");
+                table.HasCheckConstraint("ck_exam_sessions_rubric_configuration",
+                    "(rubric_mode = 'Legacy' AND rubric_version_id IS NULL) OR " +
+                    "(rubric_mode = 'SharedVersion' AND (rubric_version_id IS NOT NULL OR status = 'Draft'))");
+            });
             e.HasKey(x => x.Id);
             e.Ignore(x => x.IsLocked);
             e.Property(x => x.Title).HasMaxLength(200).IsRequired();
+            e.Property(x => x.RubricMode).HasMaxLength(20).HasDefaultValue(RubricMode.SharedVersion)
+                .ValueGeneratedNever();
             e.Property(x => x.MaxFollowUps).HasDefaultValue(2);
             e.Property(x => x.Status).HasMaxLength(20).HasDefaultValue(ExamSessionStatus.Draft);
             e.Property(x => x.CreatedAt).HasDefaultValueSql("now()");
@@ -128,9 +230,15 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
                 .OnDelete(DeleteBehavior.NoAction);
             e.HasOne<User>().WithMany().HasForeignKey(x => x.CreatedBy)
                 .OnDelete(DeleteBehavior.NoAction);
+            e.HasOne(x => x.RubricVersion).WithMany()
+                .HasForeignKey(x => x.RubricVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("fk_exam_sessions_rubric_version");
             e.HasMany(x => x.Questions).WithOne().HasForeignKey(q => q.ExamSessionId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => x.CourseId).HasDatabaseName("ix_exam_sessions_course");
+            e.HasIndex(x => x.RubricVersionId).HasFilter("rubric_version_id IS NOT NULL")
+                .HasDatabaseName("ix_exam_sessions_rubric_version");
         });
 
         b.Entity<Question>(e =>
@@ -141,6 +249,7 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
             e.HasOne(x => x.Rubric).WithOne().HasForeignKey<Rubric>(r => r.QuestionId)
                 .OnDelete(DeleteBehavior.Cascade);
             e.HasIndex(x => new { x.ExamSessionId, x.OrderNo }).IsUnique();
+            e.Property(x => x.SourceBankRevisionId);
         });
 
         b.Entity<Rubric>(e =>
@@ -154,12 +263,24 @@ public sealed class AccessConfigDbContext(DbContextOptions<AccessConfigDbContext
 
         b.Entity<RubricCriterion>(e =>
         {
-            e.ToTable("rubric_criteria");
+            e.ToTable("rubric_criteria", table =>
+            {
+                table.HasCheckConstraint("ck_rubric_criteria_exactly_one_parent",
+                    "(rubric_id IS NOT NULL) <> (rubric_version_id IS NOT NULL)");
+                table.HasCheckConstraint("rubric_criteria_order_no_check", "order_no > 0");
+                table.HasCheckConstraint("rubric_criteria_max_points_check", "max_points > 0");
+            });
             e.HasKey(x => x.Id);
             e.Property(x => x.OrderNo).HasColumnName("order_no");
             e.Property(x => x.Description).HasColumnName("description").IsRequired();
             e.Property(x => x.MaxPoints).HasColumnName("max_points").HasPrecision(5, 2);
+            e.HasOne(x => x.RubricVersion).WithMany(x => x.Criteria).HasForeignKey(x => x.RubricVersionId)
+                .OnDelete(DeleteBehavior.Restrict)
+                .HasConstraintName("fk_rubric_criteria_version");
             e.HasIndex(x => new { x.RubricId, x.OrderNo }).IsUnique();
+            e.HasIndex(x => new { x.RubricVersionId, x.OrderNo }).IsUnique()
+                .HasFilter("rubric_version_id IS NOT NULL")
+                .HasDatabaseName("ux_rubric_criteria_version_order");
         });
 
         b.Entity<Participant>(e =>

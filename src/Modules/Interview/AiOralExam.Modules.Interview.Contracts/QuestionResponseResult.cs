@@ -7,4 +7,6 @@ public sealed record QuestionResponseResult(
     bool IsFinished,
     decimal? SuggestedScore,
     string? AiFeedback,
-    IReadOnlyList<TurnResult> Turns);
+    IReadOnlyList<TurnResult> Turns,
+    string AiEvaluationState = "Completed",
+    string? AiEvaluationError = null);

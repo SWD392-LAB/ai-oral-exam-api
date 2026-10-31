@@ -15,6 +15,8 @@ public class QuestionResponse
     public decimal? AiSuggestedScore { get; set; }
     public string? AiFeedback { get; set; }
     public DateTime? EvaluatedAt { get; set; }
+    public AiEvaluationState AiEvaluationState { get; set; } = AiEvaluationState.NotStarted;
+    public string? AiEvaluationError { get; set; }
 
     public ICollection<InterviewTurn> Turns { get; set; } = new List<InterviewTurn>();
     public ICollection<CriterionScore> CriterionScores { get; set; } = new List<CriterionScore>();
@@ -25,7 +27,9 @@ public class QuestionResponse
         get
         {
             var last = Turns.MaxBy(t => t.TurnNo);
-            return last is { AnsweredAt: null } ? last : null;
+            return last is { AnsweredAt: null, IsTimedOut: false, ProcessingStatus: TurnProcessingStatus.AwaitingAnswer }
+                ? last
+                : null;
         }
     }
 
@@ -52,6 +56,8 @@ public class QuestionResponse
         AiSuggestedScore = CriterionScores.Sum(s => s.Points);
         AiFeedback = feedback;
         EvaluatedAt = utcNow;
+        AiEvaluationState = AiEvaluationState.Completed;
+        AiEvaluationError = null;
         IsFinished = true;
     }
 }

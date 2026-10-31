@@ -30,7 +30,139 @@ POST {{host}}/api/interview-attempts/ATTEMPT_ID/responses
 Authorization: Bearer {{token}}
 Content-Type: application/json
 
-{ "answerText": "A modular monolith is deployed as one unit but split into business modules; each module owns its tables and talks to the others only through interfaces." }
+{ "turnId": "CURRENT_TURN_ID", "answerText": "A modular monolith is deployed as one unit but split into business modules; each module owns its tables and talks to the others only through interfaces." }
+
+### Submit an audio answer (replace ATTEMPT_ID and CURRENT_TURN_ID)
+POST {{host}}/api/interview-attempts/ATTEMPT_ID/audio
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=audioBoundary
+
+--audioBoundary
+Content-Disposition: form-data; name="turnId"
+
+CURRENT_TURN_ID
+--audioBoundary
+Content-Disposition: form-data; name="file"; filename="answer.webm"
+Content-Type: audio/webm
+
+< ./answer.webm
+--audioBoundary--
+
+### List course materials (lecturer/admin token; replace COURSE_ID)
+GET {{host}}/api/courses/COURSE_ID/materials
+Authorization: Bearer {{token}}
+
+### Upload a private course source file (replace COURSE_ID)
+POST {{host}}/api/courses/COURSE_ID/materials
+Authorization: Bearer {{token}}
+Content-Type: multipart/form-data; boundary=materialBoundary
+
+--materialBoundary
+Content-Disposition: form-data; name="file"; filename="rag-source.txt"
+Content-Type: text/plain
+
+Retrieval augmented generation uses course-scoped evidence and citation labels.
+--materialBoundary--
+
+### Ingest the uploaded material (replace COURSE_ID and MATERIAL_ID)
+POST {{host}}/api/courses/COURSE_ID/materials/MATERIAL_ID/ingest
+Authorization: Bearer {{token}}
+
+### Generate reviewable F1 drafts (replace COURSE_ID and RUBRIC_VERSION_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank/generations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "topic": "Retrieval augmented generation",
+  "bloom": "Understand",
+  "count": 2,
+  "sourceExcerpts": ["Retrieval selects relevant chunks before generation."],
+  "sourceMaterialIds": [],
+  "platformRubricVersionId": "RUBRIC_VERSION_ID"
+}
+
+### List Draft question-bank items (replace COURSE_ID)
+GET {{host}}/api/courses/COURSE_ID/question-bank?status=Draft
+Authorization: ******
+
+### Create a manual question-bank Draft (replace COURSE_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank
+Authorization: ******
+Content-Type: application/json
+
+{
+  "topic": "Relational databases",
+  "bloom": "Understand",
+  "content": "Explain the purpose of a primary key."
+}
+
+### Import question-bank Drafts (replace COURSE_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank/import
+Authorization: ******
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "topic": "Relational databases",
+      "bloom": "Remember",
+      "content": "Define a relation."
+    },
+    {
+      "topic": "Relational databases",
+      "bloom": "Apply",
+      "content": "Choose a primary key for a student table."
+    }
+  ]
+}
+
+### Invalid bank import (expects 400 with row/field details)
+POST {{host}}/api/courses/COURSE_ID/question-bank/import
+Authorization: ******
+Content-Type: application/json
+
+{
+  "items": [
+    {
+      "topic": "Relational databases",
+      "bloom": "Remember",
+      "content": " "
+    }
+  ]
+}
+
+### Get a question-bank item and its revisions (replace COURSE_ID and ITEM_ID)
+GET {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID
+Authorization: ******
+
+### Edit a Draft and create a revision (replace COURSE_ID and ITEM_ID)
+PUT {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID
+Authorization: ******
+Content-Type: application/json
+
+{
+  "topic": "Relational databases",
+  "bloom": "Analyze",
+  "content": "Compare candidate keys and primary keys."
+}
+
+### Approve a Draft (replace COURSE_ID and ITEM_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID/approve
+Authorization: ******
+
+### Reject a Draft (replace COURSE_ID and ITEM_ID)
+POST {{host}}/api/courses/COURSE_ID/question-bank/ITEM_ID/reject
+Authorization: ******
+
+### Attach Approved items to a Draft session (replace SESSION_ID and item IDs)
+POST {{host}}/api/exam-sessions/SESSION_ID/questions/from-bank
+Authorization: ******
+Content-Type: application/json
+
+{
+  "itemIds": ["ITEM_ID_1", "ITEM_ID_2"]
+}
 
 ### Health check
 GET {{host}}/health
