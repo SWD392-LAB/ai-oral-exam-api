@@ -77,8 +77,7 @@ internal sealed class QuestionGenerator(
             if (string.IsNullOrWhiteSpace(suggestion.Content) || suggestion.Content.Length > 2000
                 || string.IsNullOrWhiteSpace(suggestion.SourceId) || string.IsNullOrWhiteSpace(suggestion.Quote)
                 || !evidenceById.TryGetValue(suggestion.SourceId, out var source)
-                || !ContainsVerbatim(source.Text, suggestion.Quote)
-                || !ContainsVerbatim(suggestion.Content, suggestion.Quote))
+                || !ContainsVerbatim(source.Text, suggestion.Quote))
                 throw GenerationOutputError();
 
             var normalizedQuestion = string.Join(' ', suggestion.Content.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));

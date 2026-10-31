@@ -42,6 +42,11 @@ Minh-owned integration seam; the FE reloads the current turn after reconnect
 and uses `currentTurn.turnId` to retry the same turn until that contract is
 merged.
 
+Local Ollama/Whisper/Piper API acceptance evidence, measured sample latency,
+F1 draft review, F3 voice completion, F6 pending/confirmed regression, and the
+remaining PR #9/#11 integration dependencies are recorded in
+[Provider-Readiness.md](Provider-Readiness.md).
+
 ## F1 generation demo
 
 `POST /api/courses/{courseId}/question-bank/generations` accepts `topic`,

@@ -27,6 +27,7 @@ public sealed class QuestionGenerationTests
         });
         await db.SaveChangesAsync();
 
+        var sources = new[] { "Retrieval selects relevant chunks.", "The answer must cite its source." };
         var result = await new QuestionGenerator(
             db,
             new TestCurrentUser(lecturerId, Roles.Lecturer),
@@ -35,7 +36,7 @@ public sealed class QuestionGenerationTests
             Options.Create(new QuestionGenerationProviderOptions()))
             .GenerateAsync(courseId, new QuestionGenerationRequest(
                 "RAG", BloomLevel.Analyze, 2,
-                ["Retrieval selects relevant chunks.", "The answer must cite its source."],
+                sources,
                 Guid.NewGuid()));
 
         Assert.Equal("Draft", result.Status);
@@ -46,8 +47,35 @@ public sealed class QuestionGenerationTests
             Assert.Equal(BloomLevel.Analyze, draft.Bloom);
             Assert.NotEmpty(draft.Citations);
             Assert.Contains("Analyze", draft.Content);
-            Assert.Contains(draft.Citations[0].Quote, draft.Content);
+            Assert.Contains(draft.Citations[0].Quote, sources);
         });
+    }
+
+    [Fact]
+    public async Task Generator_accepts_a_verbatim_citation_separate_from_natural_question_text()
+    {
+        var courseId = Guid.NewGuid();
+        var lecturerId = Guid.NewGuid();
+        await using var db = CreateDb();
+        db.Courses.Add(new Course
+        {
+            Id = courseId,
+            Code = "SWD392",
+            Name = "Software Design",
+            Lecturers = [new CourseLecturer { CourseId = courseId, LecturerId = lecturerId }]
+        });
+        await db.SaveChangesAsync();
+        var model = new StubDraftContentGenerator(
+            [new QuestionDraftSuggestion("Why does a modular monolith simplify operations?", "excerpt-1", "A modular monolith keeps modules in one deployable application.")]);
+        var generator = new QuestionGenerator(db, new TestCurrentUser(lecturerId, Roles.Lecturer), null!,
+            model, Options.Create(new QuestionGenerationProviderOptions()));
+
+        var result = await generator.GenerateAsync(courseId, new QuestionGenerationRequest("modular monolith",
+            BloomLevel.Understand, 1, ["A modular monolith keeps modules in one deployable application."], Guid.NewGuid()));
+
+        var draft = Assert.Single(result.Drafts);
+        Assert.Equal("Why does a modular monolith simplify operations?", draft.Content);
+        Assert.Equal("A modular monolith keeps modules in one deployable application.", draft.Citations[0].Quote);
     }
 
     [Fact]

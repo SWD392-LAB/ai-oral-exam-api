@@ -45,14 +45,61 @@ private audio out of source control:
 
 | Run | Provider/model | Language | Input/output codec | p50/p95 latency | Quota/limit | Credential source |
 | --- | --- | --- | --- | --- | --- | --- |
-| pending | Ollama `qwen2.5:3b` | vi-VN and en-US | JSON | pending | local CPU; no hosted quota | none |
-| 2026-10-31 local smoke | faster-whisper `small` | vi-VN and en-US | WAV -> JSON text | one sample per language; latency not benchmarked | local CPU | none |
-| 2026-10-31 local smoke | Piper `vi_VN-vais1000-medium`, `en_US-lessac-medium` | vi-VN and en-US | JSON -> WAV | one sample per language; latency not benchmarked | local CPU | none |
+| 2026-10-31 live API smoke | Ollama `qwen2.5:3b` | English | PDF page evidence -> JSON Draft; WAV transcript -> JSON analysis/scoring | F1 p50/p95 11.0/17.1 s (n=4); F3 p50/p95 13.3/47.9 s (n=10) | local CPU; no hosted quota | none |
+| 2026-10-31 live API smoke | faster-whisper `small` | en-US | WAV -> JSON text | p50/p95 2.22/5.75 s (n=11) | local CPU; no hosted quota | none |
+| 2026-10-31 live API smoke | Piper `en_US-lessac-medium` | en-US | JSON -> WAV | p50/p95 0.25/0.65 s (n=9) | local CPU; no hosted quota | none |
+| 2026-10-31 local speech smoke | faster-whisper `small` | vi-VN | WAV -> JSON text | one sample; understandable with two word-recognition errors | local CPU | none |
+| 2026-10-31 local speech smoke | Piper `vi_VN-vais1000-medium` | vi-VN | JSON -> WAV | one sample; local generation completed successfully | local CPU | none |
 
 The local smoke generated WAV audio for both languages and posted each file to
 faster-whisper. The English sample transcript matched exactly. The short
 Vietnamese transcript was understandable but had two word-recognition errors;
 this confirms the local CPU path runs, not production transcription quality.
+
+## Local acceptance evidence (2026-10-31)
+
+- **F1:** A synthetic one-page PDF uploaded through the course materials API and
+  ingested as a private `page-1/chunk-1` source. A course-assigned lecturer's
+  Ollama request returned a persisted `Draft` with an exact source citation;
+  the separate review endpoint changed it to `Approved`. A request with no
+  evidence returned `insufficient_source`, and a lecturer not assigned to the
+  course received `403` for its materials. The model output contract now uses a
+  JSON schema for a non-empty quote and the exact requested question count. The
+  citation quote is validated against the selected source and stored as
+  citation metadata, separate from the question wording.
+- **F3:** One seeded three-question attempt submitted nine WAV turns through the
+  real audio endpoint. Piper returned playable question WAVs, faster-whisper
+  returned transcripts, and Ollama supplied follow-ups and scores. All three
+  questions had completed evaluations with all three criterion scores in range.
+  The attempt reached `PendingReview`; the student report hid the AI suggestion.
+  A lecturer confirmed 19/30, after which the student report exposed the final
+  score.
+- **F6 regression:** Before confirmation, session statistics counted the new
+  attempt as pending review and the CSV row had a blank final score. After
+  confirmation, statistics moved one attempt from pending review to finalized
+  and the CSV contained `Finalized,19.00`.
+- **Privacy:** The local API, Ollama, STT, and TTS logs were checked after the
+  synthetic run; the test transcript, source text, password, and token were not
+  present.
+- **Frontend:** The companion interview changes in the local web worktree pass
+  `npm run lint` and `npm run build`. Lint still reports two warnings in
+  unchanged files; Vite reports the existing large application chunk. The FE
+  changes are in the separate web repository and are not part of API PR #8.
+
+These figures are small local CPU samples, not production benchmarks. The
+browser microphone UI was build-validated; the live voice run used synthesized
+WAV input posted directly to the API.
+
+## Remaining integration dependencies
+
+Task-P's local provider and API smoke criteria passed, but the overall task is
+not fully integrated until the shared contracts are merged. API PR #9 remains
+`CHANGES_REQUESTED` for platform-rubric publication/pinning, attempt recovery,
+partial transcript/reconnect events, and durable shared audio storage. API PR
+#11 remains `CHANGES_REQUESTED` for question-bank concurrency/row errors and
+its real PostgreSQL/Keycloak CI contract. Do not claim platform-rubric pinning,
+SignalR partial transcripts, production object storage, or full browser E2E as
+complete from this local run.
 
 ## Smoke protocol
 
