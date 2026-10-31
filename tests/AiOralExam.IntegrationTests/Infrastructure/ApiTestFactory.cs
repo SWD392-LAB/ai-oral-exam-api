@@ -47,6 +47,9 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
                 ["Keycloak:Audience"] = "integration-tests",
                 ["Keycloak:SwaggerClientId"] = "integration-tests",
                 ["KeycloakAdmin:ClientSecret"] = "integration-test-secret",
+                ["AiProviders:LlmProvider"] = "Mock",
+                ["AiProviders:SttProvider"] = "Mock",
+                ["AiProviders:TtsProvider"] = "Mock",
             }));
 
         builder.ConfigureTestServices(services =>

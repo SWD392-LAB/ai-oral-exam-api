@@ -84,6 +84,53 @@ services:
       postgres:
         condition: service_healthy
 
+  faster-whisper:
+    profiles: ["local-ai"]
+    build:
+      context: ./local-ai/stt
+    restart: unless-stopped
+    environment:
+      WHISPER_MODEL: ${WHISPER_MODEL:-small}
+      WHISPER_DEVICE: cpu
+      WHISPER_COMPUTE_TYPE: int8
+      WHISPER_CPU_THREADS: ${WHISPER_CPU_THREADS:-4}
+      HF_HOME: /models/huggingface
+      MODEL_CACHE: /models
+      MAX_AUDIO_BYTES: 15728640
+    ports:
+      - "127.0.0.1:8001:8001"
+    volumes:
+      - whisper-models:/models
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  piper-tts:
+    profiles: ["local-ai"]
+    build:
+      context: ./local-ai/tts
+    restart: unless-stopped
+    environment:
+      PIPER_VOICES_DIR: /voices
+      PIPER_VI_VOICE: vi_VN-vais1000-medium
+      PIPER_EN_VOICE: en_US-lessac-medium
+      MAX_TEXT_CHARS: 10000
+    ports:
+      - "127.0.0.1:8002:8002"
+    volumes:
+      - piper-voices:/voices
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 20s
+
 volumes:
   pgdata:
   keycloak-data:
+  whisper-models:
+  piper-voices:

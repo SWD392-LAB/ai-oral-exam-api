@@ -8,7 +8,7 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 [ApiController]
 [Route("api/courses/{courseId:guid}/question-bank")]
 [Authorize(Roles = Roles.LecturerOrAdmin)]
-[Tags("Question bank")]
+[ApiExplorerSettings(GroupName = "v1")]
 public sealed class QuestionBankController(IQuestionBankService service) : ControllerBase
 {
     [HttpGet]

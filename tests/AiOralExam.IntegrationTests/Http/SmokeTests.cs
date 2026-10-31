@@ -20,4 +20,18 @@ public sealed class SmokeTests
         Assert.Equal(HttpStatusCode.Redirect, response.StatusCode);
         Assert.Equal("/swagger", response.Headers.Location?.OriginalString);
     }
+
+    [Fact]
+    public async Task Swagger_document_contains_question_generation_and_audio_routes()
+    {
+        using var factory = new ApiTestFactory();
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync("/swagger/v1/swagger.json");
+        var document = await response.Content.ReadAsStringAsync();
+
+        Assert.True(response.StatusCode == HttpStatusCode.OK, $"{response.StatusCode}: {document}");
+        Assert.Contains("/api/courses/{courseId}/question-bank/generations", document);
+        Assert.Contains("/api/interview-attempts/{id}/audio", document);
+    }
 }

@@ -67,10 +67,10 @@ internal sealed class QuestionBankService(
 
         var existing = await db.QuestionBankItems.Where(x => x.CourseId == courseId)
             .Select(x => x.Content.ToUpper()).ToListAsync(ct);
-        if (request.Items.Any(x => existing.Contains(x.Content.Trim().ToUpperInvariant())))
+        if (request.Items!.Any(x => existing.Contains(x.Content.Trim().ToUpperInvariant())))
             throw new ConflictException("question_bank_duplicate", "A question with the same content already exists in this course.");
 
-        var imported = request.Items.Select(x => NewItem(courseId, x.Topic, x.Bloom, x.Content, QuestionBankOrigin.Import, null)).ToList();
+        var imported = request.Items!.Select(x => NewItem(courseId, x.Topic, x.Bloom, x.Content, QuestionBankOrigin.Import, null)).ToList();
         db.QuestionBankItems.AddRange(imported);
         foreach (var item in imported) AddAudit(AuditActions.Create, item.Id, $"Imported question bank item in course {courseId}");
         await db.SaveChangesAsync(ct);

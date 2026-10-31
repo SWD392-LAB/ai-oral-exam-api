@@ -8,6 +8,7 @@ using AiOralExam.Modules.Interview.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AiOralExam.Modules.Interview;
@@ -38,7 +39,7 @@ public static class InterviewModule
         {
             var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
-        });
+        }).RedactLoggedHeaders(header => string.Equals(header, "x-goog-api-key", StringComparison.OrdinalIgnoreCase));
         services.AddHttpClient<LocalHttpSpeechToTextService>((sp, client) =>
         {
             var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;

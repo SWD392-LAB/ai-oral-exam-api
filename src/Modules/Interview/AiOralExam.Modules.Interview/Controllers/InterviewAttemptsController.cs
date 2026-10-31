@@ -10,7 +10,7 @@ namespace AiOralExam.Modules.Interview.Controllers;
 /// <summary>Student exam-flow API - Student role only (BE-PLAT-07).</summary>
 [ApiController]
 [Route("api")]
-[Tags("Interview")]
+[ApiExplorerSettings(GroupName = "v1")]
 [Authorize(Roles = Roles.Student)]
 public sealed class InterviewAttemptsController(IInterviewService interview) : ControllerBase
 {

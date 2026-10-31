@@ -34,7 +34,7 @@ internal sealed class LocalHttpTextToSpeechService(
                     ? type.GetString() ?? "audio/wav"
                     : "audio/wav";
             }
-            catch (JsonException or KeyNotFoundException or FormatException)
+            catch (Exception ex) when (ex is JsonException or KeyNotFoundException or FormatException)
             {
                 throw new AiEvaluationException("Local TTS returned invalid audio JSON.");
             }

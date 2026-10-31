@@ -24,7 +24,11 @@ Pending/Failed suggestions out of confirmed student results.
 - `GET /api/interview-attempts/{id}/turns/{turnId}/answer-audio` returns the
   private recording for its owner, assigned lecturer, or administrator.
 
-The default provider mode is mock. For a no-billing local demo, configure
+The default provider mode is mock. F1 generation and F3 analysis/scoring share
+`AiProviders:LlmProvider`: `Mock` uses source-grounded deterministic drafts;
+`Gemini` sends selected course evidence to Gemini and validates every returned
+source ID and verbatim citation quote before saving a Draft. For a no-billing
+voice demo, configure
 `AiProviders:SttProvider=LocalHttp` and `AiProviders:TtsProvider=LocalHttp`.
 The sidecar request/response shapes are documented in the root README.
 The current backend exposes complete-turn audio/transcript endpoints. Partial
@@ -46,5 +50,8 @@ attachment; approval/review and attach remain explicit question-bank actions.
 Course source material is uploaded through
 `/api/courses/{courseId}/materials`, ingested through
 `/api/courses/{courseId}/materials/{materialId}/ingest`, and retrieved only
-within the same course. The demo extractor supports PDF, PPTX, TXT and
-Markdown and emits citation-labelled chunks.
+within the same course. The extractor supports PDF, PPTX, TXT and Markdown.
+PDF citations include page numbers, PPTX citations include slide numbers, and
+text files use chunk numbers. Ingestion currently runs synchronously with
+local private storage; durable background ingestion and production object
+storage remain deployment work.

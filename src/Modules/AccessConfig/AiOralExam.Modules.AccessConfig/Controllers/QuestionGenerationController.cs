@@ -9,7 +9,7 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 [ApiController]
 [Route("api/courses/{courseId:guid}/question-bank/generations")]
 [Authorize(Roles = Roles.LecturerOrAdmin)]
-[Tags("Question bank AI")]
+[ApiExplorerSettings(GroupName = "v1")]
 public sealed class QuestionGenerationController(IQuestionGenerator generator, IQuestionBankService bank) : ControllerBase
 {
     /// <summary>

@@ -17,7 +17,7 @@ internal sealed class GeminiLlmService(
         if (string.IsNullOrWhiteSpace(settings.GeminiApiKey))
             throw new AiEvaluationException("Gemini API key is not configured.");
 
-        var endpoint = $"{settings.GeminiEndpoint.TrimEnd('/')}/models/{Uri.EscapeDataString(settings.GeminiModel)}:generateContent?key={Uri.EscapeDataString(settings.GeminiApiKey)}";
+        var endpoint = $"{settings.GeminiEndpoint.TrimEnd('/')}/models/{Uri.EscapeDataString(settings.GeminiModel)}:generateContent";
         using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
         {
             Content = JsonContent.Create(new
@@ -27,6 +27,7 @@ internal sealed class GeminiLlmService(
                 generationConfig = new { responseMimeType = "application/json", temperature = 0.1 }
             }, options: JsonOptions)
         };
+        request.Headers.Add("x-goog-api-key", settings.GeminiApiKey);
 
         HttpResponseMessage response;
         try

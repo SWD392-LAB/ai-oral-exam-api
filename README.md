@@ -319,7 +319,7 @@ confirmed examples can be read without submitting a new review.
 | `Interview:AllowRetake` | `false` | globally allows another attempt after a student's prior attempt is finished; not a per-session setting |
 | `Interview:Language` | `Vietnamese` | language passed to the LLM analyzer/scorer |
 | `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |
-| `AiProviders:LlmProvider` | `Mock` | `Mock` or `Gemini`; Gemini reads `AiProviders:GeminiApiKey` from user-secrets/environment |
+| `AiProviders:LlmProvider` | `Mock` | `Mock` or `Gemini`; controls F1 question generation and F3 analysis/scoring. Gemini reads `AiProviders:GeminiApiKey` from user-secrets/environment |
 | `AiProviders:SttProvider` | `Mock` | `Mock` or `LocalHttp` (faster-whisper sidecar) |
 | `AiProviders:TtsProvider` | `Mock` | `Mock` or `LocalHttp` (Piper/Coqui sidecar) |
 | `AiProviders:SpeechLanguage` | `vi-VN` | language sent to STT/TTS; use `en-US` for English |
@@ -331,22 +331,43 @@ confirmed examples can be read without submitting a new review.
 
 ### AI provider modes and audio API
 
-The API keeps `Mock` as the default, so tests and the demo run without billing.
-The committed `appsettings.Development.json` enables the free-demo profile:
-Gemini for LLM evaluation and local HTTP sidecars for STT/TTS. Start the API
-with `ASPNETCORE_ENVIRONMENT=Development`, run the faster-whisper and
-Piper/Coqui sidecars on ports `8001` and `8002`, and store the Gemini key
-outside the repository:
+The committed `appsettings.Development.json` selects real providers: Gemini
+Flash-Lite for F1/F3 LLM calls and local faster-whisper/Piper services for
+speech. The Gemini API free tier has request limits and requires an API key;
+Google's pricing page says free-tier prompts may be used to improve Google
+products. Send only material you are allowed to share with that service. See
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) and
+[Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key).
+
+Start the local speech services (the first start downloads the Whisper model
+and Vietnamese/English Piper voices):
+
+```sh
+docker compose --profile local-ai up -d --build faster-whisper piper-tts
+docker compose ps faster-whisper piper-tts
+```
+
+Then store the Gemini key outside the repository and start the API in
+Development:
 
 ```sh
 dotnet user-secrets set "AiProviders:GeminiApiKey" "..." --project src/AiOralExam.Api
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AiOralExam.Api
 ```
 
-For a no-billing voice demo outside the Development environment, set
-`SttProvider` and `TtsProvider` to `LocalHttp` manually. The STT
-sidecar accepts multipart field `file` plus `language` and returns
-`{"text":"..."}`. The TTS sidecar accepts JSON `{ "text": "...", "language": "..." }`
-and returns audio bytes (or `{ "audioBase64": "...", "contentType": "audio/wav" }`).
+The sidecars listen on `127.0.0.1:8001` and `127.0.0.1:8002`; model files
+persist in Docker volumes. Stop them with `docker compose stop faster-whisper piper-tts`.
+To choose a smaller/faster Whisper model, set `WHISPER_MODEL=base` before
+running Compose. The API's general and test configuration still defaults to
+deterministic `Mock` providers; the test factory explicitly keeps tests offline.
+
+The STT sidecar accepts multipart field `file` plus `language` and returns
+`{"text":"..."}`. The TTS sidecar accepts JSON
+`{ "text": "...", "language": "..." }` and returns WAV audio bytes.
+The Piper runtime is GPL-3.0-or-later, and voice files have their own model-card
+terms; review both before redistributing the sidecar or downloaded voices. See
+[Piper's package metadata](https://github.com/OHF-Voice/piper1-gpl/blob/main/setup.py)
+and [voice licensing guidance](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md).
 
 Voice endpoints are:
 
