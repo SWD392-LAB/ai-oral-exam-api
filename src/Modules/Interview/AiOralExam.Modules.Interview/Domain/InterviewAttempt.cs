@@ -15,6 +15,7 @@ public class InterviewAttempt
     public DateTime StartedAt { get; set; }
     public DateTime? CompletedAt { get; set; }
     public AttemptStatus Status { get; private set; } = AttemptStatus.InProgress;
+    public bool IsPartialCompleted { get; private set; }
 
     public ICollection<QuestionResponse> Responses { get; set; } = new List<QuestionResponse>();
     public ScoreReview? Review { get; set; }
@@ -40,6 +41,14 @@ public class InterviewAttempt
     public void Complete(DateTime utcNow)
     {
         TransitionTo(AttemptStatus.PendingReview);
+        IsPartialCompleted = false;
+        CompletedAt = utcNow;
+    }
+
+    public void CompletePartial(DateTime utcNow)
+    {
+        TransitionTo(AttemptStatus.PendingReview);
+        IsPartialCompleted = true;
         CompletedAt = utcNow;
     }
 
@@ -49,6 +58,16 @@ public class InterviewAttempt
         if (Status != AttemptStatus.Interrupted)
             throw new ConflictException("attempt_not_interrupted", "Only interrupted attempts can be completed through recovery.");
         TransitionTo(AttemptStatus.PendingReview);
+        IsPartialCompleted = false;
+        CompletedAt = utcNow;
+    }
+
+    public void CompleteRecoveredPartial(DateTime utcNow)
+    {
+        if (Status != AttemptStatus.Interrupted)
+            throw new ConflictException("attempt_not_interrupted", "Only interrupted attempts can be completed through recovery.");
+        TransitionTo(AttemptStatus.PendingReview);
+        IsPartialCompleted = true;
         CompletedAt = utcNow;
     }
 

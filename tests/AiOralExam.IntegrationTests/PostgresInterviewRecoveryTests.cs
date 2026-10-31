@@ -25,7 +25,7 @@ public sealed class PostgresInterviewRecoveryTests
     private const string ConnectionStringVariable = "AIVES_POSTGRES_TEST_CONNECTION_STRING";
     private static readonly SemaphoreSlim RoleSeedLock = new(1, 1);
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Stale_audio_validation_is_recovered_to_retry_without_losing_the_turn()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -38,7 +38,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Equal(1, recovered.RetryCount);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Concurrent_recovery_workers_do_not_both_claim_the_same_turn()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -53,7 +53,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Equal(1, await scenario.ReadCriterionScoreCountAsync());
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Recovery_keeps_the_audio_receipt_when_transcription_is_retried()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -71,7 +71,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Null(recovered.AnsweredAt);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task A_reclaimed_turn_clears_the_stale_processing_token_before_retry()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -85,7 +85,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Equal(TurnProcessingStatus.Retry, recovered.ProcessingStatus);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Transcription_failure_increments_the_transcription_retry_counter()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -102,10 +102,10 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Null(recovered.ProcessingToken);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Successful_manual_recovery_persists_one_queryable_audit_record()
     {
-        await using var scenario = await CreateScenarioAsync();
+        await using var scenario = await CreateScenarioAsync(questionCount: 2);
         var failedTurn = await scenario.MakeInterruptedAnswerTurnAsync();
 
         scenario.AuthenticateAsLecturer();
@@ -116,6 +116,26 @@ public sealed class PostgresInterviewRecoveryTests
 
         var recoveredTurn = await scenario.ReadTurnAsync();
         Assert.Equal(TurnProcessingStatus.Completed, recoveredTurn.ProcessingStatus);
+        var recoveredAttempt = await scenario.ReadAttemptAsync();
+        Assert.Equal(AttemptStatus.PendingReview, recoveredAttempt.Status);
+        Assert.True(recoveredAttempt.IsPartialCompleted);
+        Assert.Equal(1, await scenario.ReadQuestionResponseCountAsync());
+
+        using var draftResponse = await scenario.Client.PutAsJsonAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/score-review/draft",
+            new SubmitScoreReviewRequest(5m, "Partial recovery"));
+        draftResponse.EnsureSuccessStatusCode();
+
+        using var confirmationResponse = await scenario.Client.PostAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/score-review/confirm", null);
+        confirmationResponse.EnsureSuccessStatusCode();
+        var finalizedAttempt = await scenario.ReadAttemptAsync();
+        Assert.Equal(AttemptStatus.Finalized, finalizedAttempt.Status);
+        Assert.True(finalizedAttempt.IsPartialCompleted);
+
+        using var retryConfirmationResponse = await scenario.Client.PostAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/score-review/confirm", null);
+        retryConfirmationResponse.EnsureSuccessStatusCode();
 
         scenario.AuthenticateAsAdministrator();
         using var auditResponse = await scenario.Client.GetAsync(
@@ -134,7 +154,66 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Contains("\"outcome\":\"Completed\"", audit.Description);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
+    public async Task Manual_recovery_accepts_a_failed_timeout_and_preserves_partial_attempt_state()
+    {
+        await using var scenario = await CreateScenarioAsync(questionCount: 2);
+        var failedTurn = await scenario.MakeInterruptedTimeoutTurnAsync();
+
+        scenario.AuthenticateAsLecturer();
+        using var recoveryResponse = await scenario.Client.PostAsJsonAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/recovery",
+            new RecoverInterruptedTurnRequest(failedTurn.Id));
+        recoveryResponse.EnsureSuccessStatusCode();
+
+        var recoveredTurn = await scenario.ReadTurnAsync();
+        Assert.Equal(TurnProcessingStatus.Completed, recoveredTurn.ProcessingStatus);
+        Assert.True(recoveredTurn.IsTimedOut);
+        Assert.Equal(1, recoveredTurn.ManualRecoveryCount);
+        Assert.Equal(1, await scenario.ReadCriterionScoreCountAsync());
+        var recoveredAttempt = await scenario.ReadAttemptAsync();
+        Assert.Equal(AttemptStatus.PendingReview, recoveredAttempt.Status);
+        Assert.True(recoveredAttempt.IsPartialCompleted);
+        Assert.Equal(1, await scenario.ReadQuestionResponseCountAsync());
+
+        using var retryRecoveryResponse = await scenario.Client.PostAsJsonAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/recovery",
+            new RecoverInterruptedTurnRequest(failedTurn.Id));
+        Assert.Equal(HttpStatusCode.Conflict, retryRecoveryResponse.StatusCode);
+    }
+
+    [PostgreSqlRecoveryFact]
+    public async Task Expiration_of_a_multi_question_attempt_marks_it_partial()
+    {
+        await using var scenario = await CreateScenarioAsync(questionCount: 2);
+        await scenario.MakeDeadlineExpiredTurnAsync();
+        await scenario.CloseSessionAsync();
+
+        Assert.Equal(1, await scenario.RunCurrentAsync());
+
+        var expiredAttempt = await scenario.ReadAttemptAsync();
+        Assert.Equal(AttemptStatus.PendingReview, expiredAttempt.Status);
+        Assert.True(expiredAttempt.IsPartialCompleted);
+        Assert.Equal(1, await scenario.ReadQuestionResponseCountAsync());
+
+        scenario.AuthenticateAsLecturer();
+        using var draftResponse = await scenario.Client.PutAsJsonAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/score-review/draft",
+            new SubmitScoreReviewRequest(5m, "Expired partial attempt"));
+        draftResponse.EnsureSuccessStatusCode();
+
+        using var confirmationResponse = await scenario.Client.PostAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/score-review/confirm", null);
+        confirmationResponse.EnsureSuccessStatusCode();
+
+        using var retryConfirmationResponse = await scenario.Client.PostAsync(
+            $"/api/interview-attempts/{scenario.AttemptId}/score-review/confirm", null);
+        retryConfirmationResponse.EnsureSuccessStatusCode();
+
+        Assert.Equal(AttemptStatus.Finalized, (await scenario.ReadAttemptAsync()).Status);
+    }
+
+    [PostgreSqlRecoveryFact]
     public async Task Concurrent_start_requests_resume_one_attempt_without_creating_a_second_attempt()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -144,7 +223,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.All(results, result => Assert.False(result.Created));
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Audio_receipt_before_the_deadline_is_accepted_when_processing_starts_after_it()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -153,11 +232,15 @@ public sealed class PostgresInterviewRecoveryTests
         await scenario.SubmitAudioAsync(turnId, receiptAt);
 
         var turn = await scenario.ReadTurnAsync();
-        Assert.Equal(receiptAt, turn.AudioCompletionReceivedAt);
+        Assert.NotNull(turn.AudioCompletionReceivedAt);
+        Assert.InRange(
+            Math.Abs((receiptAt - turn.AudioCompletionReceivedAt.Value).Ticks),
+            0L,
+            10L);
         Assert.NotNull(turn.AudioAcceptedAt);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Concurrent_retry_exhaustion_workers_fail_the_turn_once()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -170,7 +253,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.Null(turn.ProcessingToken);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Concurrent_submissions_for_the_same_turn_persist_one_accepted_transition()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -189,7 +272,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.NotNull(persisted.SubmissionResultJson);
     }
 
-    [Fact]
+    [PostgreSqlRecoveryFact]
     public async Task Concurrent_submission_and_expiration_persist_only_the_deadline_transition()
     {
         await using var scenario = await CreateScenarioAsync();
@@ -209,7 +292,7 @@ public sealed class PostgresInterviewRecoveryTests
         Assert.NotNull(persisted.SubmissionResultJson);
     }
 
-    private static async Task<Scenario> CreateScenarioAsync()
+    private static async Task<Scenario> CreateScenarioAsync(int questionCount = 1)
     {
         var connectionString = Environment.GetEnvironmentVariable(ConnectionStringVariable);
         if (string.IsNullOrWhiteSpace(connectionString))
@@ -307,15 +390,24 @@ public sealed class PostgresInterviewRecoveryTests
                 RubricMode = RubricMode.Legacy,
                 RubricVersionId = null
             };
-            var question = new Question { Id = questionId, ExamSessionId = sessionId, OrderNo = 1, Content = "Question" };
-            question.Rubric = new Rubric
+            for (var orderNo = 1; orderNo <= questionCount; orderNo++)
             {
-                Id = Guid.NewGuid(),
-                QuestionId = questionId,
-                MaxScore = 5,
-                Criteria = { new RubricCriterion { Id = Guid.NewGuid(), OrderNo = 1, Description = "Criterion", MaxPoints = 5 } }
-            };
-            session.Questions.Add(question);
+                var question = new Question
+                {
+                    Id = orderNo == 1 ? questionId : Guid.NewGuid(),
+                    ExamSessionId = sessionId,
+                    OrderNo = orderNo,
+                    Content = $"Question {orderNo}"
+                };
+                question.Rubric = new Rubric
+                {
+                    Id = Guid.NewGuid(),
+                    QuestionId = question.Id,
+                    MaxScore = 5,
+                    Criteria = { new RubricCriterion { Id = Guid.NewGuid(), OrderNo = 1, Description = "Criterion", MaxPoints = 5 } }
+                };
+                session.Questions.Add(question);
+            }
             access.Courses.Add(course);
             access.ExamSessions.Add(session);
             await access.SaveChangesAsync();
@@ -530,6 +622,17 @@ public sealed class PostgresInterviewRecoveryTests
             return await ReadTurnAsync();
         }
 
+        public async Task<InterviewTurn> MakeInterruptedTimeoutTurnAsync()
+        {
+            await UpdateTurnAsync(turn =>
+            {
+                turn.IsTimedOut = true;
+                turn.ProcessingStatus = TurnProcessingStatus.Failed;
+                turn.RetryCount = 3;
+            }, interruptAttempt: true);
+            return await ReadTurnAsync();
+        }
+
         public async Task<InterviewTurn> MakeStaleAudioTurnAsync(bool uploadAudio = false)
         {
             var receipt = DateTime.UtcNow.AddMinutes(-3);
@@ -574,6 +677,29 @@ public sealed class PostgresInterviewRecoveryTests
             return await db.InterviewTurns.SingleAsync(turn => turn.QuestionResponseId == responseId);
         }
 
+        public async Task<InterviewAttempt> ReadAttemptAsync()
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<InterviewDbContext>();
+            return await db.InterviewAttempts.SingleAsync(attempt => attempt.Id == AttemptId);
+        }
+
+        public async Task<int> ReadQuestionResponseCountAsync()
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<InterviewDbContext>();
+            return await db.QuestionResponses.CountAsync(response => response.AttemptId == AttemptId);
+        }
+
+        public async Task CloseSessionAsync()
+        {
+            await using var scope = Factory.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<AccessConfigDbContext>();
+            var session = await db.ExamSessions.SingleAsync(item => item.Id == SessionId);
+            session.EndTime = DateTime.UtcNow.AddMinutes(-1);
+            await db.SaveChangesAsync();
+        }
+
         public async Task<int> ReadCriterionScoreCountAsync()
         {
             await using var scope = Factory.Services.CreateAsyncScope();
@@ -612,5 +738,15 @@ public sealed class PostgresInterviewRecoveryTests
     [CollectionDefinition(nameof(PostgresInterviewRecoveryTestsCollection))]
     public sealed class PostgresInterviewRecoveryTestsCollection
     {
+    }
+}
+
+public sealed class PostgreSqlRecoveryFactAttribute : FactAttribute
+{
+    public PostgreSqlRecoveryFactAttribute()
+    {
+        if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(
+                "AIVES_POSTGRES_TEST_CONNECTION_STRING")))
+            Skip = "Requires AIVES_POSTGRES_TEST_CONNECTION_STRING for the isolated PostgreSQL recovery database.";
     }
 }

@@ -103,7 +103,7 @@ internal sealed class InterviewService(
                 var activeTurn = running.CurrentResponse?.CurrentTurn;
                 if (!session.IsOpenAt(now) || activeTurn is null || now > GetTurnDeadline(activeTurn, session))
                     throw new ConflictException("attempt_deadline_passed", "The active attempt is no longer eligible to resume.");
-                events.Add(CreateEvent(running, session.Id, "attempt.resumed", InterviewEventSequence.Current(running), now));
+                events.Add(CreateEvent(running, session.Id, InterviewEventTypes.AttemptResumed, InterviewEventSequence.Current(running), now));
                 return (ToState(running, session), false);
             }
 
@@ -130,8 +130,8 @@ internal sealed class InterviewService(
             db.InterviewAttempts.Add(attempt);
             participant.ReconcileStatus();
             AskMainQuestion(attempt, session.Questions[0], now);
-            events.Add(CreateEvent(attempt, session.Id, "attempt.started", InterviewEventSequence.AttemptStarted, now));
-            events.Add(CreateEvent(attempt, session.Id, "turn.opened", InterviewEventSequence.TurnOpened(1), now));
+            events.Add(CreateEvent(attempt, session.Id, InterviewEventTypes.AttemptStarted, InterviewEventSequence.AttemptStarted, now));
+            events.Add(CreateEvent(attempt, session.Id, InterviewEventTypes.TurnOpened, InterviewEventSequence.TurnOpened(1), now));
 
             logger.LogInformation("Attempt {AttemptId} started by {StudentId} for session {SessionId}",
                 attempt.Id, me, session.Id);
@@ -154,7 +154,7 @@ internal sealed class InterviewService(
                 [nameof(request.TurnId)] = ["turnId is required and must be a non-empty GUID."]
             });
 
-        var claim = await WithAttemptLockAsync(attemptId, async () =>
+        var claim = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
         {
             var attempt = await LoadAttemptAsync(attemptId, ct);
             if (attempt.Participant.StudentId != currentUser.Id)
@@ -181,18 +181,18 @@ internal sealed class InterviewService(
                     submittedTurn.ProcessingStatus = TurnProcessingStatus.Completed;
                 if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Processing)
                     return new TurnSubmissionClaim(null, DuplicateResponse(attempt, previousResponse, submittedTurn, session),
-                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow,
+                        CreateEvent(attempt, session.Id, InterviewEventTypes.AnswerDuplicate, InterviewEventSequence.Current(attempt), UtcNow,
                             submittedTurn.Id));
                 if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Completed)
                     return new TurnSubmissionClaim(null, GetOriginalResponse(attempt, previousResponse, submittedTurn, session),
-                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), UtcNow,
+                        CreateEvent(attempt, session.Id, InterviewEventTypes.AnswerDuplicate, InterviewEventSequence.Current(attempt), UtcNow,
                             submittedTurn.Id));
 
                 var retryNow = UtcNow;
                 if (submittedTurn.ProcessingStatus == TurnProcessingStatus.Retry
                     && submittedTurn.NextRetryAt is DateTime nextRetryAt && nextRetryAt > retryNow)
                     return new TurnSubmissionClaim(null, DuplicateResponse(attempt, previousResponse, submittedTurn, session),
-                        CreateEvent(attempt, session.Id, "answer.duplicate", InterviewEventSequence.Current(attempt), retryNow,
+                        CreateEvent(attempt, session.Id, InterviewEventTypes.AnswerDuplicate, InterviewEventSequence.Current(attempt), retryNow,
                             submittedTurn.Id));
 
                 submittedTurn.ProcessingStatus = TurnProcessingStatus.Processing;
@@ -249,7 +249,7 @@ internal sealed class InterviewService(
             });
         EnsureAudioStudent();
 
-        var claim = await WithAttemptLockAsync(attemptId, async () =>
+        var claim = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
         {
             var attempt = await LoadAttemptAsync(attemptId, ct);
             EnsureAudioStudent();
@@ -316,7 +316,7 @@ internal sealed class InterviewService(
     {
         EnsureRecoveryActor();
 
-        var claim = await WithAttemptLockAsync(attemptId, async () =>
+        var claim = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
         {
             var attempt = await LoadAttemptAsync(attemptId, ct);
             var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
@@ -338,7 +338,7 @@ internal sealed class InterviewService(
                 turn.TranscriptionRetryCount,
                 stage.ToString());
 
-            if (stage == TurnProcessingStage.AwaitingAnswer || stage == TurnProcessingStage.TimeoutEvaluation)
+            if (stage == TurnProcessingStage.AwaitingAnswer)
                 throw new ConflictException("turn_recovery_stage_invalid", "The failed turn has no recoverable processing stage.");
             if (stage == TurnProcessingStage.Transcription && turn.AudioAcceptedAt is null)
                 throw new ConflictException("audio_answer_not_accepted", "Transcription recovery requires accepted audio.");
@@ -444,7 +444,7 @@ internal sealed class InterviewService(
 
     private async Task<bool> ProcessOverdueAttemptAsync(Guid attemptId, CancellationToken ct)
     {
-        var claim = await WithAttemptLockAsync(attemptId, async () =>
+        var claim = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
         {
             var attempt = await LoadAttemptAsync(attemptId, ct);
             var manualRecoveryAttempt = attempt.Status == AttemptStatus.Interrupted
@@ -682,7 +682,7 @@ internal sealed class InterviewService(
         var turnCount = attempt.Responses.Sum(item => item.Turns.Count);
         var deadlineReached = now > GetTurnDeadline(turn, session);
         events.Add(CreateEvent(attempt, session.Id,
-            timedOut ? deadlineReached ? "turn.deadline_reached" : "turn.closed" : "answer.accepted",
+            timedOut ? deadlineReached ? InterviewEventTypes.TurnDeadlineReached : InterviewEventTypes.TurnClosed : InterviewEventTypes.AnswerAccepted,
             InterviewEventSequence.TurnAnswered(turnCount), now));
 
         var dialogue = response.Turns.OrderBy(t => t.TurnNo)
@@ -698,7 +698,7 @@ internal sealed class InterviewService(
             && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
         {
             response.AddTurn(TurnType.FollowUp, analysis.FollowUpQuestion!, followUpOpenedAt);
-            events.Add(CreateEvent(attempt, session.Id, "turn.opened", InterviewEventSequence.TurnOpened(turnCount + 1), followUpOpenedAt));
+            events.Add(CreateEvent(attempt, session.Id, InterviewEventTypes.TurnOpened, InterviewEventSequence.TurnOpened(turnCount + 1), followUpOpenedAt));
             logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
                 attempt.Id, response.FollowUpCount, question.Id);
             return new SubmitAnswerResponse(SubmitOutcome.FollowUp, timedOut, null, ToState(attempt, session));
@@ -728,17 +728,23 @@ internal sealed class InterviewService(
         if (next is not null)
         {
             AskMainQuestion(attempt, next, nextOpenedAt);
-            events.Add(CreateEvent(attempt, session.Id, "turn.opened", InterviewEventSequence.TurnOpened(turnCount + 1), nextOpenedAt));
+            events.Add(CreateEvent(attempt, session.Id, InterviewEventTypes.TurnOpened, InterviewEventSequence.TurnOpened(turnCount + 1), nextOpenedAt));
             outcome = SubmitOutcome.NextQuestion;
         }
         else
         {
-            if (manualRecovery)
+            var isPartial = session.Questions.Any(question =>
+                !attempt.Responses.Any(response => response.QuestionId == question.Id));
+            if (manualRecovery && isPartial)
+                attempt.CompleteRecoveredPartial(now);
+            else if (manualRecovery)
                 attempt.CompleteRecovered(now);
+            else if (isPartial)
+                attempt.CompletePartial(now);
             else
                 attempt.Complete(now);
             attempt.Participant.ReconcileStatus();
-            events.Add(CreateEvent(attempt, session.Id, canAskNextQuestion ? "attempt.completed" : "attempt.expired",
+            events.Add(CreateEvent(attempt, session.Id, canAskNextQuestion ? InterviewEventTypes.AttemptCompleted : InterviewEventTypes.AttemptExpired,
                 InterviewEventSequence.AttemptCompleted(turnCount), now));
             outcome = SubmitOutcome.Completed;
         }
@@ -753,18 +759,17 @@ internal sealed class InterviewService(
         IReadOnlyList<RubricCriterionInfo> criteria)
     {
         var scores = score?.Scores;
-        if (scores is null || scores.Count != criteria.Count
-            || scores.Select(item => item.CriterionId).Distinct().Count() != scores.Count)
+        if (scores is null)
             throw new InvalidOperationException("AI rubric scoring returned an incomplete or duplicate criterion score set.");
 
-        var byCriterion = scores.ToDictionary(item => item.CriterionId);
-        if (criteria.Any(criterion => !byCriterion.TryGetValue(criterion.Id, out var item)
-            || item.Points is not decimal points
-            || points < 0
-            || points > criterion.MaxPoints
-            || points != decimal.Round(points, 2)))
+        var validation = CriterionScoreValidation.Validate(
+            criteria, scores.Select(item => (item.CriterionId, item.Points)));
+        if (validation == CriterionScoreValidationResult.IncompleteOrDuplicate)
+            throw new InvalidOperationException("AI rubric scoring returned an incomplete or duplicate criterion score set.");
+        if (validation == CriterionScoreValidationResult.Invalid)
             throw new InvalidOperationException("AI rubric scoring returned an invalid criterion score.");
 
+        var byCriterion = scores.ToDictionary(item => item.CriterionId);
         return criteria.Select(criterion => byCriterion[criterion.Id]).ToList();
     }
 
@@ -788,7 +793,7 @@ internal sealed class InterviewService(
             claim.Turn.NextRetryAt = null;
             claim.Turn.ProcessingToken = null;
             claim.Turn.SubmissionResultJson = JsonSerializer.Serialize(result);
-            await WithAttemptLockAsync(attemptId, async () =>
+            await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
             {
                 await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, ct);
                 return result;
@@ -802,7 +807,7 @@ internal sealed class InterviewService(
         {
             try
             {
-                await WithAttemptLockAsync(attemptId, async () =>
+                await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
                 {
                     await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, CancellationToken.None);
                     claim.Turn.RetryCount++;
@@ -834,7 +839,7 @@ internal sealed class InterviewService(
             }
             var sequence = InterviewEventSequence.Current(claim.Attempt);
             await eventPublisher.PublishAsync(new InterviewAttemptEvent(Guid.NewGuid(), attemptId,
-                claim.Session.Id, sequence, claim.Turn.Id, sequence, "InterviewError", UtcNow), CancellationToken.None);
+                claim.Session.Id, sequence, claim.Turn.Id, sequence, InterviewEventTypes.InterviewError, UtcNow), CancellationToken.None);
             throw;
         }
 
@@ -854,7 +859,7 @@ internal sealed class InterviewService(
             var completed = await audioStore.CompleteUploadAsync(attemptId, claim.Turn.Id, ct);
             await completed.Audio.DisposeAsync();
 
-            transcriptionClaim = await WithAttemptLockAsync(attemptId, async () =>
+            transcriptionClaim = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
             {
                 await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, ct);
                 var attemptStatus = await db.InterviewAttempts.AsNoTracking()
@@ -891,7 +896,7 @@ internal sealed class InterviewService(
             try
             {
                 using var recoveryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-                await WithAttemptLockAsync(attemptId, async () =>
+                await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
                 {
                     await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, recoveryTimeout.Token);
                     var now = UtcNow;
@@ -963,7 +968,7 @@ internal sealed class InterviewService(
                     [nameof(SubmitAnswerRequest.AnswerText)] = ["Transcribed answers cannot exceed 10000 characters."]
                 });
 
-            evaluationClaim = await WithAttemptLockAsync(attemptId, async () =>
+            evaluationClaim = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
             {
                 await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, ct);
                 var now = UtcNow;
@@ -1002,7 +1007,7 @@ internal sealed class InterviewService(
             var missingAudio = exception is ConflictException { Code: "audio_upload_empty" };
             try
             {
-                await WithAttemptLockAsync(attemptId, async () =>
+                await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
                 {
                     await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, CancellationToken.None);
                     var retryCount = missingAudio
@@ -1038,7 +1043,7 @@ internal sealed class InterviewService(
 
             var sequence = InterviewEventSequence.Current(claim.Attempt);
             await eventPublisher.PublishAsync(new InterviewAttemptEvent(Guid.NewGuid(), attemptId,
-                claim.Session.Id, sequence, claim.Turn.Id, sequence, "InterviewError", UtcNow), CancellationToken.None);
+                claim.Session.Id, sequence, claim.Turn.Id, sequence, InterviewEventTypes.InterviewError, UtcNow), CancellationToken.None);
             throw;
         }
 
@@ -1181,24 +1186,6 @@ internal sealed class InterviewService(
     {
         var deadline = turn.AskedAt.AddSeconds(session.TimeLimitPerAnswerSeconds + Math.Max(0, _options.TimeLimitGraceSeconds));
         return session.EndTime < deadline ? session.EndTime : deadline;
-    }
-
-    private async Task<T> WithAttemptLockAsync<T>(Guid attemptId, Func<Task<T>> operation, CancellationToken ct)
-    {
-        if (db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
-        {
-            await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT id FROM interview_attempts WHERE id = {attemptId} FOR UPDATE", ct);
-            var result = await operation();
-            await db.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
-            return result;
-        }
-
-        var inMemoryResult = await operation();
-        await db.SaveChangesAsync(ct);
-        return inMemoryResult;
     }
 
     private sealed class TurnProcessingLeaseLostException : Exception

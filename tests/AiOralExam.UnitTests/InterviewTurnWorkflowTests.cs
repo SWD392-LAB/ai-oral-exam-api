@@ -45,7 +45,8 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Single(fixture.Db.CriterionScores);
         Assert.Equal(1, fixture.Analyzer.CallCount);
         Assert.Equal(1, fixture.Scorer.CallCount);
-        Assert.Equal(["attempt.started", "turn.opened", "answer.accepted", "attempt.completed", "answer.duplicate"],
+        Assert.Equal([InterviewEventTypes.AttemptStarted, InterviewEventTypes.TurnOpened, InterviewEventTypes.AnswerAccepted,
+                InterviewEventTypes.AttemptCompleted, InterviewEventTypes.AnswerDuplicate],
             fixture.Events.Events.Select(interviewEvent => interviewEvent.Type));
         Assert.Equal([1L, 2L, 3L, 4L, 4L], fixture.Events.Events.Select(interviewEvent => interviewEvent.Sequence));
         Assert.All(fixture.Events.Events, interviewEvent =>
@@ -53,7 +54,7 @@ public sealed class InterviewTurnWorkflowTests
                 typeof(InterviewAttemptEvent).GetProperties().Select(property => property.Name).OrderBy(name => name)));
         Assert.DoesNotContain("AnswerTranscript", typeof(InterviewAttemptEvent).GetProperties().Select(property => property.Name));
         Assert.DoesNotContain("AiSuggestedScore", typeof(InterviewAttemptEvent).GetProperties().Select(property => property.Name));
-        Assert.All(fixture.Events.Events.Where(interviewEvent => interviewEvent.Type != "review.finalized"),
+        Assert.All(fixture.Events.Events.Where(interviewEvent => interviewEvent.Type != InterviewEventTypes.ReviewFinalized),
             interviewEvent => Assert.Equal(interviewEvent.Sequence, interviewEvent.StateVersion));
     }
 
@@ -353,6 +354,49 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Single(fixture.Db.CriterionScores);
         Assert.Single(fixture.Db.InterviewTurns);
         Assert.Null(recovery.Attempt.CurrentTurn);
+    }
+
+    [Fact]
+    public async Task Manual_recovery_evaluates_a_failed_timeout_as_a_partial_attempt()
+    {
+        await using var fixture = await CreateFixtureAsync(maximumTurnRetries: 0, questionCount: 2, timeLimitSeconds: 1);
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        fixture.Clock.Set(StartTime.AddSeconds(2));
+        fixture.Scorer.FailNext = true;
+
+        Assert.Equal(0, await fixture.Service.ExpireOverdueAttemptsAsync());
+
+        var failedTurn = Assert.Single(fixture.Db.InterviewTurns);
+        Assert.True(failedTurn.IsTimedOut);
+        Assert.Equal(TurnProcessingStatus.Failed, failedTurn.ProcessingStatus);
+        Assert.Equal(AttemptStatus.Interrupted, fixture.Db.InterviewAttempts.Single().Status);
+
+        var recovery = await fixture.CreateService(new TestUser(Guid.NewGuid(), Roles.Lecturer))
+            .RecoverInterruptedTurnAsync(started.State.AttemptId, failedTurn.Id);
+
+        Assert.Equal(SubmitOutcome.Completed, recovery.Outcome);
+        Assert.Equal(AttemptStatus.PendingReview.ToString(), recovery.Attempt.Status);
+        Assert.True(fixture.Db.InterviewAttempts.Single().IsPartialCompleted);
+        Assert.Equal(TurnProcessingStatus.Completed, failedTurn.ProcessingStatus);
+        Assert.Equal(1, failedTurn.ManualRecoveryCount);
+        Assert.Single(fixture.Db.CriterionScores);
+    }
+
+    [Fact]
+    public async Task Manual_recovery_rejects_an_interrupted_awaiting_answer_turn()
+    {
+        await using var fixture = await CreateFixtureAsync();
+        var started = await fixture.Service.StartAttemptAsync(new StartAttemptRequest(fixture.Session.Id));
+        var turn = Assert.Single(fixture.Db.InterviewTurns);
+        fixture.Db.InterviewAttempts.Single().Interrupt(StartTime.AddMinutes(1));
+
+        var error = await Assert.ThrowsAsync<ConflictException>(() => fixture.CreateService(
+            new TestUser(Guid.NewGuid(), Roles.Lecturer)).RecoverInterruptedTurnAsync(
+                started.State.AttemptId, turn.Id));
+
+        Assert.Equal("turn_recovery_stage_invalid", error.Code);
+        Assert.Equal(TurnProcessingStatus.AwaitingAnswer, turn.ProcessingStatus);
+        Assert.Equal(0, turn.ManualRecoveryCount);
     }
 
     [Fact]
@@ -781,7 +825,7 @@ public sealed class InterviewTurnWorkflowTests
 
         Assert.Equal(AttemptStatus.PendingReview.ToString(), result.Attempt.Status);
         Assert.Null(result.Attempt.CurrentTurn);
-        Assert.Contains(fixture.Events.Events, interviewEvent => interviewEvent.Type == "attempt.expired");
+        Assert.Contains(fixture.Events.Events, interviewEvent => interviewEvent.Type == InterviewEventTypes.AttemptExpired);
         Assert.Single(fixture.Db.InterviewTurns);
     }
 
@@ -849,7 +893,7 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Equal(first.State.CurrentTurn!.TurnId, resumed.State.CurrentTurn!.TurnId);
         Assert.Single(fixture.Db.InterviewAttempts);
         Assert.Single(fixture.Db.InterviewTurns);
-        Assert.Equal("attempt.resumed", fixture.Events.Events[^1].Type);
+        Assert.Equal(InterviewEventTypes.AttemptResumed, fixture.Events.Events[^1].Type);
     }
 
     [Fact]
@@ -918,8 +962,8 @@ public sealed class InterviewTurnWorkflowTests
         Assert.Single(fixture.Db.CriterionScores);
         Assert.Equal(1, fixture.Scorer.CallCount);
         Assert.Null((await fixture.Service.GetAttemptStateAsync(started.State.AttemptId)).CurrentTurn);
-        Assert.Contains(fixture.Events.Events, interviewEvent => interviewEvent.Type == "turn.deadline_reached");
-        Assert.Contains(fixture.Events.Events, interviewEvent => interviewEvent.Type == "attempt.completed");
+        Assert.Contains(fixture.Events.Events, interviewEvent => interviewEvent.Type == InterviewEventTypes.TurnDeadlineReached);
+        Assert.Contains(fixture.Events.Events, interviewEvent => interviewEvent.Type == InterviewEventTypes.AttemptCompleted);
         var lateAnswer = await Assert.ThrowsAsync<ConflictException>(() => fixture.Service.SubmitAnswerAsync(
             started.State.AttemptId, new SubmitAnswerRequest("Late retry", started.State.CurrentTurn!.TurnId)));
         Assert.Equal("answer_deadline_passed", lateAnswer.Code);
@@ -964,7 +1008,7 @@ public sealed class InterviewTurnWorkflowTests
 
         Assert.Equal(ReviewStatus.Approved, approved.Status);
         Assert.Equal(AttemptStatus.Finalized, fixture.Db.InterviewAttempts.Single().Status);
-        Assert.Equal("review.finalized", fixture.Events.Events[^1].Type);
+        Assert.Equal(InterviewEventTypes.ReviewFinalized, fixture.Events.Events[^1].Type);
     }
 
     [Fact]
@@ -1517,13 +1561,13 @@ public sealed class InterviewTurnWorkflowTests
         public Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default)
         {
             var attempt = Assert.Single(db.InterviewAttempts.Where(item => item.Id == interviewEvent.AttemptId));
-            if (interviewEvent.Type == "turn.opened")
+            if (interviewEvent.Type == InterviewEventTypes.TurnOpened)
                 Assert.NotEmpty(db.InterviewTurns);
-            if (interviewEvent.Type == "answer.accepted")
+            if (interviewEvent.Type == InterviewEventTypes.AnswerAccepted)
                 Assert.Contains(db.InterviewTurns, turn => turn.AnsweredAt.HasValue);
-            if (interviewEvent.Type is "turn.deadline_reached" or "turn.closed")
+            if (interviewEvent.Type is InterviewEventTypes.TurnDeadlineReached or InterviewEventTypes.TurnClosed)
                 Assert.Contains(db.InterviewTurns, turn => turn.IsTimedOut && turn.AnsweredAt is null);
-            if (interviewEvent.Type == "review.finalized")
+            if (interviewEvent.Type == InterviewEventTypes.ReviewFinalized)
                 Assert.Equal(AttemptStatus.Finalized, attempt.Status);
             Events.Add(interviewEvent);
             return Task.CompletedTask;

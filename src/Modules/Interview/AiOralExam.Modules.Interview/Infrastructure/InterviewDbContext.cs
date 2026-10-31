@@ -40,6 +40,9 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.ToTable("interview_attempts");
             e.HasKey(x => x.Id);
             e.Property(x => x.Status);
+            e.Property(x => x.IsPartialCompleted)
+                .HasColumnName("partial_completed")
+                .HasDefaultValue(false);
             e.Ignore(x => x.CurrentResponse);
             e.HasMany(x => x.Responses).WithOne().HasForeignKey(r => r.AttemptId);
             e.HasOne(x => x.Review).WithOne().HasForeignKey<ScoreReview>(r => r.AttemptId);

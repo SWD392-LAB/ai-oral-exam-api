@@ -53,6 +53,7 @@ public class InterviewScoreReviewTests
         Assert.Equal(ReviewStatus.Approved, submitted.Status);
         Assert.NotNull(submitted.ReviewedAt);
         Assert.Equal(AttemptStatus.Finalized, attempt.Status);
+        Assert.False(attempt.IsPartialCompleted);
         var persisted = Assert.Single(db.ScoreReviews);
         Assert.Equal(lecturer.Id, persisted.ReviewerId);
         Assert.Equal(submitted.FinalScore, persisted.FinalScore);
@@ -115,6 +116,122 @@ public class InterviewScoreReviewTests
         await AssertEvaluationPendingAsync(service, attempt.Id);
 
         Assert.Equal(AttemptStatus.PendingReview, attempt.Status);
+        Assert.Empty(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Lecturer_can_confirm_a_valid_partial_attempt_without_synthetic_responses()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var lecturer = new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer);
+        var configuration = new TestExamConfigurationApi(
+            sessionId, assigned: true, questionCount: 2, questionMaxScore: 5m);
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview, partial: true);
+        var service = CreateService(db, lecturer, configuration);
+
+        var draft = await service.SaveScoreReviewDraftAsync(attempt.Id, new SubmitScoreReviewRequest(5m, "Partial"));
+        var confirmed = await service.ConfirmScoreReviewAsync(attempt.Id);
+        var result = await service.GetAttemptReviewAsync(attempt.Id);
+
+        Assert.Equal(ReviewStatus.Pending, draft.Status);
+        Assert.Equal(ReviewStatus.Approved, confirmed.Status);
+        Assert.Equal(AttemptStatus.Finalized, attempt.Status);
+        Assert.True(attempt.IsPartialCompleted);
+        Assert.Single(attempt.Responses);
+        Assert.Equal(0m, result.SuggestedTotalScore);
+        Assert.Single(db.QuestionResponses);
+        Assert.Empty(db.CriterionScores);
+
+        var retried = await service.ConfirmScoreReviewAsync(attempt.Id);
+        Assert.Equal(confirmed, retried);
+    }
+
+    [Theory]
+    [InlineData(5.01)]
+    [InlineData(8)]
+    public async Task Partial_attempt_draft_rejects_scores_above_answered_question_maximum(double finalScore)
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview, partial: true);
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true, questionCount: 2, questionMaxScore: 5m));
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => service.SaveScoreReviewDraftAsync(
+            attempt.Id, new SubmitScoreReviewRequest((decimal)finalScore, null)));
+
+        Assert.NotNull(error.Details);
+        Assert.Contains(nameof(SubmitScoreReviewRequest.FinalScore), error.Details!.Keys);
+        Assert.Empty(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Partial_attempt_direct_submission_rejects_score_above_answered_question_maximum()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview, partial: true);
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true, questionCount: 2, questionMaxScore: 5m));
+
+        await Assert.ThrowsAsync<ValidationException>(() => service.SubmitScoreReviewAsync(
+            attempt.Id, new SubmitScoreReviewRequest(8m, null)));
+
+        Assert.Empty(db.ScoreReviews);
+    }
+
+    [Fact]
+    public async Task Partial_attempt_confirmation_rejects_existing_draft_above_answered_question_maximum()
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var lecturer = new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer);
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview, partial: true);
+        var service = CreateService(db, lecturer,
+            new TestExamConfigurationApi(sessionId, assigned: true, questionCount: 2, questionMaxScore: 5m));
+
+        var review = new ScoreReview
+        {
+            Id = Guid.NewGuid(),
+            AttemptId = attempt.Id,
+            ReviewerId = lecturer.Id,
+            FinalScore = 8m,
+            Status = ReviewStatus.Pending
+        };
+        attempt.Review = review;
+        db.ScoreReviews.Add(review);
+        await db.SaveChangesAsync();
+
+        await Assert.ThrowsAsync<ValidationException>(() => service.ConfirmScoreReviewAsync(attempt.Id));
+
+        Assert.Equal(ReviewStatus.Pending, review.Status);
+        Assert.Equal(AttemptStatus.PendingReview, attempt.Status);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public async Task Partial_attempts_with_unfinished_or_unevaluated_responses_remain_unreviewable(
+        bool responseIncomplete,
+        bool scoreIncomplete)
+    {
+        await using var db = CreateDbContext();
+        var sessionId = Guid.NewGuid();
+        var attempt = await AddAttemptAsync(db, sessionId, AttemptStatus.PendingReview, partial: true);
+        var response = Assert.Single(attempt.Responses);
+        if (responseIncomplete)
+            response.IsFinished = false;
+        if (scoreIncomplete)
+        {
+            response.AiSuggestedScore = null;
+            response.EvaluatedAt = null;
+        }
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new TestCurrentUser(Guid.NewGuid(), Roles.Lecturer),
+            new TestExamConfigurationApi(sessionId, assigned: true, questionCount: 2));
+
+        await AssertEvaluationPendingAsync(service, attempt.Id);
         Assert.Empty(db.ScoreReviews);
     }
 
@@ -446,7 +563,8 @@ public class InterviewScoreReviewTests
         InterviewDbContext db,
         Guid sessionId,
         AttemptStatus status,
-        bool includeCompletedResponse = true)
+        bool includeCompletedResponse = true,
+        bool partial = false)
     {
         var participant = new Participant
         {
@@ -488,7 +606,12 @@ public class InterviewScoreReviewTests
             attempt.Responses.Add(response);
         }
         if (status != AttemptStatus.InProgress)
-            attempt.Complete(DateTime.UtcNow);
+        {
+            if (partial)
+                attempt.CompletePartial(DateTime.UtcNow);
+            else
+                attempt.Complete(DateTime.UtcNow);
+        }
         if (status == AttemptStatus.Finalized)
             attempt.TransitionTo(AttemptStatus.Finalized);
         participant.Attempts.Add(attempt);
@@ -516,18 +639,32 @@ public class InterviewScoreReviewTests
     private sealed class TestExamConfigurationApi(
         Guid sessionId,
         bool assigned,
-        IReadOnlyList<RubricCriterionInfo>? criteria = null) : IExamConfigurationApi
+        IReadOnlyList<RubricCriterionInfo>? criteria = null,
+        int questionCount = 1,
+        decimal questionMaxScore = 10m) : IExamConfigurationApi
     {
         public Guid QuestionId => _session.Questions[0].Id;
 
-        private readonly ExamSessionInfo _session = CreateSession(sessionId, criteria);
+        private readonly ExamSessionInfo _session = CreateSession(sessionId, criteria, questionCount, questionMaxScore);
 
-        private static ExamSessionInfo CreateSession(Guid sessionId, IReadOnlyList<RubricCriterionInfo>? criteria)
+        private static ExamSessionInfo CreateSession(
+            Guid sessionId,
+            IReadOnlyList<RubricCriterionInfo>? criteria,
+            int questionCount,
+            decimal questionMaxScore)
         {
+            var questions = Enumerable.Range(1, questionCount)
+                .Select(order => new QuestionInfo(
+                    order == 1 ? DefaultQuestionId : Guid.NewGuid(),
+                    order,
+                    $"Question {order}",
+                    criteria ?? [],
+                    questionMaxScore))
+                .ToList();
             return new ExamSessionInfo(
                 sessionId, Guid.NewGuid(), "TEST", "Test Course", "Test Session",
                 DateTime.UtcNow, DateTime.UtcNow.AddHours(1), 60, 2, ExamSessionStatus.Published,
-                [new QuestionInfo(DefaultQuestionId, 1, "Question", criteria ?? [], 10m)]);
+                questions);
         }
 
         public Task<ExamSessionInfo?> GetSessionAsync(Guid examSessionId, CancellationToken ct = default) =>

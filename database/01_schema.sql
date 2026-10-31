@@ -361,6 +361,7 @@ CREATE TABLE interview_attempts (
     completed_at    TIMESTAMPTZ,
     status          VARCHAR(20) NOT NULL DEFAULT 'InProgress'
                     CHECK (status IN ('InProgress', 'Interrupted', 'PendingReview', 'Finalized')),
+    partial_completed BOOLEAN NOT NULL DEFAULT FALSE,
     CHECK (completed_at IS NULL OR completed_at >= started_at)
 );
 CREATE INDEX ix_interview_attempts_participant ON interview_attempts(participant_id);
