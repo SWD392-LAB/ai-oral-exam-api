@@ -1,8 +1,8 @@
 -- =====================================================================
 -- AIVES - AI-powered Viva Exam System
 -- 01_schema.sql : creates the tables for PostgreSQL (>= 13)
--- Follows docs/ConceptualERD.drawio + docs/ClassDiagram.drawio (15 entities)
---   + 1 join table course_lecturers (N-N "teaches" relationship).
+-- Follows docs/ConceptualERD.drawio + docs/ClassDiagram.drawio, with the
+-- F1 question-bank/material tables and the course_lecturers join table added.
 -- Enums are stored as VARCHAR + CHECK so they map easily to EF Core (string conversion).
 -- Derived values (rubrics.max_score, question_responses.ai_suggested_score) are kept
 -- in sync by triggers at the end of this file.
@@ -11,7 +11,8 @@
 -- Re-runnable: drop old tables first (old + new names, reverse dependency order)
 DROP TABLE IF EXISTS criterion_scores, score_reviews, ai_evaluations, interview_turns,
     question_responses, interview_attempts, participants, rubric_criteria, rubrics,
-    questions, exam_sessions, course_lecturers, courses, ai_service_configs, audit_logs,
+    questions, material_chunks, course_materials, question_bank_revisions,
+    question_bank_items, exam_sessions, course_lecturers, courses, ai_service_configs, audit_logs,
     email_link_tokens, password_setup_tokens, user_accounts, users, roles CASCADE;
 
 -- ---------------------------------------------------------------------
@@ -135,6 +136,58 @@ CREATE TABLE course_lecturers (
 );
 CREATE INDEX ix_course_lecturers_lecturer ON course_lecturers(lecturer_id);
 
+-- F1 - Question bank (rubric is intentionally not stored on bank items)
+CREATE TABLE question_bank_items (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    course_id   UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    topic       VARCHAR(200) NOT NULL,
+    bloom       VARCHAR(30) NOT NULL CHECK (bloom IN ('Remember', 'Understand', 'Apply', 'Analyze')),
+    content     TEXT NOT NULL,
+    content_hash VARCHAR(64) NOT NULL,
+    origin      VARCHAR(20) NOT NULL CHECK (origin IN ('Manual', 'Import', 'Ai')),
+    status      VARCHAR(20) NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Approved', 'Rejected', 'Archived')),
+    created_by  UUID NOT NULL REFERENCES users(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_question_bank_course_status ON question_bank_items(course_id, status);
+CREATE UNIQUE INDEX ux_question_bank_course_content_hash ON question_bank_items(course_id, content_hash);
+
+CREATE TABLE question_bank_revisions (
+    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    question_bank_item_id UUID NOT NULL REFERENCES question_bank_items(id) ON DELETE CASCADE,
+    revision_no           INT NOT NULL CHECK (revision_no > 0),
+    content               TEXT NOT NULL,
+    provenance_json       JSONB,
+    created_by            UUID NOT NULL REFERENCES users(id),
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (question_bank_item_id, revision_no)
+);
+
+CREATE TABLE course_materials (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    course_id     UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+    file_name     VARCHAR(255) NOT NULL,
+    content_type  VARCHAR(100) NOT NULL,
+    size_bytes    BIGINT NOT NULL CHECK (size_bytes > 0),
+    sha256        VARCHAR(64) NOT NULL,
+    storage_key   VARCHAR(500) NOT NULL,
+    status        VARCHAR(20) NOT NULL DEFAULT 'Pending' CHECK (status IN ('Pending', 'Ready', 'Failed', 'Archived')),
+    ingest_error  VARCHAR(500),
+    created_by    UUID NOT NULL REFERENCES users(id),
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX ix_course_materials_course_status ON course_materials(course_id, status);
+
+CREATE TABLE material_chunks (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    course_material_id UUID NOT NULL REFERENCES course_materials(id) ON DELETE CASCADE,
+    chunk_no           INT NOT NULL CHECK (chunk_no > 0),
+    citation           VARCHAR(300) NOT NULL,
+    text               TEXT NOT NULL,
+    UNIQUE (course_material_id, chunk_no)
+);
+
 -- ERD: EXAM SESSION  (COURSE 1 --< 0..* "has", USER 1 --< 0..* "creates")
 -- Publish rule (application): >= 1 question, every question has a rubric, >= 1 participant.
 CREATE TABLE exam_sessions (
@@ -159,6 +212,7 @@ CREATE TABLE questions (
     exam_session_id  UUID  NOT NULL REFERENCES exam_sessions(id) ON DELETE CASCADE,
     order_no         INT   NOT NULL CHECK (order_no > 0),
     content          TEXT  NOT NULL,
+    source_bank_revision_id UUID REFERENCES question_bank_revisions(id),
     UNIQUE (exam_session_id, order_no)
 );
 
@@ -282,6 +336,11 @@ CREATE TABLE question_responses (
     ai_suggested_score  NUMERIC(5,2)  CHECK (ai_suggested_score >= 0),
     ai_feedback         TEXT,
     evaluated_at        TIMESTAMPTZ,
+    ai_evaluation_state VARCHAR(20) NOT NULL DEFAULT 'NotStarted',
+    ai_evaluation_error VARCHAR(500),
+    ai_evaluation_claim_token UUID,
+    CONSTRAINT ck_question_response_ai_state
+        CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed')),
     UNIQUE (attempt_id, question_id)
 );
 CREATE INDEX ix_responses_question ON question_responses(question_id);
@@ -309,7 +368,7 @@ CREATE TABLE criterion_scores (
     rubric_criterion_id   UUID          NOT NULL REFERENCES rubric_criteria(id),
     points                NUMERIC(5,2)  NOT NULL CHECK (points >= 0),
     comment               TEXT,
-    UNIQUE (question_response_id, rubric_criterion_id)
+    CONSTRAINT ux_criterion_scores_response_criterion UNIQUE (question_response_id, rubric_criterion_id)
 );
 CREATE INDEX ix_criterion_scores_criterion ON criterion_scores(rubric_criterion_id);
 

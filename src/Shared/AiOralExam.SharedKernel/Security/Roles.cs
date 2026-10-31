@@ -8,4 +8,5 @@ public static class Roles
     public const string Administrator = "Administrator";
 
     public const string LecturerOrAdmin = Lecturer + "," + Administrator;
+    public const string StudentOrLecturerOrAdmin = Student + "," + Lecturer + "," + Administrator;
 }

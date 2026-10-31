@@ -5,4 +5,6 @@ public sealed record SubmitAnswerResponse(
     bool TimedOut,
     // Null when Outcome = FollowUp or when AI scores are hidden from students.
     EvaluationDto? Evaluation,
-    AttemptStateDto Attempt);
+    AttemptStateDto Attempt,
+    // Returned only by the audio endpoint so the student sees the provider transcript.
+    string? Transcript = null);

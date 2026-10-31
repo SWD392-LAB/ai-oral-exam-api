@@ -7,6 +7,9 @@ using AiOralExam.Modules.AccessConfig.Application.ExamSessions;
 using AiOralExam.Modules.AccessConfig.Application.LecturerAssignments;
 using AiOralExam.Modules.AccessConfig.Application.Participants;
 using AiOralExam.Modules.AccessConfig.Application.Questions;
+using AiOralExam.Modules.AccessConfig.Application.QuestionGeneration;
+using AiOralExam.Modules.AccessConfig.Application.QuestionBank;
+using AiOralExam.Modules.AccessConfig.Application.Materials;
 using AiOralExam.Modules.AccessConfig.Application.Rubrics;
 using AiOralExam.Modules.AccessConfig.Application.Users;
 using AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
@@ -19,6 +22,7 @@ using AiOralExam.Modules.AccessConfig.Infrastructure;
 using Microsoft.Extensions.Configuration;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace AiOralExam.Modules.AccessConfig;
 
@@ -37,6 +41,30 @@ public static class AccessConfigModule
         services.AddHostedService<ExamSessionAutoCloseService>();
         services.AddScoped<ICourseService, CourseService>();
         services.AddScoped<IQuestionService, QuestionService>();
+        services.Configure<QuestionGenerationProviderOptions>(configuration.GetSection(QuestionGenerationProviderOptions.SectionName));
+        services.AddHttpClient<GeminiQuestionDraftContentGenerator>((sp, client) =>
+        {
+            var seconds = sp.GetRequiredService<IOptions<QuestionGenerationProviderOptions>>().Value.RequestTimeoutSeconds;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
+        }).RedactLoggedHeaders(header => string.Equals(header, "x-goog-api-key", StringComparison.OrdinalIgnoreCase));
+        services.AddHttpClient<OllamaQuestionDraftContentGenerator>((sp, client) =>
+        {
+            var seconds = sp.GetRequiredService<IOptions<QuestionGenerationProviderOptions>>().Value.RequestTimeoutSeconds;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
+        });
+        services.AddSingleton<DeterministicQuestionDraftContentGenerator>();
+        services.AddScoped<IQuestionDraftContentGenerator>(sp =>
+        {
+            var settings = sp.GetRequiredService<IOptions<QuestionGenerationProviderOptions>>().Value;
+            if (settings.UsesGemini) return sp.GetRequiredService<GeminiQuestionDraftContentGenerator>();
+            if (settings.UsesOllama) return sp.GetRequiredService<OllamaQuestionDraftContentGenerator>();
+            return sp.GetRequiredService<DeterministicQuestionDraftContentGenerator>();
+        });
+        services.AddScoped<IQuestionGenerator, QuestionGenerator>();
+        services.AddScoped<IQuestionBankService, QuestionBankService>();
+        services.Configure<MaterialOptions>(configuration.GetSection(MaterialOptions.SectionName));
+        services.AddSingleton<IMaterialStorage, LocalMaterialStorage>();
+        services.AddScoped<IMaterialService, MaterialService>();
         services.AddScoped<IRubricService, RubricService>();
         services.AddScoped<CreateUserService>();
         services.AddScoped<UpdateUserService>();

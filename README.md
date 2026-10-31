@@ -5,7 +5,7 @@ Backend of **AIVES – AI-powered Viva Exam System** (SWD392). An AI examiner as
 - **Architecture:** ASP.NET Core 8 **modular monolith** – one API, three business modules, one database
 - **Database:** PostgreSQL 16, accessed with EF Core 8 (Npgsql). The schema is created by **SQL scripts** (`database/`), *not* by EF migrations
 - **Auth:** handled by **Keycloak** (realm `aives`, see [keycloak/README.md](keycloak/README.md)). The API stores no passwords; it only validates Keycloak access tokens. On every request it then reads `users.is_active` and `users.role_id` (`Student` / `Lecturer` / `Administrator`): the database decides access, so deactivating a user or changing a role in AIVES applies at once
-- **AI:** STT / TTS / LLM behind interfaces. M1 uses **mocks** (deterministic scoring: same input, same result)
+- **AI:** STT / TTS / LLM behind interfaces. M1 uses **mocks** (deterministic scoring: same input, same result). Real providers are opt-in through `AiProviders`.
 
 Frontend repo: `ai-oral-exam-web`.
 
@@ -51,6 +51,20 @@ For existing databases, also apply `database/04_audit_log_description.sql` to ad
 
 For the retake schema change on an existing database, identify the application schema and apply `database/05_allow_interview_attempt_retakes.sql` as described in [Changing the database](#6-changing-the-database). Do not rerun `database/01_schema.sql` against existing data.
 
+For durable AI retry state on an existing database, apply
+`database/06_ai_evaluation_state.sql` with the same verified `app_schema`
+variable. It adds `NotStarted/Pending/Failed/Completed` state without resetting
+attempts or audio references.
+
+For the F1 question bank on an existing database, apply
+`database/07_question_bank.sql` after the AI-state upgrade. It creates bank
+Draft/revision tables and the nullable source-revision reference on questions.
+
+For private F1 course material ingestion on an existing database, apply
+`database/08_course_materials.sql` after the question-bank upgrade. It creates
+the material metadata and extracted-chunk tables; uploaded files remain outside
+the database in the configured private storage root.
+
 In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 
 ### Try the M1 exam flow in Swagger
@@ -59,7 +73,7 @@ In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup pro
 2. Sign in on the Keycloak page with `han.hg@aives.edu.vn` / `Password@123`. Swagger then sends the Keycloak access token with every request.
 3. Call `GET /api/interview/my-sessions`. You should see 3 sessions: two open (S1, S4) and one not open yet (S6).
 4. Call `POST /api/interview-attempts` with `{ "examSessionId": "33333333-0000-0000-0000-000000000001" }`. You get `201`, an `attemptId` and the first question (`currentTurn`).
-5. Call `POST /api/interview-attempts/{attemptId}/responses` with `{ "answerText": "..." }`. You get the mock AI score and feedback, plus the next question. Repeat until `outcome = "Completed"`.
+5. Call `POST /api/interview-attempts/{attemptId}/responses` with `{ "turnId": "<currentTurn.turnId>", "answerText": "..." }`. You get the mock AI score and feedback, plus the next question. Repeat until `outcome = "Completed"`.
 
 > Each question must be answered within `timeLimitPerQuestion` seconds (120 s for S1), plus a 15 s grace period. A later submission counts as timed out (`timedOut: true`) and the answer is not stored.
 
@@ -176,10 +190,21 @@ ai-oral-exam-api/
 | PUT | `/api/admin/ai-settings` | Admin | |
 | GET | `/api/courses/mine` | Lecturer, Admin | |
 | GET | `/api/exam-sessions`, `/api/exam-sessions/{id}` | Lecturer, Admin | |
+| POST | `/api/courses/{courseId}/question-bank/generations` | Lecturer, Admin | F1-C deterministic/RAG |
+| GET, POST | `/api/courses/{courseId}/question-bank` | Lecturer, Admin | F1-A2/B |
+| GET | `/api/courses/{courseId}/question-bank/{itemId}` | Lecturer, Admin | F1-A2 detail/revisions |
+| PUT, POST | `/api/courses/{courseId}/question-bank/{itemId}` and `/approve`, `/reject` | Lecturer, Admin | F1-A2/B |
+| POST | `/api/courses/{courseId}/question-bank/import` | Lecturer, Admin | F1-B |
+| POST | `/api/exam-sessions/{sessionId}/questions/from-bank` | Lecturer, Admin | F1-A2 |
+| GET, POST | `/api/courses/{courseId}/materials` | Lecturer, Admin | F1-C private source material |
+| POST | `/api/courses/{courseId}/materials/{materialId}/ingest` | Lecturer, Admin | F1-C chunk/extract |
 | GET | `/api/interview/my-sessions` | Student | FE-INT-01 |
 | POST | `/api/interview-attempts` | Student | BE-PLAT-04 |
 | GET | `/api/interview-attempts/{id}` | Student | |
 | POST | `/api/interview-attempts/{id}/responses` | Student | BE-AI-05 |
+| POST | `/api/interview-attempts/{id}/audio` | Student | F3 voice |
+| GET | `/api/interview-attempts/{id}/turns/{turnId}/question-audio` | Student | F3 voice |
+| GET | `/api/interview-attempts/{id}/turns/{turnId}/answer-audio` | Student, Lecturer, Admin | F3 voice |
 | GET | `/api/interview-attempts/{id}/review` | Lecturer | |
 | PUT | `/api/interview-attempts/{id}/score-review` | Lecturer | |
 | GET | `/api/reports/attempts/{id}` | Student (own report; metadata until confirmed), Lecturer, Admin | M3 |
@@ -289,11 +314,82 @@ confirmed examples can be read without submitting a new review.
 | `Keycloak:Authority` | `http://localhost:8080/realms/aives` | Keycloak realm that issues the tokens; its signing keys are read from `{Authority}/.well-known/openid-configuration` |
 | `Keycloak:Audience` | `aives-api` | tokens must contain this audience |
 | `Keycloak:SwaggerClientId` | `aives-swagger` | client used by Swagger's **Authorize** button |
-| `Interview:ShowAiScoreToStudent` | `true` | M1 shows the mock score to the student right away. From M3 on, set `false` (students see scores only after the lecturer confirms them) |
+| `Interview:ShowAiScoreToStudent` | `false` | Students do not see AI scores before lecturer confirmation. Enable only for an explicitly labelled mock-only demo. |
 | `Interview:Mock:EnableFollowUps` | `false` | turn on to try the follow-up flow with the mock (answers under 15 words trigger a follow-up) |
 | `Interview:AllowRetake` | `false` | globally allows another attempt after a student's prior attempt is finished; not a per-session setting |
+| `Interview:Language` | `Vietnamese` | language passed to the LLM analyzer/scorer |
 | `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |
+| `AiProviders:LlmProvider` | `Mock` | `Mock`, `Ollama`, or `Gemini`; controls F1 question generation and F3 analysis/scoring. Gemini reads `AiProviders:GeminiApiKey` from user-secrets/environment |
+| `AiProviders:SttProvider` | `Mock` | `Mock` or `LocalHttp` (faster-whisper sidecar) |
+| `AiProviders:TtsProvider` | `Mock` | `Mock` or `LocalHttp` (Piper/Coqui sidecar) |
+| `AiProviders:SpeechLanguage` | `vi-VN` | language sent to STT/TTS; use `en-US` for English |
+| `AiProviders:AudioStorageRoot` | `audio-storage` | private server-side audio directory; replace with S3/MinIO adapter in production |
+| `QuestionBank:StorageRoot` | `material-storage` | private server-side course-material directory; replace with S3/MinIO adapter in production |
+| `QuestionBank:MaxBytes` | `26214400` | maximum uploaded source-material size (25 MiB) |
+| `QuestionBank:ChunkSize` | `1200` | target characters per searchable citation chunk |
 | `Cors:AllowedOrigins` | `http://localhost:5173`, `http://localhost:3000` | where the FE runs |
+
+### AI provider modes and audio API
+
+The committed `appsettings.Development.json` selects local Ollama
+(`qwen2.5:3b`) for F1/F3 LLM calls and local faster-whisper/Piper services for
+speech, so a hosted LLM credential is not needed for local smoke testing.
+Qwen 2.5 3B is about 1.9 GB and is distributed under the Qwen license; review
+the [Ollama model card](https://ollama.com/library/qwen2.5:3b) before
+redistributing it. Gemini remains available as an optional provider. Its free
+tier has account and rate limits, and Google says free-tier prompts may be
+used to improve products; send only material you are allowed to share. See
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) and
+[Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key).
+
+Start the local providers (first start downloads the Ollama image, Whisper
+model, and Vietnamese/English Piper voices):
+
+```sh
+docker compose --profile local-ai up -d --build ollama faster-whisper piper-tts
+docker compose exec ollama ollama pull qwen2.5:3b
+docker compose ps ollama faster-whisper piper-tts
+```
+
+Start the API in Development:
+
+```sh
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AiOralExam.Api
+```
+
+To use Gemini instead, set `AiProviders:LlmProvider=Gemini` and configure
+`AiProviders:GeminiApiKey` via user-secrets or an environment variable.
+
+The providers listen on `127.0.0.1:11434`, `127.0.0.1:8001`, and
+`127.0.0.1:8002`; model files persist in Docker volumes. Stop them with
+`docker compose stop ollama faster-whisper piper-tts`.
+To choose a smaller/faster Whisper model, set `WHISPER_MODEL=base` before
+running Compose. The API's general and test configuration still defaults to
+deterministic `Mock` providers; the test factory explicitly keeps tests offline.
+
+The STT sidecar accepts multipart field `file` plus `language` and returns
+`{"text":"..."}`. The TTS sidecar accepts JSON
+`{ "text": "...", "language": "..." }` and returns WAV audio bytes.
+The Piper runtime is GPL-3.0-or-later, and voice files have their own model-card
+terms; review both before redistributing the sidecar or downloaded voices. See
+[Piper's package metadata](https://github.com/OHF-Voice/piper1-gpl/blob/main/setup.py)
+and [voice licensing guidance](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md).
+
+Voice endpoints are:
+
+- `POST /api/interview-attempts/{attemptId}/audio` — multipart `turnId` + `file`;
+  the recording is stored privately, transcribed, and sent through the same
+  answer/evaluation pipeline as text.
+- `GET /api/interview-attempts/{attemptId}/turns/{turnId}/question-audio` — TTS
+  for the exact question text stored on the turn.
+- `GET /api/interview-attempts/{attemptId}/turns/{turnId}/answer-audio` — private
+  recording for the owning student, assigned lecturer, or administrator.
+
+F1 generation accepts `sourceMaterialIds` in addition to inline
+`sourceExcerpts`. Upload a private PDF/PPTX/TXT/Markdown file, call its
+`/ingest` endpoint, then include its material id in the generation request.
+Only retrieved chunks for the same course are used and each generated Draft
+stores its citation/provenance; lecturers still approve before attachment.
 
 Admin user creation provisions the Keycloak identity, assigns its initial realm role, stores the AIVES profile, and requests a password-setup email. The response reports whether the email request succeeded. The username is derived from the email local part (see [Username rule](#username-rule)).
 
@@ -313,7 +409,7 @@ the secret in any `appsettings*.json` file.
 The team chose **`database/01_schema.sql` as the source of truth** (no EF migrations). To add or change a column or table:
 
 1. Edit `database/01_schema.sql` (and `02_seed.sql` if the demo data is affected).
-   - Run the applicable forward-only upgrade scripts on existing databases; `database/04_audit_log_description.sql` adds the audit-log description column.
+   - Run the applicable forward-only upgrade scripts on existing databases; `database/04_audit_log_description.sql` adds the audit-log description column, `database/06_ai_evaluation_state.sql` adds durable AI state, `database/07_question_bank.sql` adds the F1 bank, and `database/08_course_materials.sql` adds private material/chunk storage.
 2. Update the entity in `Domain/` and the mapping in the `*DbContext.cs` of **the module that owns the table**.
    - PascalCase property names map to snake_case automatically: `TimeLimitPerAnswerSeconds` ↔ `time_limit_per_answer_seconds`.
    - Enums are stored as strings; their names must match the `CHECK` constraints in the SQL.
@@ -364,6 +460,7 @@ dotnet test
 ```
 
 Current unit tests cover the attempt state machine, deterministic mock AI,
+AI output validation/retry errors, deterministic question-generation citations,
 confirmed-only statistics, pending-report privacy, report authorization,
 stored report details, and CSV encoding/escaping and final-score handling.
 
@@ -383,7 +480,7 @@ stored report details, and CSV encoding/escaping and final-score handling.
 
 ## 9. Next steps (from the tracker)
 
-- **M2 – Adaptive AI interview:** replace the `Mock*` classes in `Interview/Application/Ai` with real adapters (OpenAI / Gemini / Google TTS…) and switch the registrations in `InterviewModule.cs`; add an audio upload API + WebSocket.
+- **M2 – Adaptive AI interview:** Ollama/Gemini and local HTTP STT/TTS adapters plus per-turn audio upload/playback are available behind `AiProviders`; remaining work is production S3/MinIO storage and Minh's SignalR partial-transcript/reconnect event contract.
 
 Google sign-in is not configured by default and requires OAuth credentials. Keycloak handles authentication and password setup/reset flows; see [keycloak/README.md](keycloak/README.md).
 

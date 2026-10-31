@@ -8,7 +8,7 @@ namespace AiOralExam.Modules.Reporting.Controllers;
 
 [ApiController]
 [Route("api/reports")]
-[Tags("Reporting")]
+[ApiExplorerSettings(GroupName = "v1")]
 [Authorize]
 public sealed class ReportsController(IReportService reports) : ControllerBase
 {

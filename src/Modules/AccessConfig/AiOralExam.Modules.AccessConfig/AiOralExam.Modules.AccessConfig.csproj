@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <!-- F7 - Access Control & Exam Configuration. Owns: users, roles, courses,
-       course_lecturers, exam_sessions, questions, rubrics, ai_service_configs, audit_logs.
+  <!-- Access Control & Exam Configuration. Owns users/courses/sessions plus
+       the F1 question-bank and private course-material metadata.
        Sign-in is handled by Keycloak; this module only reads the token's user id + role. -->
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
     <PackageReference Include="EFCore.NamingConventions" />
+    <PackageReference Include="PdfPig" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\..\Shared\AiOralExam.SharedKernel\AiOralExam.SharedKernel.csproj" />

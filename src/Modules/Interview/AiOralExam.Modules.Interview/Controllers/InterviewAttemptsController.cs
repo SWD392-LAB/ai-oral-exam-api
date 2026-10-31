@@ -10,7 +10,7 @@ namespace AiOralExam.Modules.Interview.Controllers;
 /// <summary>Student exam-flow API - Student role only (BE-PLAT-07).</summary>
 [ApiController]
 [Route("api")]
-[Tags("Interview")]
+[ApiExplorerSettings(GroupName = "v1")]
 [Authorize(Roles = Roles.Student)]
 public sealed class InterviewAttemptsController(IInterviewService interview) : ControllerBase
 {
@@ -50,5 +50,5 @@ public sealed class InterviewAttemptsController(IInterviewService interview) : C
     public Task<SubmitAnswerResponse> Submit(Guid id, SubmitAnswerRequest request, CancellationToken ct) =>
         interview.SubmitAnswerAsync(id, request, ct);
 
-    // TODO (M2): POST interview-attempts/{id}/audio (multipart) -> STT -> SubmitAnswer; WebSocket /hubs/interview
+    // Audio upload and question/answer audio playback live in InterviewAudioController.
 }
