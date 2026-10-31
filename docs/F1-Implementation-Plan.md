@@ -4,7 +4,7 @@ Cập nhật: 2026-10-25; đối chiếu repo tại `793cd73` và feedback của
 
 **Implementation note (Task-P):** backend có question-bank Draft/revision,
 course-scoped material upload/ingest and lexical retrieval, deterministic
-generation and opt-in Gemini generation. PDF page and PPTX slide citations are
+generation and opt-in Gemini/Ollama generation. PDF page and PPTX slide citations are
 preserved; generated quotes are checked against retrieved source text. Ingest
 is still synchronous and local storage is a development adapter. Platform
 rubric version/publish pin and the read-only rubric FE remain Minh/Khang seams;

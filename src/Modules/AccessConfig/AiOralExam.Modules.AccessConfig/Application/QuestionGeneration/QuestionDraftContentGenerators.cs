@@ -73,7 +73,10 @@ public sealed class QuestionGenerationProviderOptions
     public string GeminiApiKey { get; set; } = string.Empty;
     public string GeminiEndpoint { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
     public string GeminiModel { get; set; } = "gemini-3.5-flash-lite";
+    public string OllamaEndpoint { get; set; } = "http://localhost:11434/api/chat";
+    public string OllamaModel { get; set; } = "qwen2.5:3b";
     public int RequestTimeoutSeconds { get; set; } = 60;
 
     public bool UsesGemini => string.Equals(LlmProvider, "Gemini", StringComparison.OrdinalIgnoreCase);
+    public bool UsesOllama => string.Equals(LlmProvider, "Ollama", StringComparison.OrdinalIgnoreCase);
 }

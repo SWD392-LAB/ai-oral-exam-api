@@ -26,15 +26,21 @@ Pending/Failed suggestions out of confirmed student results.
 
 The default provider mode is mock. F1 generation and F3 analysis/scoring share
 `AiProviders:LlmProvider`: `Mock` uses source-grounded deterministic drafts;
-`Gemini` sends selected course evidence to Gemini and validates every returned
-source ID and verbatim citation quote before saving a Draft. For a no-billing
-voice demo, configure
+`Ollama` uses local `qwen2.5:3b`; `Gemini` sends selected course evidence to
+Gemini. Both validate every returned source ID and verbatim citation quote
+before saving a Draft. The Development profile selects Ollama, faster-whisper,
+and Piper without a hosted LLM credential. For a Gemini-backed run, configure
+`AiProviders:LlmProvider=Gemini` and its key. For a no-billing voice demo, configure
 `AiProviders:SttProvider=LocalHttp` and `AiProviders:TtsProvider=LocalHttp`.
 The sidecar request/response shapes are documented in the root README.
-The current backend exposes complete-turn audio/transcript endpoints. Partial
-transcript streaming and reconnect event ordering remain the Minh-owned
-SignalR/event integration seam; the FE should use `currentTurn.turnId` and
-retry the same turn until that contract is merged.
+The current backend exposes complete-turn audio/transcript endpoints and
+returns the local server transcript from the audio submit response. Mock mode
+can preview browser partial transcript; real API mode sends audio only to the
+configured server STT and displays its transcript after submit. SignalR
+partial-transcript streaming and ordered reconnect events remain the
+Minh-owned integration seam; the FE reloads the current turn after reconnect
+and uses `currentTurn.turnId` to retry the same turn until that contract is
+merged.
 
 ## F1 generation demo
 

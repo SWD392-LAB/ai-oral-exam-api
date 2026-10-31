@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace AiOralExam.Modules.Interview.Application.Ai;
 
-internal sealed class GeminiAnswerAnalyzer(ILlmService llm) : IAnswerAnalyzer
+internal sealed class LlmAnswerAnalyzer(ILlmService llm) : IAnswerAnalyzer
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -31,7 +31,7 @@ internal sealed class GeminiAnswerAnalyzer(ILlmService llm) : IAnswerAnalyzer
         try
         {
             return JsonSerializer.Deserialize<AnswerAnalysis>(CleanJson(json), JsonOptions)
-                   ?? throw new AiEvaluationException("Gemini returned no answer-analysis object.");
+                   ?? throw new AiEvaluationException("LLM provider returned no answer-analysis object.");
         }
         catch (AiEvaluationException)
         {
@@ -39,7 +39,7 @@ internal sealed class GeminiAnswerAnalyzer(ILlmService llm) : IAnswerAnalyzer
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or ArgumentException)
         {
-            throw new AiEvaluationException("Gemini returned invalid answer-analysis JSON.");
+            throw new AiEvaluationException("LLM provider returned invalid answer-analysis JSON.");
         }
     }
 

@@ -40,6 +40,11 @@ public static class InterviewModule
             var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
         }).RedactLoggedHeaders(header => string.Equals(header, "x-goog-api-key", StringComparison.OrdinalIgnoreCase));
+        services.AddHttpClient<OllamaLlmService>((sp, client) =>
+        {
+            var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
+        });
         services.AddHttpClient<LocalHttpSpeechToTextService>((sp, client) =>
         {
             var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;
@@ -50,28 +55,29 @@ public static class InterviewModule
             var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
         });
-        services.AddScoped<GeminiAnswerAnalyzer>();
-        services.AddScoped<GeminiRubricScorer>();
+        services.AddScoped<LlmAnswerAnalyzer>();
+        services.AddScoped<LlmRubricScorer>();
         services.AddScoped<ILlmService>(sp =>
         {
             var settings = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value;
-            return settings.UsesGemini
-                ? sp.GetRequiredService<GeminiLlmService>()
+            if (settings.UsesGemini) return sp.GetRequiredService<GeminiLlmService>();
+            return settings.UsesOllama
+                ? sp.GetRequiredService<OllamaLlmService>()
                 : sp.GetRequiredService<MockLlmService>();
         });
         services.AddScoped<IAnswerAnalyzer>(sp =>
         {
             var settings = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value;
-            IAnswerAnalyzer inner = settings.UsesGemini
-                ? sp.GetRequiredService<GeminiAnswerAnalyzer>()
+            IAnswerAnalyzer inner = settings.UsesGemini || settings.UsesOllama
+                ? sp.GetRequiredService<LlmAnswerAnalyzer>()
                 : sp.GetRequiredService<MockAnswerAnalyzer>();
             return new ValidatedAnswerAnalyzer(inner, sp.GetRequiredService<ILogger<ValidatedAnswerAnalyzer>>());
         });
         services.AddScoped<IRubricScorer>(sp =>
         {
             var settings = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value;
-            IRubricScorer inner = settings.UsesGemini
-                ? sp.GetRequiredService<GeminiRubricScorer>()
+            IRubricScorer inner = settings.UsesGemini || settings.UsesOllama
+                ? sp.GetRequiredService<LlmRubricScorer>()
                 : sp.GetRequiredService<MockRubricScorer>();
             return new ValidatedRubricScorer(inner, sp.GetRequiredService<ILogger<ValidatedRubricScorer>>());
         });

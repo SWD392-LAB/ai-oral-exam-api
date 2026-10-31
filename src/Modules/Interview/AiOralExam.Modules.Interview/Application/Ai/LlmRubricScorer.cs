@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace AiOralExam.Modules.Interview.Application.Ai;
 
-internal sealed class GeminiRubricScorer(ILlmService llm) : IRubricScorer
+internal sealed class LlmRubricScorer(ILlmService llm) : IRubricScorer
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -27,7 +27,7 @@ internal sealed class GeminiRubricScorer(ILlmService llm) : IRubricScorer
         try
         {
             return JsonSerializer.Deserialize<RubricScore>(CleanJson(json), JsonOptions)
-                   ?? throw new AiEvaluationException("Gemini returned no rubric-score object.");
+                   ?? throw new AiEvaluationException("LLM provider returned no rubric-score object.");
         }
         catch (AiEvaluationException)
         {
@@ -35,7 +35,7 @@ internal sealed class GeminiRubricScorer(ILlmService llm) : IRubricScorer
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or ArgumentException)
         {
-            throw new AiEvaluationException("Gemini returned invalid rubric-score JSON.");
+            throw new AiEvaluationException("LLM provider returned invalid rubric-score JSON.");
         }
     }
 

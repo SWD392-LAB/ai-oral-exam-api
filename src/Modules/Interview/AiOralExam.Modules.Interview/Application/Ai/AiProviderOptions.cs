@@ -15,6 +15,8 @@ public sealed class AiProviderOptions
     public string GeminiApiKey { get; set; } = "";
     public string GeminiEndpoint { get; set; } = "https://generativelanguage.googleapis.com/v1beta";
     public string GeminiModel { get; set; } = "gemini-3.5-flash-lite";
+    public string OllamaEndpoint { get; set; } = "http://localhost:11434/api/chat";
+    public string OllamaModel { get; set; } = "qwen2.5:3b";
 
     /// <summary>HTTP endpoint for a local faster-whisper service.</summary>
     public string LocalSttEndpoint { get; set; } = "http://localhost:8001/transcribe";
@@ -30,6 +32,7 @@ public sealed class AiProviderOptions
     public int RequestTimeoutSeconds { get; set; } = 60;
 
     public bool UsesGemini => string.Equals(LlmProvider, "Gemini", StringComparison.OrdinalIgnoreCase);
+    public bool UsesOllama => string.Equals(LlmProvider, "Ollama", StringComparison.OrdinalIgnoreCase);
     public bool UsesLocalStt => string.Equals(SttProvider, "LocalHttp", StringComparison.OrdinalIgnoreCase);
     public bool UsesLocalTts => string.Equals(TtsProvider, "LocalHttp", StringComparison.OrdinalIgnoreCase);
 }

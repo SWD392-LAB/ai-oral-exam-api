@@ -319,7 +319,7 @@ confirmed examples can be read without submitting a new review.
 | `Interview:AllowRetake` | `false` | globally allows another attempt after a student's prior attempt is finished; not a per-session setting |
 | `Interview:Language` | `Vietnamese` | language passed to the LLM analyzer/scorer |
 | `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |
-| `AiProviders:LlmProvider` | `Mock` | `Mock` or `Gemini`; controls F1 question generation and F3 analysis/scoring. Gemini reads `AiProviders:GeminiApiKey` from user-secrets/environment |
+| `AiProviders:LlmProvider` | `Mock` | `Mock`, `Ollama`, or `Gemini`; controls F1 question generation and F3 analysis/scoring. Gemini reads `AiProviders:GeminiApiKey` from user-secrets/environment |
 | `AiProviders:SttProvider` | `Mock` | `Mock` or `LocalHttp` (faster-whisper sidecar) |
 | `AiProviders:TtsProvider` | `Mock` | `Mock` or `LocalHttp` (Piper/Coqui sidecar) |
 | `AiProviders:SpeechLanguage` | `vi-VN` | language sent to STT/TTS; use `en-US` for English |
@@ -331,32 +331,38 @@ confirmed examples can be read without submitting a new review.
 
 ### AI provider modes and audio API
 
-The committed `appsettings.Development.json` selects real providers: Gemini
-Flash-Lite for F1/F3 LLM calls and local faster-whisper/Piper services for
-speech. The Gemini API free tier has request limits and requires an API key;
-Google's pricing page says free-tier prompts may be used to improve Google
-products. Send only material you are allowed to share with that service. See
+The committed `appsettings.Development.json` selects local Ollama
+(`qwen2.5:3b`) for F1/F3 LLM calls and local faster-whisper/Piper services for
+speech, so a hosted LLM credential is not needed for local smoke testing.
+Qwen 2.5 3B is about 1.9 GB and is distributed under the Qwen license; review
+the [Ollama model card](https://ollama.com/library/qwen2.5:3b) before
+redistributing it. Gemini remains available as an optional provider. Its free
+tier has account and rate limits, and Google says free-tier prompts may be
+used to improve products; send only material you are allowed to share. See
 [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) and
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key).
 
-Start the local speech services (the first start downloads the Whisper model
-and Vietnamese/English Piper voices):
+Start the local providers (first start downloads the Ollama image, Whisper
+model, and Vietnamese/English Piper voices):
 
 ```sh
-docker compose --profile local-ai up -d --build faster-whisper piper-tts
-docker compose ps faster-whisper piper-tts
+docker compose --profile local-ai up -d --build ollama faster-whisper piper-tts
+docker compose exec ollama ollama pull qwen2.5:3b
+docker compose ps ollama faster-whisper piper-tts
 ```
 
-Then store the Gemini key outside the repository and start the API in
-Development:
+Start the API in Development:
 
 ```sh
-dotnet user-secrets set "AiProviders:GeminiApiKey" "..." --project src/AiOralExam.Api
 ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AiOralExam.Api
 ```
 
-The sidecars listen on `127.0.0.1:8001` and `127.0.0.1:8002`; model files
-persist in Docker volumes. Stop them with `docker compose stop faster-whisper piper-tts`.
+To use Gemini instead, set `AiProviders:LlmProvider=Gemini` and configure
+`AiProviders:GeminiApiKey` via user-secrets or an environment variable.
+
+The providers listen on `127.0.0.1:11434`, `127.0.0.1:8001`, and
+`127.0.0.1:8002`; model files persist in Docker volumes. Stop them with
+`docker compose stop ollama faster-whisper piper-tts`.
 To choose a smaller/faster Whisper model, set `WHISPER_MODEL=base` before
 running Compose. The API's general and test configuration still defaults to
 deterministic `Mock` providers; the test factory explicitly keeps tests offline.
@@ -474,7 +480,7 @@ stored report details, and CSV encoding/escaping and final-score handling.
 
 ## 9. Next steps (from the tracker)
 
-- **M2 – Adaptive AI interview:** Gemini and local HTTP STT/TTS adapters plus per-turn audio upload/playback are available behind `AiProviders`; remaining work is production S3/MinIO storage and SignalR partial-transcript/reconnect orchestration.
+- **M2 – Adaptive AI interview:** Ollama/Gemini and local HTTP STT/TTS adapters plus per-turn audio upload/playback are available behind `AiProviders`; remaining work is production S3/MinIO storage and Minh's SignalR partial-transcript/reconnect event contract.
 
 Google sign-in is not configured by default and requires OAuth credentials. Keycloak handles authentication and password setup/reset flows; see [keycloak/README.md](keycloak/README.md).
 

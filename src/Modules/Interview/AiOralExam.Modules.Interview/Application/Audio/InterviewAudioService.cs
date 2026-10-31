@@ -87,7 +87,8 @@ internal sealed class InterviewAudioService(
         if (string.IsNullOrWhiteSpace(transcript))
             throw new AiEvaluationException("Speech transcription returned an empty transcript.");
 
-        return await interview.SubmitAnswerAsync(attemptId, new SubmitAnswerRequest(transcript, turnId), ct);
+        var result = await interview.SubmitAnswerAsync(attemptId, new SubmitAnswerRequest(transcript, turnId), ct);
+        return result with { Transcript = transcript };
     }
 
     public async Task<StoredAudio> GetQuestionAudioAsync(Guid attemptId, Guid turnId, CancellationToken ct = default)
@@ -155,7 +156,8 @@ internal sealed class InterviewAudioService(
     private static void ValidateContentType(string contentType)
     {
         var accepted = new[] { "audio/webm", "audio/wav", "audio/x-wav", "audio/mpeg", "audio/mp3", "audio/ogg", "audio/mp4" };
-        if (!accepted.Contains(contentType, StringComparer.OrdinalIgnoreCase))
+        var mediaType = contentType.Split(';', 2)[0].Trim();
+        if (!accepted.Contains(mediaType, StringComparer.OrdinalIgnoreCase))
             throw new ValidationException(new Dictionary<string, string[]> { ["file"] = ["Unsupported audio format."] });
     }
 

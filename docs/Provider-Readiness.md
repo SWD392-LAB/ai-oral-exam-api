@@ -1,25 +1,33 @@
 # Provider readiness for Task-P
 
-The provider-neutral API keeps `Mock` as its general/test default. The committed
-`Development` profile selects Gemini for LLM calls and local faster-whisper and
-Piper sidecars for speech:
+The provider-neutral API keeps `Mock` as its general/test default. The
+`Development` profile selects local Ollama for F1/F3 LLM calls, faster-whisper
+for STT, and Piper for speech:
 
 | Capability | Provider | Transport/output | Credential |
 | --- | --- | --- | --- |
-| F1 generation and F3 analysis/scoring | Gemini 3.5 Flash-Lite | JSON response; question citations and interview analyzer/scorer outputs are validated | `AiProviders:GeminiApiKey` via user-secrets/environment; free-tier quota applies |
+| F1 generation and F3 analysis/scoring | Ollama `qwen2.5:3b` | JSON response; question citations and interview analyzer/scorer outputs are validated | none; local CPU/container |
 | STT | local faster-whisper `small` model | multipart `file` + `language`, JSON `{text}` | none; local CPU/container |
 | TTS | local Piper Vietnamese/English voices | JSON `{text, language}`, WAV bytes | none; local CPU/container |
 
-Gemini's free tier is subject to account eligibility and rate limits; Google
-states that free-tier prompts may be used to improve its products. Do not send
-restricted course material through that tier unless its terms are acceptable
-for that material. See the official [pricing](https://ai.google.dev/gemini-api/docs/pricing)
-and [API-key](https://ai.google.dev/gemini-api/docs/api-key) pages.
+Gemini remains available as an optional provider with `AiProviders:LlmProvider=Gemini`
+and a key supplied through user-secrets or the environment. Its free tier has
+account eligibility and rate limits, and Google states that free-tier prompts
+may be used to improve its products. Do not send restricted course material
+through that tier unless its terms are acceptable. See Google's official
+[pricing](https://ai.google.dev/gemini-api/docs/pricing) and
+[API-key](https://ai.google.dev/gemini-api/docs/api-key) pages.
 
-Start the two speech services with
-`docker compose --profile local-ai up -d --build faster-whisper piper-tts`.
-They bind to loopback ports 8001 and 8002 and persist model downloads in named
-Docker volumes. Piper's runtime is GPL-3.0-or-later, while voice assets have
+The local default uses the Qwen 2.5 3B model (about 1.9 GB); Ollama lists the
+3B release under the Qwen license, so review that license before redistribution.
+See the [Ollama model card](https://ollama.com/library/qwen2.5:3b).
+
+Start the local providers with
+`docker compose --profile local-ai up -d --build ollama faster-whisper piper-tts`,
+then pull the LLM once with
+`docker compose exec ollama ollama pull qwen2.5:3b`. They bind to loopback
+ports 11434, 8001, and 8002 and persist model downloads in named Docker
+volumes. Piper's runtime is GPL-3.0-or-later, while voice assets have
 individual terms; review the upstream [package license](https://github.com/OHF-Voice/piper1-gpl/blob/main/setup.py)
 and [voice guidance](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md)
 before redistributing those artifacts.
@@ -31,13 +39,13 @@ source ID belongs to retrieved evidence and the quote is verbatim; F3
 validators reject missing, duplicate, unknown, or out-of-range rubric
 criteria and return `ai_evaluation_failed` for retry.
 
-Record deployment measurements in this table when a Gemini key and approved
-sample files are available (the repository intentionally leaves secrets and
-private audio out of source control):
+Record deployment measurements in this table for each real-provider run using
+approved sample files. The repository intentionally leaves credentials and
+private audio out of source control:
 
 | Run | Provider/model | Language | Input/output codec | p50/p95 latency | Quota/limit | Credential source |
 | --- | --- | --- | --- | --- | --- | --- |
-| pending | Gemini 3.5 Flash-Lite | vi-VN or en-US | JSON | pending | free-tier quota | user-secrets/env; no key configured in this workspace |
+| pending | Ollama `qwen2.5:3b` | vi-VN and en-US | JSON | pending | local CPU; no hosted quota | none |
 | 2026-10-31 local smoke | faster-whisper `small` | vi-VN and en-US | WAV -> JSON text | one sample per language; latency not benchmarked | local CPU | none |
 | 2026-10-31 local smoke | Piper `vi_VN-vais1000-medium`, `en_US-lessac-medium` | vi-VN and en-US | JSON -> WAV | one sample per language; latency not benchmarked | local CPU | none |
 
@@ -65,5 +73,5 @@ Run this before enabling real providers in a deployment:
    transcript/audio, `Failed` response state, and a successful retry.
 
 Latency, quota, and provider quality are deployment measurements and should be
-recorded from this protocol. Local speech smoke checks do not require a Gemini
-key; F1/F3 LLM smoke checks do.
+recorded from this protocol. The local Ollama, Whisper, and Piper smoke checks
+do not require hosted credentials. Only a Gemini run needs a Google API key.

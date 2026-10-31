@@ -47,13 +47,18 @@ public static class AccessConfigModule
             var seconds = sp.GetRequiredService<IOptions<QuestionGenerationProviderOptions>>().Value.RequestTimeoutSeconds;
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
         }).RedactLoggedHeaders(header => string.Equals(header, "x-goog-api-key", StringComparison.OrdinalIgnoreCase));
+        services.AddHttpClient<OllamaQuestionDraftContentGenerator>((sp, client) =>
+        {
+            var seconds = sp.GetRequiredService<IOptions<QuestionGenerationProviderOptions>>().Value.RequestTimeoutSeconds;
+            client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
+        });
         services.AddSingleton<DeterministicQuestionDraftContentGenerator>();
         services.AddScoped<IQuestionDraftContentGenerator>(sp =>
         {
             var settings = sp.GetRequiredService<IOptions<QuestionGenerationProviderOptions>>().Value;
-            return settings.UsesGemini
-                ? sp.GetRequiredService<GeminiQuestionDraftContentGenerator>()
-                : sp.GetRequiredService<DeterministicQuestionDraftContentGenerator>();
+            if (settings.UsesGemini) return sp.GetRequiredService<GeminiQuestionDraftContentGenerator>();
+            if (settings.UsesOllama) return sp.GetRequiredService<OllamaQuestionDraftContentGenerator>();
+            return sp.GetRequiredService<DeterministicQuestionDraftContentGenerator>();
         });
         services.AddScoped<IQuestionGenerator, QuestionGenerator>();
         services.AddScoped<IQuestionBankService, QuestionBankService>();

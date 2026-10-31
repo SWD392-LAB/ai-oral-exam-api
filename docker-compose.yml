@@ -108,6 +108,21 @@ services:
       retries: 30
       start_period: 120s
 
+  ollama:
+    profiles: ["local-ai"]
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
   piper-tts:
     profiles: ["local-ai"]
     build:
@@ -134,3 +149,4 @@ volumes:
   keycloak-data:
   whisper-models:
   piper-voices:
+  ollama-models:
