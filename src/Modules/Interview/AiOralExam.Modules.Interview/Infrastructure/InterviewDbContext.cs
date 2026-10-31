@@ -53,6 +53,7 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.Property(x => x.AiSuggestedScore).HasPrecision(5, 2);
             e.Property(x => x.AiEvaluationState).HasMaxLength(20);
             e.Property(x => x.AiEvaluationError).HasMaxLength(500);
+            e.Property(x => x.AiEvaluationClaimToken).IsConcurrencyToken();
             e.HasMany(x => x.Turns).WithOne().HasForeignKey(t => t.QuestionResponseId);
             e.HasMany(x => x.CriterionScores).WithOne().HasForeignKey(s => s.QuestionResponseId);
         });
@@ -69,7 +70,8 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.ToTable("criterion_scores");
             e.HasKey(x => x.Id);
             e.Property(x => x.Points).HasPrecision(5, 2);
-            e.HasIndex(x => new { x.QuestionResponseId, x.RubricCriterionId }).IsUnique();
+            e.HasIndex(x => new { x.QuestionResponseId, x.RubricCriterionId }).IsUnique()
+                .HasDatabaseName("ux_criterion_scores_response_criterion");
         });
 
         b.Entity<ScoreReview>(e =>

@@ -17,6 +17,8 @@ public class QuestionResponse
     public DateTime? EvaluatedAt { get; set; }
     public AiEvaluationState AiEvaluationState { get; set; } = AiEvaluationState.NotStarted;
     public string? AiEvaluationError { get; set; }
+    /// <summary>Identifies the request that currently owns the evaluation claim.</summary>
+    public Guid? AiEvaluationClaimToken { get; set; }
 
     public ICollection<InterviewTurn> Turns { get; set; } = new List<InterviewTurn>();
     public ICollection<CriterionScore> CriterionScores { get; set; } = new List<CriterionScore>();
@@ -59,6 +61,7 @@ public class QuestionResponse
         EvaluatedAt = utcNow;
         AiEvaluationState = AiEvaluationState.Completed;
         AiEvaluationError = null;
+        AiEvaluationClaimToken = null;
         IsFinished = true;
     }
 }

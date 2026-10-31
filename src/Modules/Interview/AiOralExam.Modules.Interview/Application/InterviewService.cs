@@ -142,6 +142,7 @@ internal sealed class InterviewService(
         // follow-up and moved the response back to Completed.
         var previousEvaluationState = response.AiEvaluationState;
         var previousEvaluationError = response.AiEvaluationError;
+        var claimToken = Guid.NewGuid();
         var claimed = await db.QuestionResponses
             .Where(candidate => candidate.Id == response.Id
                 && !candidate.IsFinished
@@ -152,12 +153,15 @@ internal sealed class InterviewService(
                     .Select(candidateTurn => (Guid?)candidateTurn.Id).FirstOrDefault() == turn.Id)
             .ExecuteUpdateAsync(update => update
                 .SetProperty(candidate => candidate.AiEvaluationState, AiEvaluationState.Pending)
-                .SetProperty(candidate => candidate.AiEvaluationError, (string?)null), ct);
+                .SetProperty(candidate => candidate.AiEvaluationError, (string?)null)
+                .SetProperty(candidate => candidate.AiEvaluationClaimToken, claimToken), ct);
         if (claimed != 1)
             throw new ConflictException("turn_processing", "This turn is already being evaluated or is no longer current.");
 
         response.AiEvaluationState = AiEvaluationState.Pending;
         response.AiEvaluationError = null;
+        response.AiEvaluationClaimToken = claimToken;
+        db.Entry(response).Property(candidate => candidate.AiEvaluationClaimToken).OriginalValue = claimToken;
 
         // 1) Store the answer. Past the time limit + grace => timed out, the transcript is not stored.
         var now = UtcNow;
@@ -185,10 +189,11 @@ internal sealed class InterviewService(
             {
                 await db.QuestionResponses
                     .Where(candidate => candidate.Id == response.Id
-                        && candidate.AiEvaluationState == AiEvaluationState.Pending)
+                        && candidate.AiEvaluationClaimToken == claimToken)
                     .ExecuteUpdateAsync(update => update
                         .SetProperty(candidate => candidate.AiEvaluationState, previousEvaluationState)
-                        .SetProperty(candidate => candidate.AiEvaluationError, previousEvaluationError), CancellationToken.None);
+                        .SetProperty(candidate => candidate.AiEvaluationError, previousEvaluationError)
+                        .SetProperty(candidate => candidate.AiEvaluationClaimToken, (Guid?)null), CancellationToken.None);
             }
             catch (Exception releaseException)
             {
@@ -213,6 +218,7 @@ internal sealed class InterviewService(
                 response.AddTurn(TurnType.FollowUp, analysis.FollowUpQuestion!, now);
                 response.AiEvaluationState = AiEvaluationState.Completed;
                 response.AiEvaluationError = null;
+                response.AiEvaluationClaimToken = null;
                 await db.SaveChangesAsync(ct);
                 logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
                     attempt.Id, response.FollowUpCount, question.Id);
@@ -271,6 +277,7 @@ internal sealed class InterviewService(
             turn.AnsweredAt = null;
             response.AiEvaluationState = AiEvaluationState.Failed;
             response.AiEvaluationError = "AI evaluation failed. Retry is available.";
+            response.AiEvaluationClaimToken = null;
             await db.SaveChangesAsync(ct);
             logger.LogWarning("Attempt {AttemptId}: AI evaluation failed for question {QuestionId}; answer kept for retry",
                 attempt.Id, question.Id);

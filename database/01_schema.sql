@@ -338,6 +338,7 @@ CREATE TABLE question_responses (
     evaluated_at        TIMESTAMPTZ,
     ai_evaluation_state VARCHAR(20) NOT NULL DEFAULT 'NotStarted',
     ai_evaluation_error VARCHAR(500),
+    ai_evaluation_claim_token UUID,
     CONSTRAINT ck_question_response_ai_state
         CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed')),
     UNIQUE (attempt_id, question_id)
@@ -367,7 +368,7 @@ CREATE TABLE criterion_scores (
     rubric_criterion_id   UUID          NOT NULL REFERENCES rubric_criteria(id),
     points                NUMERIC(5,2)  NOT NULL CHECK (points >= 0),
     comment               TEXT,
-    UNIQUE (question_response_id, rubric_criterion_id)
+    CONSTRAINT ux_criterion_scores_response_criterion UNIQUE (question_response_id, rubric_criterion_id)
 );
 CREATE INDEX ix_criterion_scores_criterion ON criterion_scores(rubric_criterion_id);
 
