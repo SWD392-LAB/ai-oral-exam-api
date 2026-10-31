@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Security.Cryptography;
+using System.Text;
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Courses;
 using AiOralExam.Modules.AccessConfig.Application.QuestionGeneration;
@@ -8,6 +10,7 @@ using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 
 namespace AiOralExam.Modules.AccessConfig.Application.QuestionBank;
 
@@ -34,10 +37,11 @@ internal sealed class QuestionBankService(
     {
         await EnsureCourseAccessAsync(courseId, ct);
         ValidateText(request.Topic, request.Content);
+        await EnsureContentNotUsedAsync(courseId, request.Content, null, ct);
         var item = NewItem(courseId, request.Topic, request.Bloom, request.Content, QuestionBankOrigin.Manual, null);
         db.QuestionBankItems.Add(item);
         AddAudit(AuditActions.Create, item.Id, $"Manual question bank item in course {courseId}");
-        await db.SaveChangesAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return ToDto(item);
     }
 
@@ -60,20 +64,21 @@ internal sealed class QuestionBankService(
         }
         if (errors.Count > 0) throw new ValidationException(errors);
 
-        var duplicates = request.Items!.Select(x => x.Content.Trim().ToUpperInvariant())
+        var duplicates = request.Items!.Select(x => ContentHashFor(x.Content))
             .GroupBy(x => x).Where(x => x.Count() > 1).Select(x => x.Key).ToHashSet();
         if (duplicates.Count > 0)
             throw new ValidationException(new Dictionary<string, string[]> { ["items"] = ["Duplicate question content is not allowed in one import batch."] });
 
-        var existing = await db.QuestionBankItems.Where(x => x.CourseId == courseId)
-            .Select(x => x.Content.ToUpper()).ToListAsync(ct);
-        if (request.Items!.Any(x => existing.Contains(x.Content.Trim().ToUpperInvariant())))
-            throw new ConflictException("question_bank_duplicate", "A question with the same content already exists in this course.");
+        var incomingHashes = request.Items!.Select(x => ContentHashFor(x.Content)).ToHashSet(StringComparer.Ordinal);
+        var existingHashes = await db.QuestionBankItems.Where(x => x.CourseId == courseId)
+            .Select(x => x.ContentHash).ToListAsync(ct);
+        if (incomingHashes.Overlaps(existingHashes))
+            throw DuplicateQuestion();
 
         var imported = request.Items!.Select(x => NewItem(courseId, x.Topic, x.Bloom, x.Content, QuestionBankOrigin.Import, null)).ToList();
         db.QuestionBankItems.AddRange(imported);
         foreach (var item in imported) AddAudit(AuditActions.Create, item.Id, $"Imported question bank item in course {courseId}");
-        await db.SaveChangesAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return imported.Select(ToDto).ToList();
     }
 
@@ -84,13 +89,15 @@ internal sealed class QuestionBankService(
         var item = await GetItemAsync(courseId, itemId, ct);
         if (item.Status != QuestionBankStatus.Draft)
             throw new ConflictException("question_bank_locked", "Only Draft bank items can be edited.");
+        await EnsureContentNotUsedAsync(courseId, request.Content, item.Id, ct);
         item.Topic = request.Topic.Trim();
         item.Bloom = request.Bloom.ToString();
         item.Content = request.Content.Trim();
+        item.ContentHash = ContentHashFor(item.Content);
         item.UpdatedAt = DateTime.UtcNow;
         AddRevision(item, null);
         AddAudit(AuditActions.Update, item.Id, "Updated Draft question bank item");
-        await db.SaveChangesAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return ToDto(item);
     }
 
@@ -108,7 +115,7 @@ internal sealed class QuestionBankService(
             JsonSerializer.Serialize(new { d.PlatformRubricVersionId, d.Citations, SourceMaterialIds = sourceMaterialIds ?? Array.Empty<Guid>() }), d.DraftId)).ToList();
         db.QuestionBankItems.AddRange(items);
         foreach (var item in items) AddAudit(AuditActions.Create, item.Id, "AI generated Draft question bank item");
-        await db.SaveChangesAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return items.Select(ToDto).ToList();
     }
 
@@ -154,8 +161,9 @@ internal sealed class QuestionBankService(
     {
         await EnsureCourseAccessAsync(courseId, ct);
         var item = await GetItemAsync(courseId, itemId, ct);
-        if (item.Status == QuestionBankStatus.Archived)
-            throw new ConflictException("question_bank_locked", "Archived bank items cannot change status.");
+        if (item.Status != QuestionBankStatus.Draft)
+            throw new ConflictException("question_bank_transition_invalid",
+                "Only Draft items can be approved or rejected. Create a new Draft to resubmit a rejected item.");
         item.Status = status;
         item.UpdatedAt = DateTime.UtcNow;
         AddAudit(status == QuestionBankStatus.Approved ? AuditActions.Approve : AuditActions.Reject, item.Id, $"Question bank item marked {status}");
@@ -186,6 +194,7 @@ internal sealed class QuestionBankService(
         var item = new QuestionBankItem
         {
             Id = itemId ?? Guid.NewGuid(), CourseId = courseId, Topic = topic.Trim(), Bloom = bloom.ToString(), Content = content.Trim(),
+            ContentHash = ContentHashFor(content),
             Origin = origin, Status = QuestionBankStatus.Draft, CreatedBy = currentUser.Id, CreatedAt = now, UpdatedAt = now
         };
         AddRevision(item, provenance);
@@ -204,6 +213,51 @@ internal sealed class QuestionBankService(
 
     private void AddAudit(string action, Guid id, string description) =>
         CourseService.AddAudit(db, currentUser.Id, action, AuditEntities.QuestionBankItem, id, description);
+
+    private async Task SaveQuestionContentChangesAsync(CancellationToken ct)
+    {
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch (DbUpdateException ex) when (IsQuestionContentDuplicate(ex))
+        {
+            throw DuplicateQuestion();
+        }
+    }
+
+    private async Task EnsureContentNotUsedAsync(Guid courseId, string content, Guid? exceptItemId, CancellationToken ct)
+    {
+        var hash = ContentHashFor(content);
+        var duplicateExists = await db.QuestionBankItems.AnyAsync(item => item.CourseId == courseId
+            && item.ContentHash == hash
+            && (exceptItemId == null || item.Id != exceptItemId), ct);
+        if (duplicateExists) throw DuplicateQuestion();
+    }
+
+    private static ConflictException DuplicateQuestion() =>
+        new("question_bank_duplicate", "A question with the same content already exists in this course.");
+
+    private static bool IsQuestionContentDuplicate(DbUpdateException exception)
+    {
+        for (var cause = exception.InnerException; cause is not null; cause = cause.InnerException)
+        {
+            if (cause is PostgresException
+                {
+                    SqlState: PostgresErrorCodes.UniqueViolation,
+                    ConstraintName: "ux_question_bank_course_content_hash"
+                })
+                return true;
+        }
+        return false;
+    }
+
+    private static string ContentHashFor(string content)
+    {
+        var normalized = string.Join(' ', content.Trim().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            .ToUpperInvariant();
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant();
+    }
 
     private static void ValidateText(string topic, string content)
     {

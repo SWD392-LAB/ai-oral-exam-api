@@ -8,6 +8,7 @@ public class QuestionBankItem
     public string Topic { get; set; } = null!;
     public string Bloom { get; set; } = null!;
     public string Content { get; set; } = null!;
+    public string ContentHash { get; set; } = null!;
     public QuestionBankOrigin Origin { get; set; }
     public QuestionBankStatus Status { get; set; } = QuestionBankStatus.Draft;
     public Guid CreatedBy { get; set; }

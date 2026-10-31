@@ -6,6 +6,7 @@ SELECT set_config('aives.application_schema', :'app_schema', true);
 DO $$
 DECLARE
     v_schema text := NULLIF(current_setting('aives.application_schema', true), '');
+    v_has_duplicates boolean;
 BEGIN
     IF v_schema IS NULL THEN
         RAISE EXCEPTION 'Set the required psql variable app_schema to the application schema and retry.';
@@ -18,6 +19,7 @@ BEGIN
             topic VARCHAR(200) NOT NULL,
             bloom VARCHAR(30) NOT NULL CHECK (bloom IN ('Remember','Understand','Apply','Analyze')),
             content TEXT NOT NULL,
+            content_hash VARCHAR(64) NOT NULL,
             origin VARCHAR(20) NOT NULL CHECK (origin IN ('Manual','Import','Ai')),
             status VARCHAR(20) NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft','Approved','Rejected','Archived')),
             created_by UUID NOT NULL REFERENCES %I.users(id),
@@ -25,7 +27,26 @@ BEGIN
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
     $sql$, v_schema, v_schema, v_schema);
+    EXECUTE format('ALTER TABLE %I.question_bank_items ADD COLUMN IF NOT EXISTS content_hash VARCHAR(64)', v_schema);
+    EXECUTE format($sql$
+        UPDATE %I.question_bank_items
+           SET content_hash = encode(sha256(convert_to(upper(btrim(regexp_replace(content, '\s+', ' ', 'g'))), 'UTF8')), 'hex')
+         WHERE content_hash IS NULL
+    $sql$, v_schema);
+    EXECUTE format('ALTER TABLE %I.question_bank_items ALTER COLUMN content_hash SET NOT NULL', v_schema);
+    EXECUTE format($sql$
+        SELECT EXISTS (
+            SELECT 1
+              FROM %I.question_bank_items
+             GROUP BY course_id, content_hash
+            HAVING count(*) > 1
+        )
+    $sql$, v_schema) INTO v_has_duplicates;
+    IF v_has_duplicates THEN
+        RAISE EXCEPTION 'Duplicate question-bank content exists; resolve duplicates before applying the content hash index.';
+    END IF;
     EXECUTE format('CREATE INDEX IF NOT EXISTS ix_question_bank_course_status ON %I.question_bank_items(course_id, status)', v_schema);
+    EXECUTE format('CREATE UNIQUE INDEX IF NOT EXISTS ux_question_bank_course_content_hash ON %I.question_bank_items(course_id, content_hash)', v_schema);
     EXECUTE format($sql$
         CREATE TABLE IF NOT EXISTS %I.question_bank_revisions (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

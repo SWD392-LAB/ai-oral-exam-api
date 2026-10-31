@@ -143,6 +143,7 @@ CREATE TABLE question_bank_items (
     topic       VARCHAR(200) NOT NULL,
     bloom       VARCHAR(30) NOT NULL CHECK (bloom IN ('Remember', 'Understand', 'Apply', 'Analyze')),
     content     TEXT NOT NULL,
+    content_hash VARCHAR(64) NOT NULL,
     origin      VARCHAR(20) NOT NULL CHECK (origin IN ('Manual', 'Import', 'Ai')),
     status      VARCHAR(20) NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Approved', 'Rejected', 'Archived')),
     created_by  UUID NOT NULL REFERENCES users(id),
@@ -150,6 +151,7 @@ CREATE TABLE question_bank_items (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_question_bank_course_status ON question_bank_items(course_id, status);
+CREATE UNIQUE INDEX ux_question_bank_course_content_hash ON question_bank_items(course_id, content_hash);
 
 CREATE TABLE question_bank_revisions (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -334,9 +336,10 @@ CREATE TABLE question_responses (
     ai_suggested_score  NUMERIC(5,2)  CHECK (ai_suggested_score >= 0),
     ai_feedback         TEXT,
     evaluated_at        TIMESTAMPTZ,
-    ai_evaluation_state VARCHAR(20) NOT NULL DEFAULT 'NotStarted'
-                        CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed')),
+    ai_evaluation_state VARCHAR(20) NOT NULL DEFAULT 'NotStarted',
     ai_evaluation_error VARCHAR(500),
+    CONSTRAINT ck_question_response_ai_state
+        CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed')),
     UNIQUE (attempt_id, question_id)
 );
 CREATE INDEX ix_responses_question ON question_responses(question_id);

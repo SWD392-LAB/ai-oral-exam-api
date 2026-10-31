@@ -13,9 +13,24 @@ internal sealed class LocalMaterialStorage(IOptions<MaterialOptions> options) : 
         var path = ResolvePath(key);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var temporary = path + ".uploading";
-        await using (var target = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, true))
-            await content.CopyToAsync(target, ct);
-        File.Move(temporary, path, true);
+        try
+        {
+            await using (var target = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, true))
+                await content.CopyToAsync(target, ct);
+            File.Move(temporary, path, true);
+        }
+        catch
+        {
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch
+            {
+                // Preserve the original write/move error.
+            }
+            throw;
+        }
         return key;
     }
 
@@ -25,6 +40,13 @@ internal sealed class LocalMaterialStorage(IOptions<MaterialOptions> options) : 
         return Task.FromResult<Stream?>(File.Exists(path)
             ? new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, true)
             : null);
+    }
+
+    public Task DeleteAsync(string key, CancellationToken ct)
+    {
+        var path = ResolvePath(key);
+        if (File.Exists(path)) File.Delete(path);
+        return Task.CompletedTask;
     }
 
     private string ResolvePath(string key)

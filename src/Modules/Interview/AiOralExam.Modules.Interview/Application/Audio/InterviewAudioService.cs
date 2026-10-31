@@ -55,17 +55,41 @@ internal sealed class InterviewAudioService(
 
         buffer.Position = 0;
         var key = await storage.PutAsync(attemptId, turnId, buffer, contentType, ct);
+        var previousKey = currentTurn.AudioUrl;
         currentTurn.AudioUrl = key;
         try
         {
-            // Reference the private object before invoking STT/LLM. A failed
-            // provider can therefore be retried without losing the recording.
+            // Commit the new immutable object reference before invoking STT/LLM.
+            // The previous recording remains available until this save succeeds.
             await db.SaveChangesAsync(ct);
         }
         catch
         {
-            await storage.DeleteAsync(key, ct);
+            currentTurn.AudioUrl = previousKey;
+            try
+            {
+                await storage.DeleteAsync(key, CancellationToken.None);
+            }
+            catch (Exception cleanupException)
+            {
+                logger.LogWarning(cleanupException, "Could not remove unreferenced audio upload {AudioKey}", key);
+            }
             throw;
+        }
+
+        // A later successful upload for the same current turn replaces the
+        // selected recording. Delete the old object only after its replacement
+        // has been committed in the database.
+        if (!string.IsNullOrWhiteSpace(previousKey) && !string.Equals(previousKey, key, StringComparison.Ordinal))
+        {
+            try
+            {
+                await storage.DeleteAsync(previousKey, CancellationToken.None);
+            }
+            catch (Exception cleanupException)
+            {
+                logger.LogWarning(cleanupException, "Could not remove replaced audio upload {AudioKey}", previousKey);
+            }
         }
 
         buffer.Position = 0;

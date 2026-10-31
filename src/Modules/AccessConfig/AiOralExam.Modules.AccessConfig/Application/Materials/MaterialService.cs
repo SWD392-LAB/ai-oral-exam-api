@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Xml;
 using System.Xml.Linq;
 using AiOralExam.Modules.AccessConfig.Application.AuditLogs;
 using AiOralExam.Modules.AccessConfig.Application.Courses;
@@ -10,6 +11,7 @@ using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.DocumentLayoutAnalysis.TextExtractor;
@@ -20,8 +22,14 @@ internal sealed class MaterialService(
     AccessConfigDbContext db,
     IMaterialStorage storage,
     ICurrentUser currentUser,
-    IOptions<MaterialOptions> options) : IMaterialService
+    IOptions<MaterialOptions> options,
+    ILogger<MaterialService> logger) : IMaterialService
 {
+    private const int MaxPptxEntries = 512;
+    private const int MaxPptxSlides = 200;
+    private const long MaxPptxSlideBytes = 1024 * 1024;
+    private const long MaxPptxTotalSlideBytes = 16 * 1024 * 1024;
+
     private readonly MaterialOptions _options = options.Value;
 
     public async Task<CourseMaterialDto> UploadAsync(Guid courseId, string fileName, string contentType, Stream content, long? declaredLength, CancellationToken ct)
@@ -38,6 +46,7 @@ internal sealed class MaterialService(
         await content.CopyToAsync(buffer, ct);
         if (buffer.Length == 0) throw new ValidationException(new Dictionary<string, string[]> { ["file"] = ["Material file cannot be empty."] });
         if (buffer.Length > _options.MaxBytes) throw TooLarge();
+        ValidateContentSignature(extension, buffer);
 
         var material = new CourseMaterial
         {
@@ -48,9 +57,24 @@ internal sealed class MaterialService(
         };
         buffer.Position = 0;
         material.StorageKey = await storage.PutAsync(courseId, material.Id, safeName, buffer, ct);
-        db.CourseMaterials.Add(material);
-        CourseService.AddAudit(db, currentUser.Id, AuditActions.Create, AuditEntities.CourseMaterial, material.Id, $"Uploaded material for course {course.Code}");
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            db.CourseMaterials.Add(material);
+            CourseService.AddAudit(db, currentUser.Id, AuditActions.Create, AuditEntities.CourseMaterial, material.Id, $"Uploaded material for course {course.Code}");
+            await db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            try
+            {
+                await storage.DeleteAsync(material.StorageKey, CancellationToken.None);
+            }
+            catch (Exception cleanupException)
+            {
+                logger.LogWarning(cleanupException, "Could not remove material upload {StorageKey} after database persistence failed", material.StorageKey);
+            }
+            throw;
+        }
         return ToDto(material);
     }
 
@@ -143,19 +167,69 @@ internal sealed class MaterialService(
     private static IReadOnlyList<ExtractedSection> ExtractPptxSections(Stream stream)
     {
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        if (archive.Entries.Count > MaxPptxEntries)
+            throw new InvalidDataException("The presentation contains too many archive entries.");
+        if (!archive.Entries.Any(x => string.Equals(x.FullName, "[Content_Types].xml", StringComparison.OrdinalIgnoreCase))
+            || !archive.Entries.Any(x => string.Equals(x.FullName, "ppt/presentation.xml", StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("The file is not a valid PowerPoint presentation.");
+
         var slides = archive.Entries
             .Where(x => x.FullName.StartsWith("ppt/slides/slide", StringComparison.OrdinalIgnoreCase) && x.FullName.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
             .Select((entry, index) => (Entry: entry, SlideNo: ParseSlideNumber(entry.FullName, index + 1)))
-            .OrderBy(x => x.SlideNo);
+            .OrderBy(x => x.SlideNo)
+            .ToList();
+        if (slides.Count == 0 || slides.Count > MaxPptxSlides)
+            throw new InvalidDataException("The presentation has an unsupported number of slides.");
+        if (slides.Any(x => x.Entry.Length > MaxPptxSlideBytes)
+            || slides.Sum(x => x.Entry.Length) > MaxPptxTotalSlideBytes)
+            throw new InvalidDataException("The presentation slide data is too large to extract.");
+
         var sections = new List<ExtractedSection>();
+        long totalSlideBytesRead = 0;
         foreach (var (slide, slideNo) in slides)
         {
-            using var reader = new StreamReader(slide.Open(), Encoding.UTF8);
-            var xml = XDocument.Parse(reader.ReadToEnd());
+            using var slideContent = slide.Open();
+            var bytes = ReadBounded(slideContent, MaxPptxSlideBytes, MaxPptxTotalSlideBytes - totalSlideBytesRead);
+            totalSlideBytesRead += bytes.Length;
+            using var xmlStream = new MemoryStream(bytes, writable: false);
+            using var xmlReader = XmlReader.Create(xmlStream, new XmlReaderSettings
+            {
+                DtdProcessing = DtdProcessing.Prohibit,
+                XmlResolver = null,
+                MaxCharactersInDocument = MaxPptxSlideBytes
+            });
+            var xml = XDocument.Load(xmlReader);
             var text = string.Join(' ', xml.Descendants().Where(x => x.Name.LocalName == "t").Select(x => x.Value));
             if (!string.IsNullOrWhiteSpace(text)) sections.Add(new ExtractedSection($"slide-{slideNo}", text));
         }
         return sections;
+    }
+
+    private static byte[] ReadBounded(Stream source, long maxBytes, long remainingTotalBytes)
+    {
+        using var output = new MemoryStream();
+        var buffer = new byte[64 * 1024];
+        int read;
+        while ((read = source.Read(buffer, 0, buffer.Length)) > 0)
+        {
+            if (output.Length + read > maxBytes || output.Length + read > remainingTotalBytes)
+                throw new InvalidDataException("The presentation slide data is too large to extract.");
+            output.Write(buffer, 0, read);
+        }
+        return output.ToArray();
+    }
+
+    private static void ValidateContentSignature(string extension, MemoryStream buffer)
+    {
+        var content = buffer.GetBuffer().AsSpan(0, checked((int)buffer.Length));
+        var valid = extension switch
+        {
+            ".pdf" => content.StartsWith("%PDF-"u8),
+            ".pptx" => content.Length >= 4 && content[0] == 0x50 && content[1] == 0x4B,
+            _ => true
+        };
+        if (!valid)
+            throw new ValidationException(new Dictionary<string, string[]> { ["file"] = ["The file content does not match its extension."] });
     }
 
     private static int ParseSlideNumber(string path, int fallback)

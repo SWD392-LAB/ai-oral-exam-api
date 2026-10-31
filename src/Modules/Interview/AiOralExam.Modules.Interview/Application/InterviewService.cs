@@ -136,6 +136,29 @@ internal sealed class InterviewService(
             throw new ConflictException("turn_not_current", "The submitted answer does not belong to the current turn.");
         var question = session.Questions.First(q => q.Id == response.QuestionId);
 
+        // Claim this exact last turn with one database update before changing
+        // its transcript or calling an external provider. The last-turn check
+        // also rejects a stale request after another submission added a
+        // follow-up and moved the response back to Completed.
+        var previousEvaluationState = response.AiEvaluationState;
+        var previousEvaluationError = response.AiEvaluationError;
+        var claimed = await db.QuestionResponses
+            .Where(candidate => candidate.Id == response.Id
+                && !candidate.IsFinished
+                && candidate.AiEvaluationState != AiEvaluationState.Pending
+                && db.InterviewAttempts.Any(activeAttempt => activeAttempt.Id == candidate.AttemptId
+                    && activeAttempt.Status == AttemptStatus.InProgress)
+                && candidate.Turns.OrderByDescending(candidateTurn => candidateTurn.TurnNo)
+                    .Select(candidateTurn => (Guid?)candidateTurn.Id).FirstOrDefault() == turn.Id)
+            .ExecuteUpdateAsync(update => update
+                .SetProperty(candidate => candidate.AiEvaluationState, AiEvaluationState.Pending)
+                .SetProperty(candidate => candidate.AiEvaluationError, (string?)null), ct);
+        if (claimed != 1)
+            throw new ConflictException("turn_processing", "This turn is already being evaluated or is no longer current.");
+
+        response.AiEvaluationState = AiEvaluationState.Pending;
+        response.AiEvaluationError = null;
+
         // 1) Store the answer. Past the time limit + grace => timed out, the transcript is not stored.
         var now = UtcNow;
         var deadline = turn.AskedAt.AddSeconds(session.TimeLimitPerAnswerSeconds + _options.TimeLimitGraceSeconds);
@@ -152,10 +175,27 @@ internal sealed class InterviewService(
         // Persist the received answer before waiting on an external provider. If
         // evaluation fails, the catch below reopens the same turn while keeping
         // this transcript for a safe retry.
-        await db.SaveChangesAsync(ct);
-        response.AiEvaluationState = AiEvaluationState.Pending;
-        response.AiEvaluationError = null;
-        await db.SaveChangesAsync(ct);
+        try
+        {
+            await db.SaveChangesAsync(ct);
+        }
+        catch
+        {
+            try
+            {
+                await db.QuestionResponses
+                    .Where(candidate => candidate.Id == response.Id
+                        && candidate.AiEvaluationState == AiEvaluationState.Pending)
+                    .ExecuteUpdateAsync(update => update
+                        .SetProperty(candidate => candidate.AiEvaluationState, previousEvaluationState)
+                        .SetProperty(candidate => candidate.AiEvaluationError, previousEvaluationError), CancellationToken.None);
+            }
+            catch (Exception releaseException)
+            {
+                logger.LogWarning(releaseException, "Could not release answer-processing claim for response {ResponseId}", response.Id);
+            }
+            throw;
+        }
 
         var dialogue = response.Turns.OrderBy(t => t.TurnNo)
             .Select(t => new DialogueTurn(t.QuestionText, t.AnswerTranscript, t.Type == TurnType.FollowUp))

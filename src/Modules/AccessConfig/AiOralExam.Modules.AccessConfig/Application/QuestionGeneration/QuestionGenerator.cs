@@ -17,6 +17,11 @@ internal sealed class QuestionGenerator(
     IQuestionDraftContentGenerator draftContent,
     IOptions<QuestionGenerationProviderOptions> providerOptions) : IQuestionGenerator
 {
+    private const int MaxSourceExcerptCount = 20;
+    private const int MaxSourceExcerptCharacters = 4_000;
+    private const int MaxSourceExcerptTotalCharacters = 12_000;
+    private const int MaxEvidenceTotalCharacters = 24_000;
+
     public async Task<QuestionGenerationResult> GenerateAsync(
         Guid courseId,
         QuestionGenerationRequest request,
@@ -30,6 +35,30 @@ internal sealed class QuestionGenerator(
         if (!Enum.IsDefined(request.Bloom)) requestErrors["bloom"] = ["Bloom must be Remember, Understand, Apply, or Analyze."];
         if (requestErrors.Count > 0) throw new ValidationException(requestErrors);
 
+        var sourceExcerpts = request.SourceExcerpts ?? [];
+        if (sourceExcerpts.Count > MaxSourceExcerptCount)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["sourceExcerpts"] = [$"At most {MaxSourceExcerptCount} source excerpts are allowed."]
+            });
+
+        var normalizedExcerpts = new string[sourceExcerpts.Count];
+        for (var index = 0; index < sourceExcerpts.Count; index++)
+        {
+            var excerpt = sourceExcerpts[index] ?? string.Empty;
+            if (excerpt.Length > MaxSourceExcerptCharacters)
+                throw new ValidationException(new Dictionary<string, string[]>
+                {
+                    ["sourceExcerpts"] = [$"Each source excerpt must be at most {MaxSourceExcerptCharacters} characters."]
+                });
+            normalizedExcerpts[index] = excerpt.Trim();
+        }
+        if (normalizedExcerpts.Sum(x => (long)x.Length) > MaxSourceExcerptTotalCharacters)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["sourceExcerpts"] = [$"Source excerpts must total at most {MaxSourceExcerptTotalCharacters} characters."]
+            });
+
         var course = await db.Courses.AsNoTracking()
             .Include(x => x.Lecturers)
             .FirstOrDefaultAsync(x => x.Id == courseId, ct)
@@ -37,24 +66,31 @@ internal sealed class QuestionGenerator(
         if (!currentUser.IsInRole(Roles.Administrator) && course.Lecturers.All(x => x.LecturerId != currentUser.Id))
             throw new ForbiddenException("You are not assigned to this course.");
 
-        var evidence = (request.SourceExcerpts ?? [])
+        var excerptEvidence = normalizedExcerpts
             .Select((text, index) => new QuestionSourceEvidence(
-                $"excerpt-{index + 1}", index + 1, $"excerpt-{index + 1}", text?.Trim() ?? string.Empty))
+                $"excerpt-{index + 1}", index + 1, $"excerpt-{index + 1}", text))
             .Where(x => !string.IsNullOrWhiteSpace(x.Text))
-            .Concat((request.SourceMaterialIds is { Count: > 0 }
+            .ToList();
+        var materialEvidence = (request.SourceMaterialIds is { Count: > 0 }
                     ? await materials.RetrieveAsync(courseId, request.SourceMaterialIds, request.Topic, ct)
                     : [])
-                .Select(x => new QuestionSourceEvidence(
-                    $"material:{x.MaterialId:N}:{x.ChunkNo}", x.ChunkNo, x.Citation, x.Text)))
+            .Select(x => new QuestionSourceEvidence(
+                $"material:{x.MaterialId:N}:{x.ChunkNo}", x.ChunkNo, x.Citation, x.Text))
             .ToList();
+        var evidence = excerptEvidence.Concat(materialEvidence).ToList();
 
         if (evidence.Count == 0)
             throw new ConflictException("insufficient_source", "No usable source excerpt was supplied.");
+        if (evidence.Sum(x => (long)x.Text.Length) > MaxEvidenceTotalCharacters)
+            throw new ValidationException(new Dictionary<string, string[]>
+            {
+                ["sourceExcerpts"] = [$"Combined source evidence must total at most {MaxEvidenceTotalCharacters} characters."]
+            });
 
         IReadOnlyList<QuestionDraftSuggestion> suggestions;
         try
         {
-            suggestions = await draftContent.GenerateAsync(request, evidence, ct);
+            suggestions = await draftContent.GenerateAsync(request with { SourceExcerpts = normalizedExcerpts }, evidence, ct);
         }
         catch (AppException)
         {

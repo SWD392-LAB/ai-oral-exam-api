@@ -129,6 +129,44 @@ public sealed class QuestionGenerationTests
         Assert.Equal("question_generation_invalid_output", error.Code);
     }
 
+    [Fact]
+    public async Task Generator_rejects_oversized_source_excerpts_before_calling_the_provider()
+    {
+        var courseId = Guid.NewGuid();
+        var lecturerId = Guid.NewGuid();
+        await using var db = CreateDb();
+        db.Courses.Add(new Course
+        {
+            Id = courseId,
+            Code = "SWD392",
+            Name = "Software Design",
+            Lecturers = [new CourseLecturer { CourseId = courseId, LecturerId = lecturerId }]
+        });
+        await db.SaveChangesAsync();
+        var provider = new StubDraftContentGenerator([]);
+        var generator = new QuestionGenerator(db, new TestCurrentUser(lecturerId, Roles.Lecturer), null!,
+            provider, Options.Create(new QuestionGenerationProviderOptions()));
+
+        var error = await Assert.ThrowsAsync<ValidationException>(() => generator.GenerateAsync(courseId,
+            new QuestionGenerationRequest("RAG", BloomLevel.Understand, 1,
+                [new string('x', 4_001)], Guid.NewGuid())));
+
+        Assert.Contains("sourceExcerpts", error.Details!.Keys);
+        Assert.False(provider.Called);
+
+        var aggregateError = await Assert.ThrowsAsync<ValidationException>(() => generator.GenerateAsync(courseId,
+            new QuestionGenerationRequest("RAG", BloomLevel.Understand, 1,
+                Enumerable.Repeat(new string('x', 3_500), 4).ToArray(), Guid.NewGuid())));
+        Assert.Contains("sourceExcerpts", aggregateError.Details!.Keys);
+        Assert.False(provider.Called);
+
+        var countError = await Assert.ThrowsAsync<ValidationException>(() => generator.GenerateAsync(courseId,
+            new QuestionGenerationRequest("RAG", BloomLevel.Understand, 1,
+                Enumerable.Repeat("small excerpt", 21).ToArray(), Guid.NewGuid())));
+        Assert.Contains("sourceExcerpts", countError.Details!.Keys);
+        Assert.False(provider.Called);
+    }
+
     private static AccessConfigDbContext CreateDb() =>
         new(new DbContextOptionsBuilder<AccessConfigDbContext>()
             .UseInMemoryDatabase(Guid.NewGuid().ToString())
@@ -144,10 +182,15 @@ public sealed class QuestionGenerationTests
 
     private sealed class StubDraftContentGenerator(IReadOnlyList<QuestionDraftSuggestion> result) : IQuestionDraftContentGenerator
     {
+        public bool Called { get; private set; }
         public string ProviderName => "Test";
         public Task<IReadOnlyList<QuestionDraftSuggestion>> GenerateAsync(
             QuestionGenerationRequest request,
             IReadOnlyList<QuestionSourceEvidence> evidence,
-            CancellationToken ct) => Task.FromResult(result);
+            CancellationToken ct)
+        {
+            Called = true;
+            return Task.FromResult(result);
+        }
     }
 }

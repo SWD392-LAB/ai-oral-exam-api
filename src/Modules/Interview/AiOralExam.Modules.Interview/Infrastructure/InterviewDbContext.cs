@@ -61,6 +61,7 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
         {
             e.ToTable("interview_turns");
             e.HasKey(x => x.Id);
+            e.Property(x => x.AudioUrl).IsConcurrencyToken();
         });
 
         b.Entity<CriterionScore>(e =>
@@ -68,6 +69,7 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.ToTable("criterion_scores");
             e.HasKey(x => x.Id);
             e.Property(x => x.Points).HasPrecision(5, 2);
+            e.HasIndex(x => new { x.QuestionResponseId, x.RubricCriterionId }).IsUnique();
         });
 
         b.Entity<ScoreReview>(e =>
