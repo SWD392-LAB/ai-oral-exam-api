@@ -78,15 +78,16 @@ Check that the API can reach the database: open http://localhost:5080/health. It
 acceptance, transcription-retry, and manual-recovery metadata.
 
 For an existing database, apply the forward-only scripts in numeric order from `03` through
-`14`. Do not rerun `database/01_schema.sql` against existing data. Scripts `03` and `04`
+`15`. Do not rerun `database/01_schema.sql` against existing data. Scripts `03` and `04`
 use the session `search_path`, so set it to the application schema before running them.
-Scripts `05` through `14` additionally require the psql variable `app_schema`; each script
+Scripts `05` through `15` additionally require the psql variable `app_schema`; each script
 validates that schema and sets its own session `search_path` to `<app_schema>, pg_catalog`.
 The guarded application-schema migrations reject unsafe schemas such as
 `information_schema` and `pg_*`; migration `14` explicitly rejects `public`. Migration `14` adds the bounded
 `manual_recovery_count` column and constraint required for one manual interrupted-turn
 recovery; it must run after migration `13` and requires an explicitly supplied non-public
-`app_schema`.
+`app_schema`. Migration `15` adds `interview_attempts.partial_completed`; it must run after
+migration `14` and requires the same explicitly supplied non-public `app_schema`.
 
 For example, with an application schema named `aives_app`:
 
@@ -97,7 +98,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
   -c 'SET search_path TO aives_app, pg_catalog' \
   -f database/04_audit_log_description.sql
-for script in database/{05..14}_*.sql; do
+for script in database/{05..15}_*.sql; do
   psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v app_schema=aives_app -f "$script"
 done
 ```
@@ -105,8 +106,10 @@ done
 The ordered upgrades are: role/code validation (`03`), audit and retake changes (`04`-`05`),
 rubric changes (`06`, `08`, and `10`), and F3 processing, lease, retry, interrupted-attempt,
 and durable-audio changes (`07`, `09`, and `11`-`13`), followed by manual interrupted-turn
-recovery (`14`). Migrations `13` and `14` remain compatible with the final `01_schema.sql`
-because they use guarded column/constraint operations; both require a non-public `app_schema`.
+recovery (`14`) and partial-attempt persistence (`15`). Migrations `13`, `14`, and `15`
+remain compatible with the final `01_schema.sql` because they use guarded column/constraint
+operations; all three require a non-public `app_schema`. Fresh databases already contain
+`partial_completed` through `database/01_schema.sql` and do not need migration `15` separately.
 
 ### Isolated PostgreSQL test database
 
@@ -196,7 +199,8 @@ ai-oral-exam-api/
 ├── AiOralExam.sln
 ├── docker-compose.yml               # PostgreSQL 16 + pgAdmin + Keycloak (+ its database, Mailpit)
 ├── keycloak/                        # Keycloak rea│   ├── 13_f3_durable_audio_acceptance.sql # durable audio/retry metadata
-│   └── 14_f3_manual_turn_recovery.sql # one bounded manual recovery per turn
+│   ├── 14_f3_manual_turn_recovery.sql # one bounded manual recovery per turn
+│   └── 15_f3_partial_attempts.sql # partial-attempt completion state
         # shared settings: net8.0, nullable...
 ├── Directory.Packages.props         # NuGet versions declared once (Central Package Management)
 ├── database/

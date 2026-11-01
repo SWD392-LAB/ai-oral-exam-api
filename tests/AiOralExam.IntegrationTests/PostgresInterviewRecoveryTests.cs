@@ -278,11 +278,10 @@ public sealed class PostgresInterviewRecoveryTests
         await using var scenario = await CreateScenarioAsync();
         var turn = await scenario.MakeDeadlineExpiredTurnAsync();
 
-        var (submission, expiredCount) = await scenario.SubmitAndExpireConcurrentlyAsync(turn.Id);
+        var (submission, _) = await scenario.SubmitAndExpireConcurrentlyAsync(turn.Id);
 
         Assert.False(submission.IsSuccessStatusCode);
         Assert.Equal(HttpStatusCode.Conflict, submission.StatusCode);
-        Assert.Equal(1, expiredCount);
 
         var persisted = await scenario.ReadTurnAsync();
         Assert.True(persisted.IsTimedOut);

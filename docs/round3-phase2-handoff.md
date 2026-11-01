@@ -134,16 +134,16 @@ Do not modify SQL migrations or `database/01_schema.sql` for STEP 4 unless a sep
 2. Run focused unit tests for `InterviewAttempt`, `InterviewTurn`, and recovery workflows.
 3. Run the HTTP recovery contract tests, including authorization and validation behavior.
 4. Verify the isolated PostgreSQL database uses `r3_phase2_test` and the non-public `r3_phase2_app` schema.
-5. Have the database owner manually prepare the baseline and apply migration 13 followed by migration 14 only where required, with `app_schema` set to `r3_phase2_app`.
+5. Have the database owner manually prepare the baseline and apply migrations 13, 14, and 15 in order where required, with `app_schema` set to `r3_phase2_app`.
 6. Confirm `manual_recovery_count` exists and its constraint is valid before running PostgreSQL recovery tests.
 7. Run the PostgreSQL recovery and successful-audit integration tests.
 8. Record pass/fail output and any environment-specific skips. Do not use the development database.
 
 ### Safe PostgreSQL test-database upgrade options
 
-- **Option A — preferred:** Create/use a disposable isolated test database and a dedicated non-public application schema; the database owner reviews and manually runs migration 13 followed by migration 14 with `app_schema` set to that schema.
-- **Option B:** Restore an existing approved isolated test dump into a new database/schema, verify the schema name, then manually apply the two scripts there. Preserve the original dump.
-- **Option C:** Provision a fresh isolated test database from the approved schema baseline, then manually apply the scripts in order. Never point tests at `aives`.
+- **Option A — preferred:** Create/use a disposable isolated test database and a dedicated non-public application schema; the database owner reviews and manually runs migrations 13, 14, and 15 in order with `app_schema` set to that schema.
+- **Option B:** Restore an existing approved isolated test dump into a new database/schema, verify the schema name, then manually apply the three scripts there. Preserve the original dump.
+- **Option C:** Provision a fresh isolated test database from the approved schema baseline, then manually apply the scripts in order through migration 15 where the target requires the partial-attempt column. Never point tests at `aives`.
 - Do not use `public` as the application schema for migration 14, do not run migrations automatically, and do not drop/truncate/recreate a shared database.
 
 ## 7. Current test results and evidence boundaries
