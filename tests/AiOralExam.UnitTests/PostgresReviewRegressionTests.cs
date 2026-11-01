@@ -198,6 +198,87 @@ public sealed class PostgresReviewRegressionTests
     }
 
     [PostgresFact]
+    public async Task ExpiredClaimTakeoverPreventsStillRunningOwnerFromOverwritingEvaluation()
+    {
+        var sessionId = Guid.NewGuid();
+        var studentId = Guid.NewGuid();
+        var questionId = Guid.NewGuid();
+        var criterionId = Guid.NewGuid();
+        var criterion = new RubricCriterionInfo(criterionId, 1, "Accuracy", 5);
+        var examConfig = new FixedExamConfigurationApi(CreateSession(sessionId, questionId, criterion));
+
+        await WithInterviewSchemaAsync(async connectionString =>
+        {
+            await using (var setup = CreateDbContext(connectionString))
+            {
+                await CreateSchemaTablesAsync(setup);
+                var ids = await SeedOpenAttemptAsync(setup, sessionId, studentId, questionId);
+                examConfig.SetIds(ids.AttemptId, ids.TurnId, ids.ResponseId);
+            }
+
+            var analyzer = new OverlappingAnswerAnalyzer();
+            var scorer = new OverlappingRubricScorer(criterionId);
+            await using var staleDb = CreateDbContext(connectionString);
+            var staleService = CreateService(staleDb, examConfig, analyzer, studentId, scorer);
+            var staleRequest = staleService.SubmitAnswerAsync(
+                examConfig.AttemptId,
+                new SubmitAnswerRequest("stale answer", examConfig.TurnId));
+            await analyzer.FirstRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+
+            // Simulate the lease expiring while request A is still blocked in its provider call.
+            await using (var expireLeaseDb = CreateDbContext(connectionString))
+            {
+                var response = await expireLeaseDb.QuestionResponses.SingleAsync(x => x.Id == examConfig.ResponseId);
+                Assert.Equal(AiEvaluationState.Pending, response.AiEvaluationState);
+                Assert.NotNull(response.AiEvaluationClaimToken);
+                response.AiEvaluationClaimedAt = DateTime.UtcNow.AddHours(-1);
+                await expireLeaseDb.SaveChangesAsync();
+            }
+
+            // B reclaims the expired lease and finishes before A is allowed to resume.
+            await using (var winnerDb = CreateDbContext(connectionString))
+            {
+                var winnerService = CreateService(winnerDb, examConfig, analyzer, studentId, scorer);
+                var winner = await winnerService.SubmitAnswerAsync(
+                    examConfig.AttemptId,
+                    new SubmitAnswerRequest("winner answer", examConfig.TurnId));
+                Assert.Equal(SubmitOutcome.Completed, winner.Outcome);
+            }
+
+            analyzer.ReleaseFirstRequest.TrySetResult();
+            await Assert.ThrowsAsync<DbUpdateException>(() => staleRequest);
+
+            await using var verify = CreateDbContext(connectionString);
+            var persistedResponse = await verify.QuestionResponses.AsNoTracking()
+                .SingleAsync(x => x.Id == examConfig.ResponseId);
+            Assert.Equal(AiEvaluationState.Completed, persistedResponse.AiEvaluationState);
+            Assert.True(persistedResponse.IsFinished);
+            Assert.Equal(4, persistedResponse.AiSuggestedScore);
+            Assert.Equal("winner feedback", persistedResponse.AiFeedback);
+            Assert.Null(persistedResponse.AiEvaluationClaimToken);
+            Assert.Null(persistedResponse.AiEvaluationClaimedAt);
+
+            var persistedScores = await verify.CriterionScores.AsNoTracking()
+                .Where(x => x.QuestionResponseId == examConfig.ResponseId)
+                .ToListAsync();
+            var persistedScore = Assert.Single(persistedScores);
+            Assert.Equal(criterionId, persistedScore.RubricCriterionId);
+            Assert.Equal(4, persistedScore.Points);
+            Assert.Equal("winner", persistedScore.Comment);
+
+            var persistedTurn = await verify.InterviewTurns.AsNoTracking().SingleAsync(x => x.Id == examConfig.TurnId);
+            Assert.Equal("winner answer", persistedTurn.AnswerTranscript);
+            Assert.NotNull(persistedTurn.AnsweredAt);
+            Assert.Equal(1, await verify.InterviewTurns.CountAsync(x => x.QuestionResponseId == examConfig.ResponseId));
+
+            var persistedAttempt = await verify.InterviewAttempts.AsNoTracking()
+                .SingleAsync(x => x.Id == examConfig.AttemptId);
+            Assert.Equal(AttemptStatus.PendingReview, persistedAttempt.Status);
+            Assert.NotNull(persistedAttempt.CompletedAt);
+        });
+    }
+
+    [PostgresFact]
     public async Task CriterionScoresEnforceOneScorePerResponseAndCriterionInPostgres()
     {
         var sessionId = Guid.NewGuid();
@@ -267,17 +348,18 @@ public sealed class PostgresReviewRegressionTests
         InterviewDbContext db,
         IExamConfigurationApi examConfig,
         IAnswerAnalyzer analyzer,
-        Guid studentId) => new(
+        Guid studentId,
+        IRubricScorer? scorer = null) => new(
         db,
         examConfig,
         analyzer,
-        new EmptyRubricScorer(),
+        scorer ?? new EmptyRubricScorer(),
         new TestCurrentUser(studentId),
         TimeProvider.System,
         Options.Create(new InterviewOptions()),
         NullLogger<InterviewService>.Instance);
 
-    private static ExamSessionInfo CreateSession(Guid sessionId, Guid questionId) => new(
+    private static ExamSessionInfo CreateSession(Guid sessionId, Guid questionId, RubricCriterionInfo? criterion = null) => new(
         sessionId,
         Guid.NewGuid(),
         "TEST",
@@ -288,7 +370,7 @@ public sealed class PostgresReviewRegressionTests
         3600,
         0,
         ExamSessionStatus.Published,
-        [new QuestionInfo(questionId, 1, "Explain the answer.", [], 0)]);
+        [new QuestionInfo(questionId, 1, "Explain the answer.", criterion is null ? [] : [criterion], criterion?.MaxPoints ?? 0)]);
 
     private static async Task<(Guid AttemptId, Guid TurnId, Guid ResponseId)> SeedOpenAttemptAsync(
         InterviewDbContext db,
@@ -405,6 +487,38 @@ public sealed class PostgresReviewRegressionTests
             Started.TrySetResult();
             await Release.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
             return new AnswerAnalysis(true, [], false, null);
+        }
+    }
+
+    private sealed class OverlappingAnswerAnalyzer : IAnswerAnalyzer
+    {
+        private int _callCount;
+        public TaskCompletionSource FirstRequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource ReleaseFirstRequest { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<AnswerAnalysis> AnalyzeAsync(AnswerAnalysisRequest request, CancellationToken ct = default)
+        {
+            if (Interlocked.Increment(ref _callCount) == 1)
+            {
+                FirstRequestStarted.TrySetResult();
+                await ReleaseFirstRequest.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
+            }
+
+            return new AnswerAnalysis(true, [], false, null);
+        }
+    }
+
+    private sealed class OverlappingRubricScorer(Guid criterionId) : IRubricScorer
+    {
+        private int _callCount;
+
+        public Task<RubricScore> ScoreAsync(RubricScoringRequest request, CancellationToken ct = default)
+        {
+            var isWinner = Interlocked.Increment(ref _callCount) == 1;
+            var score = isWinner
+                ? new RubricScore([new CriterionPoints(criterionId, 4, "winner")], "winner feedback")
+                : new RubricScore([new CriterionPoints(criterionId, 1, "stale")], "stale feedback");
+            return Task.FromResult(score);
         }
     }
 
