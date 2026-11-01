@@ -245,8 +245,14 @@ public sealed class PostgresReviewRegressionTests
                 Assert.Equal(SubmitOutcome.Completed, winner.Outcome);
             }
 
+            // Remove the score uniqueness guard in this isolated schema so the stale save
+            // must be rejected by the response's EF concurrency token, not a duplicate-score index.
+            await using (var isolateConcurrencyDb = CreateDbContext(connectionString))
+                await isolateConcurrencyDb.Database.ExecuteSqlRawAsync("DROP INDEX ux_criterion_scores_response_criterion");
+
             analyzer.ReleaseFirstRequest.TrySetResult();
-            await Assert.ThrowsAsync<DbUpdateException>(() => staleRequest);
+            var staleSave = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => staleRequest);
+            Assert.Contains(staleSave.Entries, entry => entry.Entity is QuestionResponse);
 
             await using var verify = CreateDbContext(connectionString);
             var persistedResponse = await verify.QuestionResponses.AsNoTracking()
