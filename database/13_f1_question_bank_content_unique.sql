@@ -13,7 +13,7 @@ BEGIN
     END IF;
 
     EXECUTE format($sql$
-        SELECT string_agg(format('course=%s item_ids=%s', course_id, item_ids), '; ')
+        SELECT string_agg(format('course=%%s item_ids=%%s', course_id, item_ids), '; ')
         FROM (
             SELECT course_id, array_agg(id ORDER BY id) AS item_ids
             FROM %I.question_bank_items

@@ -71,8 +71,8 @@ jobs:
         env:
           PGPASSWORD: postgres
         run: |
-          PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "DROP INDEX fresh.ux_question_bank_course_normalized_content; ALTER TABLE fresh.question_bank_items DROP COLUMN normalized_content"
-          PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "INSERT INTO question_bank_items (course_id, topic, bloom, content, origin, status, created_by) SELECT (SELECT id FROM courses ORDER BY id LIMIT 1), 'CI migration collision', 'Remember', 'CI migration collision content', 'Manual', 'Draft', (SELECT id FROM users WHERE role_id = (SELECT id FROM roles WHERE name = 'Lecturer') ORDER BY id LIMIT 1) FROM generate_series(1, 2)"
+          PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "DROP INDEX IF EXISTS fresh.ux_question_bank_course_normalized_content; ALTER TABLE fresh.question_bank_items DROP COLUMN IF EXISTS normalized_content"
+          PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "INSERT INTO question_bank_items (course_id, topic, bloom, content, content_hash, origin, status, created_by) SELECT (SELECT id FROM courses ORDER BY id LIMIT 1), 'CI migration collision', 'Remember', 'CI migration collision content', md5(gen_random_uuid()::text), 'Manual', 'Draft', (SELECT id FROM users WHERE role_id = (SELECT id FROM roles WHERE name = 'Lecturer') ORDER BY id LIMIT 1) FROM generate_series(1, 2)"
           if output=$(psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -v app_schema=fresh -f database/13_f1_question_bank_content_unique.sql 2>&1); then
             echo "Migration unexpectedly accepted duplicate legacy content."
             exit 1

@@ -1,6 +1,7 @@
 using System.Data.Common;
 using AiOralExam.Modules.AccessConfig.Application.QuestionBank;
 using AiOralExam.Modules.AccessConfig.Application.QuestionGeneration;
+using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
@@ -117,6 +118,43 @@ public sealed class QuestionBankConcurrencyPostgresTests
             .SingleAsync(item => item.Id == otherCourseItem.Id)).Content);
     }
 
+    [PostgreSqlConcurrencyFact]
+    public async Task Attach_approved_items_translates_the_id_filter_with_postgres()
+    {
+        var connectionString = GetDedicatedConnectionString();
+        var fixture = await SeedCourseAsync(connectionString);
+        var sessionId = Guid.NewGuid();
+
+        await using var db = CreateDatabase(connectionString);
+        db.ExamSessions.Add(new ExamSession
+        {
+            Id = sessionId,
+            CourseId = fixture.CourseId,
+            CreatedBy = fixture.LecturerId,
+            Title = "Question bank attach test",
+            StartTime = DateTime.UtcNow,
+            EndTime = DateTime.UtcNow.AddHours(1),
+            TimeLimitPerAnswerSeconds = 120,
+            Status = ExamSessionStatus.Draft,
+            RubricMode = RubricMode.Legacy
+        });
+        await db.SaveChangesAsync();
+
+        var service = new QuestionBankService(db, new TestCurrentUser(fixture.LecturerId));
+        var item = await service.CreateAsync(fixture.CourseId,
+            new CreateQuestionBankItemRequest("Attach", BloomLevel.Apply, "Question to attach"),
+            CancellationToken.None);
+        await service.ApproveAsync(fixture.CourseId, item.Id, CancellationToken.None);
+
+        var attachedIds = await service.AttachApprovedAsync(sessionId,
+            new AttachQuestionBankRequest([item.Id]), CancellationToken.None);
+
+        Assert.Equal(new[] { item.Id }, attachedIds);
+        var attachedQuestion = await db.Questions.SingleAsync(question => question.ExamSessionId == sessionId);
+        Assert.Equal("Question to attach", attachedQuestion.Content);
+        Assert.Equal(item.Revisions.Single().Id, attachedQuestion.SourceBankRevisionId);
+    }
+
     private static AccessConfigDbContext CreateDatabase(
         string connectionString,
         DbCommandInterceptor? interceptor = null)
@@ -219,7 +257,7 @@ public sealed class QuestionBankConcurrencyPostgresTests
             CancellationToken cancellationToken = default)
         {
             if (command.CommandText.Contains("question_bank_items", StringComparison.OrdinalIgnoreCase)
-                && command.CommandText.Contains("normalized_content", StringComparison.OrdinalIgnoreCase))
+                && command.CommandText.Contains("content_hash", StringComparison.OrdinalIgnoreCase))
             {
                 if (Interlocked.Increment(ref _arrived) == 2)
                     _bothQueriesReachedCheck.TrySetResult();

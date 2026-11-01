@@ -46,38 +46,35 @@ The steps below are based on the current checkout. Keep the report above as evid
 
 ### 1. Make question-bank content unique under concurrent writes (P1)
 
-**Current state:** `QuestionBankService.ImportAsync` reads existing course content, compares trimmed strings case-insensitively, and later inserts. There is no matching unique constraint in `database/01_schema.sql`, `database/07_question_bank.sql`, or the EF mapping in `AccessConfigDbContext`. Two requests can therefore pass the read before either writes.
+**Current state:** The checkout has a named unique index on `(course_id, content_hash)` in `database/01_schema.sql` and the EF mapping, and maps that index's PostgreSQL violation to `question_bank_duplicate`. Migration `13_f1_question_bank_content_unique.sql` additionally installs a generated `lower(btrim(content))` column and a second unique index; these two normalization rules are not identical to the SQL hash expression in `QuestionBankContentHash`. The CI concurrency test exercises the hash query and is opt-in outside CI.
 
 **Changes and ownership:**
 
-1. Agree on one canonical content-equivalence rule matching the current `NormalizeContent` (`Trim`) and `StringComparer.OrdinalIgnoreCase` behavior. The database rule and every application precheck must use equivalent normalization and case folding; do not assume PostgreSQL `lower()` and .NET ordinal case-insensitive comparison are identical for every Unicode string.
-2. Coordinate the schema change with the database owner (TASK-K does not own `database/`). Add database-enforced uniqueness scoped to `course_id` and canonical content in the schema source of truth, `database/01_schema.sql`, and add a forward-only upgrade migration after the current migration sequence. Use a named constraint/index so the application can identify this particular violation.
+1. Reconcile the current hash normalizer (`upper(btrim(regexp_replace(content, '\\s+', ' ', 'g')))`) with migration `13`'s `lower(btrim(content))` key. Do not assume PostgreSQL case folding and .NET ordinal case-insensitive comparison are identical for every Unicode string.
+2. Coordinate with the database owner (TASK-K does not own `database/`) whether the current unique hash index is the canonical guard or whether the generated normalized key should be promoted into `database/01_schema.sql`. Avoid retaining two disagreeing uniqueness definitions.
 3. Before applying the upgrade, detect and report existing collisions using the agreed normalization. Resolve them explicitly with the data owner; do not silently delete or rewrite existing bank items. The migration must fail clearly if collisions remain.
-4. In the service, translate only the matching PostgreSQL unique-violation (`23505` and the named constraint) from `DbUpdateException` into the existing `question_bank_duplicate` `ConflictException`. Follow the specific-filter pattern in `AiConfigService`; do not turn unrelated database failures into conflicts. Apply this handling to every write path capable of creating or changing content (import, manual create, AI drafts, and Draft update), not just imports.
+4. The service now translates only `23505` for the named content-hash or normalized-content indexes into `question_bank_duplicate` across create, import, AI draft creation, and Draft update. Keep unrelated database failures unmodified.
 5. Keep the precheck for a friendly response, but treat the database constraint as the final concurrency guard. A concurrent loser must return the documented conflict response, and an atomic import must not leave a partial batch.
 
-**Verification:** add a PostgreSQL-backed test that synchronizes two imports of the same normalized content into one course and proves exactly one persists and the other receives the expected conflict. Also test case/whitespace variants, same content in different courses, named-constraint error mapping, and that no unrelated unique violation is mislabeled. InMemory tests alone cannot establish database uniqueness or concurrent behavior.
+**Verification:** PostgreSQL tests cover synchronized duplicate imports, conflict mapping, and the attach ID filter. They are configured for the CI disposable database but were skipped in this local run, so a green PostgreSQL CI job is still required to prove race behavior and migration compatibility.
 
 ### 2. Report existing-content duplicates by import row (P2)
 
-**Current state:** duplicates within a submitted batch already produce `items[i].content` validation details. A duplicate found in the course-wide query currently throws one generic `ConflictException`.
+**Current state:** both in-batch and pre-existing duplicates now produce `items[i].content` validation details. Unit and HTTP tests cover one and multiple pre-existing matches and verify that no import rows/audits are written.
 
 **Changes:**
 
-1. Build the normalized existing-content set as today, then walk the submitted rows with their indices and add a validation entry for every existing match, using the existing batch convention: `items[i].content`.
-2. Throw the standard `ValidationException` with all matching row paths before creating entities, audit rows, or revisions. Keep the database-race conflict from step 1 as a conflict; it cannot reliably be converted into a row-specific precheck after the race.
-3. Extend unit and HTTP contract tests for one and multiple matches against existing records, case/trim normalization, and atomic no-write behavior. Assert the response uses the standard validation status/code and contains each offending field path.
+1. Keep the existing row-indexed `ValidationException` checks before creating entities, audit rows, or revisions. A database race remains a conflict because it cannot reliably be converted into row-specific validation after the race.
+2. The unit/HTTP contract tests assert standard validation status/code, field paths, normalization, and atomic no-write behavior.
 
 ### 3. Keep revision history out of bank list responses (P2)
 
-**Current state:** `ListAsync` uses `Include(x => x.Revisions)` and returns `QuestionBankItemDto`; `ToDto` serializes every revision’s content and provenance. The detail path already loads revisions through `GetItemAsync`.
+**Current state:** `ListAsync` projects to `QuestionBankItemListDto` without loading revisions. Detail still loads and returns revision history; the HTTP contract test verifies both shapes.
 
 **Changes:**
 
-1. Add a compact list-response DTO without the `Revisions` collection, and update `IQuestionBankService.ListAsync` and `QuestionBankController.List` to use it. Do not return an empty revision list as if it were the item's history.
-2. Replace the list `Include`/entity materialization with a database projection containing only fields needed by the list. Preserve course authorization and status filtering, ordering, and existing list semantics.
-3. Keep the detail response and `GetAsync` revision loading intact. Update API contract tests and any generated/API client types that consume the list response; create/import/update/moderation responses can retain their existing detail shape unless the API contract is intentionally changed separately.
-4. Test that list JSON omits revision content and provenance and that detail JSON still returns ordered revision history.
+1. Preserve the compact projection, course authorization, status filtering, ordering, and list semantics.
+2. Keep the detail response and `GetAsync` revision loading intact; list JSON omits revisions while detail JSON includes them.
 
 ### 4. ReportCalculator test namespace finding (P1)
 
@@ -85,45 +82,39 @@ The current `tests/AiOralExam.UnitTests/ReportCalculatorTests.cs` already has `u
 
 ### 5. Add real PostgreSQL/Keycloak verification to CI (P2 / TASK-K)
 
-**Current state:** `.github/workflows/backend-ci.yml` only restores and runs `dotnet test`. `ApiTestFactory` replaces both application DbContexts with EF InMemory and replaces `IKeycloakAdminClient` with a fake, so its HTTP contract tests do not verify PostgreSQL or real Keycloak behavior. `docker-compose.yml` and `keycloak/aives-realm.json` provide a local PostgreSQL/Keycloak starting point, but local development defaults are not production credentials.
+**Current state:** `.github/workflows/backend-ci.yml` has a separate PostgreSQL/Keycloak contract job that initializes a disposable schema, verifies migration behavior, runs opt-in PostgreSQL tests, and checks a Keycloak-issued service-account token against `/api/auth/me`. Ordinary `ApiTestFactory` HTTP contract tests still use EF InMemory and a fake Keycloak client. The job does not exercise the full TASK-K publish/interview/review/feedback/report flow.
 
 **Changes and ownership:**
 
-1. Keep fast unit/in-memory tests, and add a separately identifiable CI integration/E2E job using isolated, ephemeral PostgreSQL and Keycloak services. Wait for health checks before starting tests; configure the API/test process to use those services rather than `ApiTestFactory`'s fake registrations.
-2. Apply the approved schema and forward migrations to the disposable test database in the documented order, then seed only test data. Exercise the real Npgsql provider, including the uniqueness/race scenario from step 1.
-3. Add a real-token authorization smoke test against the imported test realm and the required TASK-K workflow coverage: publish, interview text/voice paths where supported, lecturer review, student feedback, and reporting/statistics/CSV. Include permission-denied and relevant retry/timeout cases. Use an OIDC flow supported by the realm (the repository disables password grants for public clients); do not weaken realm settings just to make CI convenient.
-4. Keep credentials test-only and ephemeral; use GitHub Actions secrets only for values that cannot be safely generated at job runtime. Do not copy local development passwords or client secrets into workflow files or logs.
-5. Preserve the existing fast CI job and make the new job's failures attributable to infrastructure startup, schema setup, auth, or a specific contract test.
+1. Extend the existing isolated PostgreSQL/Keycloak job with role-specific test identities and a real-token E2E harness for publish, interview, lecturer review, student feedback, and reporting/statistics/CSV.
+2. Coordinate API fixture and F3 interview/review details with the frontend and F3 owners; add voice only for paths supported by the configured test providers, plus permission-denied and relevant retry/timeout cases.
+3. Use an authorization-code/PKCE-capable browser or test client rather than enabling password grants on the public clients. Keep generated credentials ephemeral and preserve the fast in-memory suite.
 
-**Verification:** run the new workflow from a clean database/realm state and demonstrate that it fails when PostgreSQL or Keycloak is unavailable or when the tested auth/schema contract is broken. Existing in-memory tests should continue to run independently.
+**Verification:** run the workflow from a clean database/realm state and demonstrate that it fails when PostgreSQL or Keycloak is unavailable or when the tested auth/schema contract is broken. Existing in-memory tests should continue to run independently.
 
 ### 6. Diagnose and fix the EF Core/LINQ `ReadOnlySpan` runtime exception
 
-The supplied failure summary does not name the failing methods or include stack frames identifying the offending expression. A source scan of this checkout found no explicit `ReadOnlySpan` in the application LINQ queries, so the exact expression is not established by the report alone. Do not make a broad rewrite or suppress the `InvalidOperationException`.
+The failed run's review comment identifies the failing attach filter in `QuestionBankService`. It now uses explicit `Enumerable.Contains` on the materialized `Guid[]`, avoiding the span-backed overload that EF parameter evaluation selected. The successful InMemory HTTP attach contract passes, and an opt-in PostgreSQL regression test now covers the same filter against Npgsql.
 
-1. Retrieve the complete CI stack trace and exact failed test names from the failed run. For each failure, identify the service query and the parameter expression EF Core is evaluating.
-2. Inspect the expression's captured arguments and overload resolution for span-backed values or collection expressions. Source query sites using collection `Contains` include `QuestionBankService`, `ExamConfigurationApi`, `ExamSessionQueries`, `ParticipantService`, `QuestionService`, `MaterialService`, and `InterviewResultsApi`; these are investigation leads, not confirmed causes.
-3. Where an offending query captures a span or a value inferred as a span, materialize/declare a concrete array or list of the expected element type before constructing the EF expression and pass that parameter to the query. Keep span operations outside EF-translated expressions. Do not change unrelated collection queries unless the trace/reproduction proves they are involved.
-4. Add a regression test using the same EF Core/Npgsql version and provider path that triggered the failure. Assert the intended domain exception or HTTP status, not merely that the query no longer throws. Cover both `Guid` and `int` parameters if both forms appear in the failing traces.
-5. Re-run the exact previously failing tests and the full relevant suite; verify there are no `InvalidOperationException` query-parameter failures or success-shaped fallback responses.
+1. The failed-run finding is fixed narrowly at the attach query; unrelated collection filters were not changed.
+2. The in-memory HTTP contract passes. The Npgsql regression is opt-in and awaits execution in the disposable PostgreSQL CI job.
 
 ### 7. Coordinate the merged Interview build blockers with their owners
 
-The report says the full solution is blocked by compile errors in merged Interview sources but gives no compiler diagnostics or file/line list. TASK-K explicitly assigns F3 implementation/compiler fixes to Minh/Phuc, with Khang coordinating integration and reporting failures. Send the exact CI compiler output and branch/commit to the responsible owner, have that owner fix the F3 source, then rebase/re-run the solution build. Do not guess at or edit Interview code without the specific compiler errors and ownership agreement.
+The exact CI output identified the duplicate `TurnId` parameter and duplicate `InterviewOptions.Language` property; both plus the duplicate `Audio` using are fixed in this checkout. The full solution build and tests now pass locally. If TASK-K ownership requires F3 owner review, share these compiler fixes with Minh/Phuc and Khang before merge.
 
 ### Completion order and acceptance checks
 
-1. Resolve the specific F3 compile blockers with their owners so full-solution validation is possible.
-2. Implement the content normalization/constraint with the schema owner, then add narrow PostgreSQL tests for race handling and atomicity.
-3. Implement row-indexed existing-duplicate validation and compact list DTO/projection; update unit and HTTP contracts.
-4. Investigate the EF parameter-evaluation failure using full logs and add a provider-backed regression test for the proven cause.
-5. Add and run the real PostgreSQL/Keycloak CI job required by TASK-K.
-6. Run targeted QuestionBank and report-calculator tests, then `dotnet test AiOralExam.sln --configuration Release`; record the exact commands and results. Acceptance requires no duplicate persistence under concurrent import, field-path validation for existing import duplicates, no revision history in list payloads, detail history preserved, and all relevant CI jobs green.
+1. Run the existing PostgreSQL/Keycloak CI job from a clean state to verify the migration reset, format fix, import hash binding, Npgsql attach filter, and concurrent duplicate guard.
+2. Reconcile the service hash normalization and migration generated-column normalization with the database owner before changing `database/01_schema.sql`.
+3. Complete the TASK-K role-authenticated E2E flow with frontend/F3 owner coordination; record the exact command and results in CI.
+4. Local validation completed with `dotnet test AiOralExam.sln --configuration Release --no-restore`: 366 unit and 52 integration tests passed; 11 unit and 13 integration tests were skipped, including all opt-in PostgreSQL cases. Acceptance still requires the PostgreSQL CI job and end-to-end coverage to pass.
 
 ## Implementation status (2026-11-01)
 
-- Implemented the generated PostgreSQL `lower(btrim(content))` key, named course-scoped unique index, forward-only migration with existing-collision diagnostics, and specific unique-violation-to-conflict mapping for create, import, AI draft creation, and Draft update.
-- Existing-content import duplicates now return `items[i].content` validation details; the list endpoint now uses a compact projection/DTO while detail still includes revision history.
-- Added unit/HTTP contract coverage, opt-in PostgreSQL concurrency and conflict-mapping tests, and a CI job that provisions PostgreSQL, exercises the upgrade/concurrency tests, and validates a Keycloak-issued token against a PostgreSQL-backed API endpoint. The smoke test uses a CI-created service account and leaves the public clients' password grants disabled.
-- The namespace import reported missing is already present in this checkout. `dotnet test AiOralExam.sln --configuration Release --no-restore` passes here (321 unit tests and 46 integration tests; five opt-in PostgreSQL concurrency tests skipped because no disposable database was configured). The reported ReadOnlySpan EF failure and Interview compile blockers did not reproduce, so no unrelated query or Interview code was changed.
-- The CI authentication smoke test does not cover the full TASK-K publish-to-report E2E flow across frontend/voice/review/reporting; coordinate that broader flow with the frontend and F3 owners. The new CI job has not been run from this local environment.
+- Fixed the reported Interview compilation errors: the duplicate `TurnId` parameter, duplicate `InterviewOptions.Language` property, and duplicate `Audio` using. The remaining `CurrentTurnDto` constructor now matches the response/turn IDs supplied by `InterviewService`.
+- Fixed the question-bank attach query by explicitly using `Enumerable.Contains`; the successful HTTP attach contract now passes. Existing and in-batch import duplicates return row-specific `items[i].content` validation errors, and the list route now projects a compact DTO without revisions while detail still returns revision history.
+- Fixed the migration's nested PostgreSQL `format()` placeholders and made the CI migration reset tolerate a fresh schema without the generated column/index. Its duplicate fixture now supplies distinct `content_hash` values so the migration itself can detect normalized collisions.
+- `QuestionBankContentHash.ComputeManyAsync` in this checkout does not use `SqlQueryRaw`; it binds the `string[]` as one typed Npgsql `text[]` parameter. No code change was needed for that older review observation.
+- `dotnet test AiOralExam.sln --configuration Release --no-restore` passes locally: 366 unit tests and 52 integration tests passed; 11 unit and 13 integration tests were skipped. The PostgreSQL-only concurrency/recovery tests were skipped because no isolated PostgreSQL test connection was configured, so the migration and race behavior still require the CI PostgreSQL job to run.
+- **Still outstanding: TASK-K end-to-end coverage.** The current PostgreSQL/Keycloak job checks a Keycloak-issued token at `/api/auth/me`; the concurrency tests call services directly. Neither exercises publish → student interview → lecturer review → student feedback → reporting/statistics/CSV. Completing this needs a disposable PostgreSQL schema plus realm test identities, a supported real-token flow for student and lecturer roles, and aligned API/test fixtures for the F3 interview/review and reporting steps. Coordinate the E2E harness with the frontend and F3 owners; use an authorization-code/PKCE-capable browser or test client rather than enabling password grants on the public clients. Keep the existing fast in-memory suite and make each E2E contract stage independently diagnosable in CI.

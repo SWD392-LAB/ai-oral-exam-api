@@ -96,6 +96,10 @@ public sealed class QuestionBankHttpContractTests
             $"/api/courses/{Ids.Course}/question-bank",
             new { topic = "Databases", bloom = "Remember", content = "Existing question" });
         Assert.Equal(HttpStatusCode.Created, createResponse.StatusCode);
+        using var secondCreateResponse = await client.PostAsJsonAsync(
+            $"/api/courses/{Ids.Course}/question-bank",
+            new { topic = "Databases", bloom = "Remember", content = "Existing second question" });
+        Assert.Equal(HttpStatusCode.Created, secondCreateResponse.StatusCode);
 
         using var response = await client.PostAsJsonAsync(
             $"/api/courses/{Ids.Course}/question-bank/import",
@@ -104,7 +108,7 @@ public sealed class QuestionBankHttpContractTests
                 items = new[]
                 {
                     new { topic = "Databases", bloom = "Remember", content = " existing QUESTION " },
-                    new { topic = "Databases", bloom = "Remember", content = "EXISTING QUESTION" }
+                    new { topic = "Databases", bloom = "Remember", content = "existing second QUESTION" }
                 }
             });
 
@@ -117,8 +121,8 @@ public sealed class QuestionBankHttpContractTests
 
         await using var scope = factory.Services.CreateAsyncScope();
         var db = scope.ServiceProvider.GetRequiredService<AccessConfigDbContext>();
-        Assert.Single(db.QuestionBankItems);
-        Assert.Single(db.AuditLogs);
+        Assert.Equal(2, db.QuestionBankItems.Count());
+        Assert.Equal(2, db.AuditLogs.Count());
     }
 
     [Fact]
