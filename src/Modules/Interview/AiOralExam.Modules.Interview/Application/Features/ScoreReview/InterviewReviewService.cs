@@ -209,6 +209,7 @@ internal sealed class InterviewReviewService(
             || expectedQuestionIds.Count == 0
             || !responseSetIsValid
             || attempt.Responses.Any(response => !response.IsFinished
+            || response.AiEvaluationState != AiEvaluationState.Completed
             || response.AiSuggestedScore is null
             || response.EvaluatedAt is null
             || response.Turns.Count == 0

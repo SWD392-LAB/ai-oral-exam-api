@@ -396,6 +396,7 @@ public class InterviewScoreReviewTests
             AttemptId = attempt.Id,
             QuestionId = configuration.QuestionId,
             IsFinished = true,
+            AiEvaluationState = AiEvaluationState.Completed,
             AiSuggestedScore = 5m,
             AiFeedback = "Good",
             EvaluatedAt = DateTime.UtcNow,
@@ -589,6 +590,7 @@ public class InterviewScoreReviewTests
                 AttemptId = attempt.Id,
                 QuestionId = DefaultQuestionId,
                 IsFinished = true,
+                AiEvaluationState = AiEvaluationState.Completed,
                 AiSuggestedScore = 0m,
                 EvaluatedAt = DateTime.UtcNow,
             };

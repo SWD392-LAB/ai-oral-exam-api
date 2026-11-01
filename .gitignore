@@ -12,6 +12,9 @@ obj/
 TestResults/
 *.trx
 coverage*/
+audio-storage/
+material-storage/
+*.uploading
 
 ## Secrets / local config
 appsettings.Local.json

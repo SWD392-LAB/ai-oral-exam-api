@@ -15,6 +15,12 @@ public class QuestionResponse
     public decimal? AiSuggestedScore { get; set; }
     public string? AiFeedback { get; set; }
     public DateTime? EvaluatedAt { get; set; }
+    public AiEvaluationState AiEvaluationState { get; set; } = AiEvaluationState.NotStarted;
+    public string? AiEvaluationError { get; set; }
+    /// <summary>Identifies the request that currently owns the evaluation claim.</summary>
+    public Guid? AiEvaluationClaimToken { get; set; }
+    /// <summary>UTC time when the current evaluation claim was acquired.</summary>
+    public DateTime? AiEvaluationClaimedAt { get; set; }
 
     public ICollection<InterviewTurn> Turns { get; set; } = new List<InterviewTurn>();
     public ICollection<CriterionScore> CriterionScores { get; set; } = new List<CriterionScore>();
@@ -54,6 +60,10 @@ public class QuestionResponse
         AiSuggestedScore = CriterionScores.Sum(s => s.Points);
         AiFeedback = feedback;
         EvaluatedAt = utcNow;
+        AiEvaluationState = AiEvaluationState.Completed;
+        AiEvaluationError = null;
+        AiEvaluationClaimToken = null;
+        AiEvaluationClaimedAt = null;
         IsFinished = true;
     }
 }

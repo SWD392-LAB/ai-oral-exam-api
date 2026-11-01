@@ -41,7 +41,8 @@ internal sealed class ReportService(
             return new QuestionReportDto(
                 q.OrderNo, q.Content, q.MaxScore, r?.SuggestedScore, r?.AiFeedback, r?.FollowUpCount ?? 0,
                 r?.Turns.OrderBy(t => t.TurnNo).Select(t => new TurnReportDto(t.TurnNo, t.Type.ToString(), t.QuestionText,
-                    t.AnswerTranscript, t.AskedAt, t.AnsweredAt)).ToList() ?? []);
+                    t.AnswerTranscript, t.AskedAt, t.AnsweredAt)).ToList() ?? [],
+                r?.AiEvaluationState ?? "NotStarted", r?.AiEvaluationError);
         }).ToList();
 
         return new AttemptReportDto(

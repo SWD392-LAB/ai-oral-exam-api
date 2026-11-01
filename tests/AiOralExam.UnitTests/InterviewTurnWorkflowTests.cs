@@ -1333,6 +1333,7 @@ public sealed class InterviewTurnWorkflowTests
         var service = new InterviewService(db, configuration, analyzer, scorer,
             audioStore, speechToText, events, auditLogWriter ?? new TestAuditLogWriter(), new TestUser(studentId, Roles.Student), clock,
             Options.Create(interviewOptions),
+            Options.Create(new AiProviderOptions()),
             logger);
         return new Fixture(db, service, clock, analyzer, scorer, configuration, session, events,
             audioStore, speechToText, databaseName, auditLogWriter ?? new TestAuditLogWriter(), logger);
@@ -1372,9 +1373,11 @@ public sealed class InterviewTurnWorkflowTests
             new TestAnalyzer(), Scorer, AudioStore, SpeechToText, new TestEventPublisher(db),
             AuditLogWriter, new TestUser(Db.Participants.Single().StudentId, Roles.Student), Clock,
             Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
+            Options.Create(new AiProviderOptions()),
             NullLogger<InterviewService>.Instance);
         public InterviewService CreateService(TestUser user) => new(Db, Configuration, Analyzer, Scorer,
             AudioStore, SpeechToText, Events, AuditLogWriter, user, Clock, Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
+            Options.Create(new AiProviderOptions()),
             Logger);
         public InterviewAudioSubmissionService CreateAudioService(TestUser user, IAudioChunkStore? audioStore = null)
         {
@@ -1384,6 +1387,7 @@ public sealed class InterviewTurnWorkflowTests
                 : new InterviewService(Db, Configuration, Analyzer, Scorer,
                     store, SpeechToText, Events, new TestAuditLogWriter(), user, Clock,
                     Options.Create(new InterviewOptions { TimeLimitGraceSeconds = 0 }),
+                    Options.Create(new AiProviderOptions()),
                     NullLogger<InterviewService>.Instance);
             return new InterviewAudioSubmissionService(Db, Configuration,
                 user, store, workflowService, Clock,

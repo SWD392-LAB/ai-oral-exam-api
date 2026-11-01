@@ -7,6 +7,7 @@ public class Question
     public Guid ExamSessionId { get; set; }
     public int OrderNo { get; set; }
     public string Content { get; set; } = null!;
+    public Guid? SourceBankRevisionId { get; set; }
 
     /// <summary>Null while the session is a draft and the lecturer has not defined the rubric yet.</summary>
     public Rubric? Rubric { get; set; }

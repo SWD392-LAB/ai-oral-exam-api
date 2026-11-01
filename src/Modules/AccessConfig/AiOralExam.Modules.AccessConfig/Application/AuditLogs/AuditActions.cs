@@ -16,4 +16,7 @@ internal static class AuditActions
     public const string RemoveParticipant = "RemoveParticipant";
     public const string ResendSetupEmail = "ResendSetupEmail";
     public const string UpdateOwnProfile = "UpdateOwnProfile";
+    public const string Approve = "Approve";
+    public const string Reject = "Reject";
+    public const string Attach = "Attach";
 }

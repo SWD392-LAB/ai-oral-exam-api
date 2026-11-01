@@ -53,6 +53,15 @@ public class ReportCalculatorTests
         Assert.All(waiting.ScoreDistribution, b => Assert.Equal(0, b.Count));
     }
 
+    [Fact]
+    public void Suggested_total_excludes_non_completed_ai_evaluations()
+    {
+        var attempt = Attempt(AttemptStatus.PendingReview, null,
+            [new(Guid.NewGuid(), Guid.NewGuid(), 0, false, 9, "pending", [], "Pending")]);
+
+        Assert.Equal(0m, ReportCalculator.SuggestedTotal(attempt));
+    }
+
     private static AttemptResult Attempt(AttemptStatus status, decimal? finalScore,
         IReadOnlyList<QuestionResponseResult> responses) =>
         new(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), status, DateTime.UtcNow, DateTime.UtcNow,

@@ -33,10 +33,11 @@ internal sealed class InterviewService(
     ICurrentUser currentUser,
     TimeProvider clock,
     IOptions<InterviewOptions> options,
+    IOptions<AiProviderOptions> aiProviderOptions,
     ILogger<InterviewService> logger) : IInterviewService
 {
-    private const string DefaultLanguage = "Vietnamese"; // TODO (M2): read from AiServiceConfig through the F7 contract
     private readonly InterviewOptions _options = options.Value;
+    private readonly AiProviderOptions _aiProviderOptions = aiProviderOptions.Value;
 
     private DateTime UtcNow => clock.GetUtcNow().UtcDateTime;
 
@@ -488,9 +489,21 @@ internal sealed class InterviewService(
                     }
 
                     var stage = pendingTurn.ProcessingStage;
+                    var staleOwnerToken = pendingTurn.ProcessingToken;
                     var retryCount = stage == TurnProcessingStage.Transcription
                         ? ++pendingTurn.TranscriptionRetryCount
                         : ++pendingTurn.RetryCount;
+                    if (stage is TurnProcessingStage.AiEvaluation or TurnProcessingStage.TimeoutEvaluation)
+                    {
+                        var responseForStaleTurn = attempt.Responses.Single(response => response.Id == pendingTurn.QuestionResponseId);
+                        if (responseForStaleTurn.AiEvaluationClaimToken == staleOwnerToken)
+                        {
+                            responseForStaleTurn.AiEvaluationState = AiEvaluationState.Failed;
+                            responseForStaleTurn.AiEvaluationError = "AI evaluation was interrupted. Retry is available.";
+                            responseForStaleTurn.AiEvaluationClaimToken = null;
+                            responseForStaleTurn.AiEvaluationClaimedAt = null;
+                        }
+                    }
                     pendingTurn.ProcessingStartedAt = null;
                     pendingTurn.ProcessingToken = null;
                     if (retryCount > Math.Max(0, _options.MaximumTurnRetries))
@@ -690,7 +703,7 @@ internal sealed class InterviewService(
             .ToList();
         var analysis = await analyzer.AnalyzeAsync(new AnswerAnalysisRequest(
             question.Content, question.Criteria, dialogue,
-            response.FollowUpCount, session.MaxFollowUps, DefaultLanguage), ct);
+            response.FollowUpCount, session.MaxFollowUps, _options.Language), ct);
 
         var followUpOpenedAt = UtcNow;
         if (!manualRecovery && !timedOut && sessionOpen && session.IsOpenAt(followUpOpenedAt)
@@ -698,6 +711,10 @@ internal sealed class InterviewService(
             && !string.IsNullOrWhiteSpace(analysis.FollowUpQuestion))
         {
             response.AddTurn(TurnType.FollowUp, analysis.FollowUpQuestion!, followUpOpenedAt);
+            response.AiEvaluationState = AiEvaluationState.Completed;
+            response.AiEvaluationError = null;
+            response.AiEvaluationClaimToken = null;
+            response.AiEvaluationClaimedAt = null;
             events.Add(CreateEvent(attempt, session.Id, InterviewEventTypes.TurnOpened, InterviewEventSequence.TurnOpened(turnCount + 1), followUpOpenedAt));
             logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
                 attempt.Id, response.FollowUpCount, question.Id);
@@ -705,7 +722,7 @@ internal sealed class InterviewService(
         }
 
         var score = await scorer.ScoreAsync(new RubricScoringRequest(
-            question.Content, question.Criteria, dialogue, DefaultLanguage), ct);
+            question.Content, question.Criteria, dialogue, _options.Language), ct);
         var criterionScores = ValidateAiScore(score, question.Criteria)
             .Select((given, index) => new CriterionScore
             {
@@ -786,6 +803,16 @@ internal sealed class InterviewService(
         SubmitAnswerResponse result;
         try
         {
+            await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
+            {
+                await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, ct);
+                claim.Response.AiEvaluationState = AiEvaluationState.Pending;
+                claim.Response.AiEvaluationError = null;
+                claim.Response.AiEvaluationClaimToken = claim.ProcessingToken;
+                claim.Response.AiEvaluationClaimedAt = UtcNow;
+                return true;
+            }, ct);
+
             result = await ProcessTurnAsync(claim.Attempt, claim.Response, claim.Turn, claim.Session,
                 claim.Answer, claim.Now, claim.TimedOut, claim.SessionOpen, claim.ManualRecovery, events, ct);
             claim.Turn.ProcessingStatus = TurnProcessingStatus.Completed;
@@ -803,13 +830,19 @@ internal sealed class InterviewService(
         {
             return await GetCurrentClaimResponseAsync(attemptId, claim.Turn.Id);
         }
-        catch
+        catch (Exception evaluationException)
         {
             try
             {
                 await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
                 {
                     await EnsureProcessingLeaseAsync(claim.Turn.Id, claim.ProcessingToken, CancellationToken.None);
+                    claim.Response.AiEvaluationState = AiEvaluationState.Failed;
+                    claim.Response.AiEvaluationError = evaluationException is OperationCanceledException
+                        ? "AI evaluation was cancelled. Retry is available."
+                        : "AI evaluation failed. Retry is available.";
+                    claim.Response.AiEvaluationClaimToken = null;
+                    claim.Response.AiEvaluationClaimedAt = null;
                     claim.Turn.RetryCount++;
                     claim.Turn.ProcessingStatus = claim.Turn.RetryCount > Math.Max(0, _options.MaximumTurnRetries)
                         ? TurnProcessingStatus.Failed
@@ -957,7 +990,7 @@ internal sealed class InterviewService(
             await using (completed.Audio)
             {
                 transcript = await speechToText.TranscribeAsync(
-                    completed.Audio, completed.ContentType, DefaultLanguage, ct)
+                    completed.Audio, completed.ContentType, _aiProviderOptions.SpeechLanguage, ct)
                     ?? throw new AppException(502, "speech_to_text_invalid_response",
                         "Speech-to-text returned no transcript result.");
             }

@@ -82,6 +82,20 @@ public class InterviewAttemptTests
     }
 
     [Fact]
+    public void Failed_evaluation_keeps_answered_turn_retryable()
+    {
+        var response = new QuestionResponse { Id = Guid.NewGuid(), IsFinished = false, AiEvaluationState = AiEvaluationState.Failed };
+        var turn = response.AddTurn(TurnType.Main, "Question", DateTime.UtcNow);
+        turn.AnswerTranscript = "saved transcript";
+        turn.AnsweredAt = DateTime.UtcNow;
+        turn.ProcessingStatus = TurnProcessingStatus.Retry;
+
+        Assert.Equal("saved transcript", turn.AnswerTranscript);
+        Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
+        Assert.Null(response.CurrentTurn);
+    }
+
+    [Fact]
     public void Manual_recovery_resets_only_the_exhausted_ai_retry_counter_and_preserves_answer_data()
     {
         var answeredAt = DateTime.UtcNow;

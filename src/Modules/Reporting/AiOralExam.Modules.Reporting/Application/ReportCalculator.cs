@@ -9,7 +9,9 @@ internal static class ReportCalculator
     public const decimal GoodAnswerThreshold = 0.7m;
 
     public static decimal SuggestedTotal(AttemptResult a) =>
-        a.Responses.Sum(r => r.SuggestedScore ?? 0);
+        a.Responses
+            .Where(r => string.Equals(r.AiEvaluationState, "Completed", StringComparison.OrdinalIgnoreCase))
+            .Sum(r => r.SuggestedScore ?? 0);
 
     /// <summary>A final score exists only once the lecturer has Approved it.</summary>
     public static decimal? FinalScore(AttemptResult a) =>
