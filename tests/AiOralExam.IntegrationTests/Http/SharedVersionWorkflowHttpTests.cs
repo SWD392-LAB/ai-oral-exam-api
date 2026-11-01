@@ -207,7 +207,7 @@ public sealed class SharedVersionWorkflowHttpTests
             Assert.All(responses, response => Assert.Equal(8m, response.AiSuggestedScore));
             var responseIds = responses.Select(x => x.Id).ToArray();
             var scores = await interviewDb.CriterionScores.AsNoTracking()
-                .Where(x => responseIds.Contains(x.QuestionResponseId))
+                .Where(x => Enumerable.Contains(responseIds, x.QuestionResponseId))
                 .ToListAsync();
             Assert.Equal(4, scores.Count);
             Assert.Equal(4, scores.Select(x => x.Id).Distinct().Count());
