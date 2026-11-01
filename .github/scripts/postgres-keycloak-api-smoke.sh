@@ -60,7 +60,7 @@ service_account_id="$(
 service_account_username="ci_kc_${service_account_id//-/}"
 service_account_email="$service_account_username@ci.example.test"
 
-PGPASSWORD=postgres psql \
+PGPASSWORD=postgres PGOPTIONS="-c search_path=fresh" psql \
   -h localhost -U postgres -d aives_f1_concurrency_test \
   -v ON_ERROR_STOP=1 \
   -c "INSERT INTO fresh.users (id, role_id, full_name, email, username, is_active, created_at) SELECT '$service_account_id'::uuid, id, 'CI Keycloak smoke user', '$service_account_email', '$service_account_username', TRUE, now() FROM fresh.roles WHERE name = 'Administrator'"
