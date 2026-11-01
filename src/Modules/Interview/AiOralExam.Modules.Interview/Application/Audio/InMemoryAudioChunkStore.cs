@@ -26,7 +26,7 @@ internal sealed class InMemoryAudioChunkStore : IAudioChunkStore
         Guid attemptId, Guid turnId, int sequence, byte[] chunk, string contentType, CancellationToken ct)
     {
         ct.ThrowIfCancellationRequested();
-        ValidateChunk(sequence, chunk, contentType);
+        AudioChunkValidation.Validate(sequence, chunk, contentType);
 
         lock (_gate)
         {
@@ -142,22 +142,6 @@ internal sealed class InMemoryAudioChunkStore : IAudioChunkStore
             _storedBytes -= _uploads[key].BytesReceived;
             _uploads.Remove(key);
         }
-    }
-
-    private static void ValidateChunk(int sequence, byte[] chunk, string contentType)
-    {
-        var errors = new Dictionary<string, string[]>();
-        if (sequence < 0)
-            errors[nameof(sequence)] = ["Chunk sequence must be zero or greater."];
-        if (chunk is null || chunk.Length == 0)
-            errors[nameof(chunk)] = ["Audio chunks cannot be empty."];
-        else if (chunk.Length > AudioChunkLimits.MaximumChunkBytes)
-            errors[nameof(chunk)] = [$"Audio chunks cannot exceed {AudioChunkLimits.MaximumChunkBytes} bytes."];
-        if (string.IsNullOrWhiteSpace(contentType) || contentType.Length > 100
-            || !contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
-            errors[nameof(contentType)] = ["Content type must be an audio media type."];
-        if (errors.Count > 0)
-            throw new ValidationException(errors);
     }
 
     private sealed class AudioUpload(string contentType)

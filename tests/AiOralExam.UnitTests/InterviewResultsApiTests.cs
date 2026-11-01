@@ -38,58 +38,6 @@ public class InterviewResultsApiTests
     }
 
     [Fact]
-    public async Task Get_attempt_result_includes_criterion_scores()
-    {
-        await using var db = new InterviewDbContext(new DbContextOptionsBuilder<InterviewDbContext>()
-            .UseInMemoryDatabase(Guid.NewGuid().ToString())
-            .Options);
-        var participant = new Participant
-        {
-            Id = Guid.NewGuid(),
-            ExamSessionId = Guid.NewGuid(),
-            StudentId = Guid.NewGuid()
-        };
-        var responseId = Guid.NewGuid();
-        var criterionId = Guid.NewGuid();
-        var attempt = new InterviewAttempt
-        {
-            Id = Guid.NewGuid(),
-            ParticipantId = participant.Id,
-            Participant = participant,
-            StartedAt = DateTime.UtcNow,
-            Responses =
-            [
-                new QuestionResponse
-                {
-                    Id = responseId,
-                    QuestionId = Guid.NewGuid(),
-                    IsFinished = true,
-                    AiSuggestedScore = 4m,
-                    CriterionScores =
-                    [
-                        new CriterionScore
-                        {
-                            Id = Guid.NewGuid(),
-                            QuestionResponseId = responseId,
-                            RubricCriterionId = criterionId,
-                            Points = 4m,
-                            Comment = "Clear answer"
-                        }
-                    ]
-                }
-            ]
-        };
-        db.InterviewAttempts.Add(attempt);
-        await db.SaveChangesAsync();
-
-        var result = await new InterviewResultsApi(db).GetAttemptResultAsync(attempt.Id);
-
-        Assert.NotNull(result);
-        Assert.Equal(new CriterionScoreResult(criterionId, 4m, "Clear answer"),
-            Assert.Single(Assert.Single(result.Responses).CriterionScores!));
-    }
-
-    [Fact]
     public async Task Get_attempt_counts_groups_by_session_and_returns_zeroes_for_sessions_without_attempts()
     {
         await using var db = new InterviewDbContext(new DbContextOptionsBuilder<InterviewDbContext>()

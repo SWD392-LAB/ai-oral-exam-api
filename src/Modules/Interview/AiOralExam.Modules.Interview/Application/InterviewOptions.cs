@@ -28,6 +28,9 @@ public sealed class InterviewOptions
     /// <summary>Upper bound for exponential turn-processing retry delays.</summary>
     public int MaximumTurnRetryDelaySeconds { get; set; } = 300;
 
+    /// <summary>Language passed to the analyzer/scorer; F7 can override this in deployment config.</summary>
+    public string Language { get; set; } = "Vietnamese";
+
     public MockOptions Mock { get; set; } = new();
 
     public sealed class MockOptions

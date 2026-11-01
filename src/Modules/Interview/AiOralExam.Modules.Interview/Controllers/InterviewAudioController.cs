@@ -11,10 +11,11 @@ namespace AiOralExam.Modules.Interview.Controllers;
 [ApiController]
 [Route("api/interview-attempts/{id:guid}")]
 [Authorize]
-[Tags("Interview audio")]
+[ApiExplorerSettings(GroupName = "v1")]
 public sealed class InterviewAudioController(IInterviewAudioService audio) : ControllerBase
 {
     [HttpPost("audio")]
+    [Consumes("multipart/form-data")]
     [Authorize(Roles = Roles.Student)]
     [RequestSizeLimit(16 * 1024 * 1024)]
     [ProducesResponseType<SubmitAnswerResponse>(StatusCodes.Status200OK)]
@@ -23,7 +24,7 @@ public sealed class InterviewAudioController(IInterviewAudioService audio) : Con
     public async Task<SubmitAnswerResponse> Submit(
         Guid id,
         [FromForm] Guid turnId,
-        [FromForm] IFormFile? file,
+        IFormFile? file,
         CancellationToken ct)
     {
         if (file is null)

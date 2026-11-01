@@ -331,6 +331,7 @@ public sealed class ScoreReviewHttpContractTests
                 AttemptId = AttemptId,
                 QuestionId = QuestionId,
                 IsFinished = true,
+                AiEvaluationState = InterviewDomain.AiEvaluationState.Completed,
                 AiSuggestedScore = 0m,
                 EvaluatedAt = StartedAt,
             };

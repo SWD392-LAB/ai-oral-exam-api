@@ -1,7 +1,5 @@
 using System.Text.RegularExpressions;
 
-using System.Text.RegularExpressions;
-
 namespace AiOralExam.UnitTests;
 
 public sealed class RubricSqlContractTests

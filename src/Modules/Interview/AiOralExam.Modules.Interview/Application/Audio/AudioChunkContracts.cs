@@ -1,3 +1,5 @@
+using AiOralExam.SharedKernel.Errors;
+
 namespace AiOralExam.Modules.Interview.Application.Audio;
 
 public enum AudioChunkAppendStatus
@@ -78,4 +80,23 @@ public static class AudioChunkLimits
 {
     public const int MaximumChunkBytes = 256 * 1024;
     public const int MaximumSignalRMessageBytes = 384 * 1024;
+}
+
+internal static class AudioChunkValidation
+{
+    public static void Validate(int sequence, byte[] chunk, string contentType)
+    {
+        var errors = new Dictionary<string, string[]>();
+        if (sequence < 0)
+            errors[nameof(sequence)] = ["Chunk sequence must be zero or greater."];
+        if (chunk is null || chunk.Length == 0)
+            errors[nameof(chunk)] = ["Audio chunks cannot be empty."];
+        else if (chunk.Length > AudioChunkLimits.MaximumChunkBytes)
+            errors[nameof(chunk)] = [$"Audio chunks cannot exceed {AudioChunkLimits.MaximumChunkBytes} bytes."];
+        if (string.IsNullOrWhiteSpace(contentType) || contentType.Length > 100
+            || !contentType.StartsWith("audio/", StringComparison.OrdinalIgnoreCase))
+            errors[nameof(contentType)] = ["Content type must be an audio media type."];
+        if (errors.Count > 0)
+            throw new ValidationException(errors);
+    }
 }

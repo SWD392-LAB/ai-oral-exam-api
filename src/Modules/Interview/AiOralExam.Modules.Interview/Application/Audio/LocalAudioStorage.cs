@@ -15,15 +15,31 @@ internal sealed class LocalAudioStorage(IOptions<AiProviderOptions> options) : I
     public async Task<string> PutAsync(Guid attemptId, Guid turnId, Stream content, string contentType, CancellationToken ct = default)
     {
         var extension = ExtensionFor(contentType);
-        var key = $"{attemptId:N}/{turnId:N}{extension}";
+        // Uploads are immutable so a failed retry cannot overwrite the
+        // recording currently referenced by the turn.
+        var key = $"{attemptId:N}/{turnId:N}/{Guid.NewGuid():N}{extension}";
         var path = ResolvePath(key);
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
 
         var temporary = path + ".uploading";
-        await using (var target = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true))
-            await content.CopyToAsync(target, ct);
-
-        File.Move(temporary, path, overwrite: true);
+        try
+        {
+            await using (var target = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 64 * 1024, useAsync: true))
+                await content.CopyToAsync(target, ct);
+            File.Move(temporary, path);
+        }
+        catch
+        {
+            try
+            {
+                if (File.Exists(temporary)) File.Delete(temporary);
+            }
+            catch
+            {
+                // Preserve the original write/move error.
+            }
+            throw;
+        }
         return key;
     }
 
@@ -57,15 +73,19 @@ internal sealed class LocalAudioStorage(IOptions<AiProviderOptions> options) : I
             ? configured
             : Path.Combine(AppContext.BaseDirectory, configured);
 
-    private static string ExtensionFor(string contentType) => contentType.ToLowerInvariant() switch
+    private static string ExtensionFor(string contentType)
     {
-        "audio/webm" => ".webm",
-        "audio/wav" or "audio/x-wav" => ".wav",
-        "audio/mpeg" or "audio/mp3" => ".mp3",
-        "audio/ogg" => ".ogg",
-        "audio/mp4" => ".m4a",
-        _ => ".bin"
-    };
+        var mediaType = contentType.Split(';', 2)[0].Trim();
+        return mediaType.ToLowerInvariant() switch
+        {
+            "audio/webm" => ".webm",
+            "audio/wav" or "audio/x-wav" => ".wav",
+            "audio/mpeg" or "audio/mp3" => ".mp3",
+            "audio/ogg" => ".ogg",
+            "audio/mp4" => ".m4a",
+            _ => ".bin"
+        };
+    }
 
     private static string ContentTypeFor(string extension) => extension.ToLowerInvariant() switch
     {

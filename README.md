@@ -9,6 +9,37 @@ Backend of **AIVES – AI-powered Viva Exam System** (SWD392). An AI examiner as
 
 Frontend repo: `ai-oral-exam-web`.
 
+### Compatibility and Phase 5 scope
+
+The API currently supports two rubric workflows:
+
+- **Platform-rubric workflow:** new sessions use `RubricMode.SharedVersion` by
+  default and pin an administrator-managed rubric version. Platform rubric
+  templates and versions are managed under `/api/rubric-templates`; the
+  read-only platform view is `/api/platform-rubric`.
+- **Legacy per-question workflow:** existing sessions, and explicitly created
+  sessions with `RubricMode.Legacy`, continue to use
+  `PUT`/`DELETE /api/exam-sessions/{sessionId}/questions/{questionId}/rubric`.
+  These writes remain available only while the session is `Draft` and require
+  an administrator or the assigned lecturer. They are rejected for
+  `SharedVersion` sessions. Existing legacy data remains readable for
+  historical attempts.
+
+The compatibility policy is coexistence, not removal: legacy routes remain
+supported and have no sunset date or deprecation header. New clients should use
+the platform-rubric workflow; existing clients may continue using the legacy
+workflow for legacy sessions. `POST /api/exam-sessions` remains the session
+creation entry point and selects the workflow through `rubricMode` and the
+optional `rubricVersionId`.
+
+The Phase 5 audio path is not production-ready. Development and test
+environments use in-memory audio storage; the default production registration
+uses unavailable storage and STT adapters that return a configuration error.
+The repository therefore does not claim operational production audio upload or
+speech-to-text support. A provider, private object-storage configuration,
+credentials, and production adapter verification are required before that
+claim can be made.
+
 ---
 
 ## 1. Prerequisites
@@ -42,14 +73,73 @@ dotnet run --project src/AiOralExam.Api --launch-profile http
 
 Check that the API can reach the database: open http://localhost:5080/health. It should say `Healthy`.
 
-For an existing database, apply the role/code validation upgrade with
-`psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f database/03_user_role_code_constraint.sql`.
-The script reports any existing users that need correction before it installs the trigger.
-Fresh databases get this trigger automatically from `database/01_schema.sql`.
+`database/01_schema.sql` is the final fresh-install schema. Docker runs it followed by
+`database/02_seed.sql`; it includes the current EF columns, including durable audio
+acceptance, transcription-retry, and manual-recovery metadata.
 
-For existing databases, also apply `database/04_audit_log_description.sql` to add the audit-log description column. Fresh databases get it from `database/01_schema.sql`.
+For an existing database, apply the forward-only scripts in numeric order from `03` through
+`15`. Do not rerun `database/01_schema.sql` against existing data. Scripts `03` and `04`
+use the session `search_path`, so set it to the application schema before running them.
+Scripts `05` through `15` additionally require the psql variable `app_schema`; each script
+validates that schema and sets its own session `search_path` to `<app_schema>, pg_catalog`.
+The guarded application-schema migrations reject unsafe schemas such as
+`information_schema` and `pg_*`; migration `14` explicitly rejects `public`. Migration `14` adds the bounded
+`manual_recovery_count` column and constraint required for one manual interrupted-turn
+recovery; it must run after migration `13` and requires an explicitly supplied non-public
+`app_schema`. Migration `15` adds `interview_attempts.partial_completed`; it must run after
+migration `14` and requires the same explicitly supplied non-public `app_schema`.
 
-For the retake schema change on an existing database, identify the application schema and apply `database/05_allow_interview_attempt_retakes.sql` as described in [Changing the database](#6-changing-the-database). Do not rerun `database/01_schema.sql` against existing data.
+For example, with an application schema named `aives_app`:
+
+```bash
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -c 'SET search_path TO aives_app, pg_catalog' \
+  -f database/03_user_role_code_constraint.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+  -c 'SET search_path TO aives_app, pg_catalog' \
+  -f database/04_audit_log_description.sql
+for script in database/{05..15}_*.sql; do
+  psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -v app_schema=aives_app -f "$script"
+done
+```
+
+The ordered upgrades are role/code validation (`03`), audit and retake changes (`04`-`05`),
+then every script from `06` through `15` in full filename order. Several scripts intentionally
+share a numeric prefix: `06_ai_evaluation_state.sql` and `06_rubric_versions.sql`,
+`07_f3_turn_processing.sql` and `07_question_bank.sql`, and `08_course_materials.sql` and
+`08_f1_platform_rubrics.sql`. Preserve the filename order because the F3 lease upgrade (`09`)
+depends on turn processing (`07`), F1 rubric lifecycle (`10`) depends on platform rubrics (`08`),
+and retry backoff (`11`) follows lifecycle (`10`). Migrations `13`, `14`, and `15`
+remain compatible with the final `01_schema.sql` because they use guarded column/constraint
+operations; all three require a non-public `app_schema`. Fresh databases already contain
+`partial_completed` through `database/01_schema.sql` and do not need migration `15` separately.
+
+### Isolated PostgreSQL test database
+
+The PostgreSQL recovery tests are opt-in. Create a fresh, dedicated database and set
+`AIVES_POSTGRES_TEST_CONNECTION_STRING` to it; never use the development database `aives`.
+Use a disposable database per test run and do not share it with the API, development tools,
+or another test process. Prepare it from the fresh-install schema without running any upgrade
+migrations:
+
+```powershell
+$env:AIVES_POSTGRES_TEST_CONNECTION_STRING = "Host=localhost;Port=5432;Database=r3_phase2_test;Username=<test-role>;Password=<test-password>;Search Path=r3_phase2_app,pg_catalog"
+dotnet test tests/AiOralExam.IntegrationTests/AiOralExam.IntegrationTests.csproj --filter "FullyQualifiedName~PostgresInterviewRecoveryTests"
+Remove-Item Env:AIVES_POSTGRES_TEST_CONNECTION_STRING
+```
+
+The database must be exactly `r3_phase2_test` for the focused Round 3 recovery tests, and the
+search path must include the non-public `r3_phase2_app` schema and must not use `public`.
+Verify the connection string before starting the tests. The tests create uniquely named rows
+but do not clean them up; isolate each run and drop only this dedicated test database manually
+after the run. No test setup should execute migrations against an existing development or
+production database. Based on the supplied latest execution evidence, the focused PostgreSQL
+recovery suite ran against the isolated `r3_phase2_test` database with the non-public
+`r3_phase2_app,pg_catalog` search path and passed 6 tests with 0 failures and 0 skips. The
+successful manual-recovery audit test asserts the recovered TurnId in the persisted description.
+The concurrency test uses target-scoped analyzer/scorer invocation counters and persisted
+criterion-score assertions rather than a global worker count. This test result does not claim
+that migrations were applied by the test setup or to any development or production database.
 
 For durable AI retry state on an existing database, apply
 `database/06_ai_evaluation_state.sql` with the same verified `app_schema`
@@ -65,12 +155,6 @@ For private F1 course material ingestion on an existing database, apply
 the material metadata and extracted-chunk tables; uploaded files remain outside
 the database in the configured private storage root.
 
-The rubric-version/platform lifecycle upgrades are separate:
-`database/06_rubric_versions.sql`, `database/08_f1_platform_rubrics.sql`, and
-`database/10_f1_rubric_lifecycle.sql`. They require the `app_schema` psql
-variable; follow each script's header and the approved database change process
-before applying them.
-
 In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup project, pick the **http** profile and press F5.
 
 ### Try the M1 exam flow in Swagger
@@ -79,7 +163,7 @@ In Visual Studio: open `AiOralExam.sln`, set `AiOralExam.Api` as the startup pro
 2. Sign in on the Keycloak page with `han.hg@aives.edu.vn` / `Password@123`. Swagger then sends the Keycloak access token with every request.
 3. Call `GET /api/interview/my-sessions`. You should see 3 sessions: two open (S1, S4) and one not open yet (S6).
 4. Call `POST /api/interview-attempts` with `{ "examSessionId": "33333333-0000-0000-0000-000000000001" }`. You get `201`, an `attemptId` and the first question (`currentTurn`).
-5. Call `POST /api/interview-attempts/{attemptId}/responses` with `{ "turnId": "<currentTurn.turnId>", "answerText": "..." }`. You get the mock AI score and feedback, plus the next question. Repeat until `outcome = "Completed"`.
+5. Call `POST /api/interview-attempts/{attemptId}/responses` with `{ "turnId": "<currentTurn.turnId>", "answerText": "..." }`. The student receives the processing outcome and next question, but not the provisional AI score or feedback. Repeat until `outcome = "Completed"`; the lecturer reviews and confirms the stored result separately.
 
 > Each question must be answered within `timeLimitPerQuestion` seconds (120 s for S1), plus a 15 s grace period. A later submission counts as timed out (`timedOut: true`) and the answer is not stored.
 
@@ -135,15 +219,13 @@ ai-oral-exam-api/
 ├── Directory.Build.props            # shared settings: net8.0, nullable...
 ├── Directory.Packages.props         # NuGet versions declared once (Central Package Management)
 ├── database/
-│   ├── 01_schema.sql                # SOURCE OF TRUTH for the schema
+│   ├── 01_schema.sql                # SOURCE OF TRUTH for the current schema
 │   ├── 02_seed.sql                  # demo data
 │   ├── 03_user_role_code_constraint.sql # upgrade for existing databases
 │   ├── 04_audit_log_description.sql # adds audit log descriptions to existing databases
 │   ├── 05_allow_interview_attempt_retakes.sql # removes the old one-attempt constraint
-│   ├── 06_*.sql                     # AI evaluation state and rubric versions
-│   ├── 07_*.sql                     # question bank and F3 turn processing
-│   ├── 08_*.sql                     # course materials and platform rubrics
-│   └── 09_*.sql–12_*.sql            # F3 processing, rubric lifecycle and retry upgrades
+│   ├── 06_* through 10_*            # F1 rubric/question-bank and F3 turn-processing upgrades
+│   └── 11_* through 15_*            # retry, recovery, and partial-attempt upgrades
 ├── src/
 │   ├── AiOralExam.Api/              # Host: Program.cs, Keycloak token validation, Swagger, CORS, error middleware
 │   ├── Shared/
@@ -273,6 +355,13 @@ There is no way back. Each submitted answer returns an `outcome`:
 - `NextQuestion`: moves on to the next main question
 - `Completed`: no questions left; the attempt moves to `PendingReview`
 
+### Audio retry and recovery notes (current phase)
+
+- Turn-processing retries are bounded by `Interview:MaximumTurnRetries`; terminal failures move the attempt to `Interrupted`.
+- Missing audio on a retry is treated as terminal and does not loop forever.
+- Restart recovery depends on a durable `IAudioChunkStore` implementation and a real `ISpeechToTextService` provider.
+- The default in-memory adapters are development-only and are not a production durability guarantee.
+
 ### F6 reporting and F3 Score Review
 
 Reporting reads existing data through `IInterviewResultsApi` and
@@ -329,7 +418,7 @@ confirmed examples can be read without submitting a new review.
 | `Interview:AllowRetake` | `false` | globally allows another attempt after a student's prior attempt is finished; not a per-session setting |
 | `Interview:Language` | `Vietnamese` | language passed to the LLM analyzer/scorer |
 | `Interview:TimeLimitGraceSeconds` | 15 | grace period after the time limit |
-| `AiProviders:LlmProvider` | `Mock` | `Mock` or `Gemini`; Gemini reads `AiProviders:GeminiApiKey` from user-secrets/environment |
+| `AiProviders:LlmProvider` | `Mock` | `Mock`, `Ollama`, or `Gemini`; controls F1 question generation and F3 analysis/scoring. Gemini reads `AiProviders:GeminiApiKey` from user-secrets/environment |
 | `AiProviders:SttProvider` | `Mock` | `Mock` or `LocalHttp` (faster-whisper sidecar) |
 | `AiProviders:TtsProvider` | `Mock` | `Mock` or `LocalHttp` (Piper/Coqui sidecar) |
 | `AiProviders:SpeechLanguage` | `vi-VN` | language sent to STT/TTS; use `en-US` for English |
@@ -341,22 +430,49 @@ confirmed examples can be read without submitting a new review.
 
 ### AI provider modes and audio API
 
-The API keeps `Mock` as the default, so tests and the demo run without billing.
-The committed `appsettings.Development.json` enables the free-demo profile:
-Gemini for LLM evaluation and local HTTP sidecars for STT/TTS. Start the API
-with `ASPNETCORE_ENVIRONMENT=Development`, run the faster-whisper and
-Piper/Coqui sidecars on ports `8001` and `8002`, and store the Gemini key
-outside the repository:
+The committed `appsettings.Development.json` selects local Ollama
+(`qwen2.5:3b`) for F1/F3 LLM calls and local faster-whisper/Piper services for
+speech, so a hosted LLM credential is not needed for local smoke testing.
+Qwen 2.5 3B is about 1.9 GB and is distributed under the Qwen license; review
+the [Ollama model card](https://ollama.com/library/qwen2.5:3b) before
+redistributing it. Gemini remains available as an optional provider. Its free
+tier has account and rate limits, and Google says free-tier prompts may be
+used to improve products; send only material you are allowed to share. See
+[Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing) and
+[Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key).
+
+Start the local providers (first start downloads the Ollama image, Whisper
+model, and Vietnamese/English Piper voices):
 
 ```sh
-dotnet user-secrets set "AiProviders:GeminiApiKey" "..." --project src/AiOralExam.Api
+docker compose --profile local-ai up -d --build ollama faster-whisper piper-tts
+docker compose exec ollama ollama pull qwen2.5:3b
+docker compose ps ollama faster-whisper piper-tts
 ```
 
-For a no-billing voice demo outside the Development environment, set
-`SttProvider` and `TtsProvider` to `LocalHttp` manually. The STT
-sidecar accepts multipart field `file` plus `language` and returns
-`{"text":"..."}`. The TTS sidecar accepts JSON `{ "text": "...", "language": "..." }`
-and returns audio bytes (or `{ "audioBase64": "...", "contentType": "audio/wav" }`).
+Start the API in Development:
+
+```sh
+ASPNETCORE_ENVIRONMENT=Development dotnet run --project src/AiOralExam.Api
+```
+
+To use Gemini instead, set `AiProviders:LlmProvider=Gemini` and configure
+`AiProviders:GeminiApiKey` via user-secrets or an environment variable.
+
+The providers listen on `127.0.0.1:11434`, `127.0.0.1:8001`, and
+`127.0.0.1:8002`; model files persist in Docker volumes. Stop them with
+`docker compose stop ollama faster-whisper piper-tts`.
+To choose a smaller/faster Whisper model, set `WHISPER_MODEL=base` before
+running Compose. The API's general and test configuration still defaults to
+deterministic `Mock` providers; the test factory explicitly keeps tests offline.
+
+The STT sidecar accepts multipart field `file` plus `language` and returns
+`{"text":"..."}`. The TTS sidecar accepts JSON
+`{ "text": "...", "language": "..." }` and returns WAV audio bytes.
+The Piper runtime is GPL-3.0-or-later, and voice files have their own model-card
+terms; review both before redistributing the sidecar or downloaded voices. See
+[Piper's package metadata](https://github.com/OHF-Voice/piper1-gpl/blob/main/setup.py)
+and [voice licensing guidance](https://github.com/OHF-Voice/piper1-gpl/blob/main/docs/VOICES.md).
 
 Voice endpoints are:
 
@@ -392,7 +508,7 @@ the secret in any `appsettings*.json` file.
 The team chose **`database/01_schema.sql` as the source of truth** (no EF migrations). To add or change a column or table:
 
 1. Edit `database/01_schema.sql` (and `02_seed.sql` if the demo data is affected).
-   - Run the applicable forward-only upgrade scripts on existing databases; `database/04_audit_log_description.sql` adds the audit-log description column, `database/06_ai_evaluation_state.sql` adds durable AI state, `database/07_question_bank.sql` adds the F1 bank, `database/08_course_materials.sql` adds private material/chunk storage, and `database/13_f1_question_bank_content_unique.sql` adds course-scoped normalized-content uniqueness.
+   - Run the applicable forward-only upgrade scripts on existing databases. F1 adds the question bank (`07_question_bank.sql`), private material/chunk storage (`08_course_materials.sql`), and platform rubric lifecycle (`06_rubric_versions.sql`, `08_f1_platform_rubrics.sql`, `10_f1_rubric_lifecycle.sql`). F3 adds durable AI evaluation state (`06_ai_evaluation_state.sql`) and turn-processing recovery (`07_f3_turn_processing.sql`, `09_f3_processing_lease.sql`, `11_f3_turn_retry_backoff.sql` through `15_f3_partial_attempts.sql`).
 2. Update the entity in `Domain/` and the mapping in the `*DbContext.cs` of **the module that owns the table**.
    - PascalCase property names map to snake_case automatically: `TimeLimitPerAnswerSeconds` ↔ `time_limit_per_answer_seconds`.
    - Enums are stored as strings; their names must match the `CHECK` constraints in the SQL.
@@ -485,7 +601,7 @@ stored report details, and CSV encoding/escaping and final-score handling.
 
 ## 9. Next steps (from the tracker)
 
-- **M2 – Adaptive AI interview:** Gemini and local HTTP STT/TTS adapters plus per-turn audio upload/playback are available behind `AiProviders`; remaining work is production S3/MinIO storage and SignalR partial-transcript/reconnect orchestration.
+- **M2 – Adaptive AI interview:** Ollama/Gemini and local HTTP STT/TTS adapters plus per-turn audio upload/playback are available behind `AiProviders`; remaining work is production S3/MinIO storage and Minh's SignalR partial-transcript/reconnect event contract.
 
 Google sign-in is not configured by default and requires OAuth credentials. Keycloak handles authentication and password setup/reset flows; see [keycloak/README.md](keycloak/README.md).
 

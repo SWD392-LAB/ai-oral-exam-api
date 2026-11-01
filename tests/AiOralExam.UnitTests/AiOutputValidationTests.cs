@@ -60,6 +60,21 @@ public sealed class AiOutputValidationTests
     }
 
     [Fact]
+    public async Task Llm_analyzer_does_not_call_provider_when_follow_up_quota_is_exhausted()
+    {
+        var llm = new StubLlmService();
+        var request = AnalysisRequest() with { FollowUpsUsed = 2 };
+
+        var result = await new LlmAnswerAnalyzer(llm).AnalyzeAsync(request);
+
+        Assert.False(result.IsSufficient);
+        Assert.Empty(result.MissingPoints);
+        Assert.False(result.NeedsFollowUp);
+        Assert.Null(result.FollowUpQuestion);
+        Assert.Equal(0, llm.Calls);
+    }
+
+    [Fact]
     public async Task Provider_exception_is_sanitized_for_retry()
     {
         var error = await Assert.ThrowsAsync<AiEvaluationException>(() =>
@@ -86,5 +101,16 @@ public sealed class AiOutputValidationTests
     {
         public Task<AnswerAnalysis> AnalyzeAsync(AnswerAnalysisRequest request, CancellationToken ct = default) =>
             Task.FromResult(result);
+    }
+
+    private sealed class StubLlmService : ILlmService
+    {
+        public int Calls { get; private set; }
+
+        public Task<string> CompleteAsync(string systemPrompt, string userPrompt, CancellationToken ct = default)
+        {
+            Calls++;
+            return Task.FromResult("{}");
+        }
     }
 }

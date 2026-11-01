@@ -29,13 +29,21 @@ BEGIN
     $sql$, v_schema, v_schema);
     EXECUTE format('ALTER TABLE %I.question_responses ALTER COLUMN ai_evaluation_state SET DEFAULT ''NotStarted''', v_schema);
     EXECUTE format('ALTER TABLE %I.question_responses ALTER COLUMN ai_evaluation_state SET NOT NULL', v_schema);
-    EXECUTE format($sql$
-        ALTER TABLE %I.question_responses
-        ADD CONSTRAINT ck_question_response_ai_state
-        CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed'))
-    $sql$, v_schema);
-EXCEPTION
-    WHEN duplicate_object THEN NULL;
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint c
+          JOIN pg_class t ON t.oid = c.conrelid
+          JOIN pg_namespace n ON n.oid = t.relnamespace
+         WHERE c.conname = 'ck_question_response_ai_state'
+           AND t.relname = 'question_responses'
+           AND n.nspname = v_schema
+    ) THEN
+        EXECUTE format($sql$
+            ALTER TABLE %I.question_responses
+            ADD CONSTRAINT ck_question_response_ai_state
+            CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed'))
+        $sql$, v_schema);
+    END IF;
 END;
 $$;
 

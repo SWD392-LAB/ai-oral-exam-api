@@ -8,7 +8,7 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 
 [ApiController]
 [Route("api")]
-[Tags("Exam Configuration")]
+[ApiExplorerSettings(GroupName = "v1")]
 [Authorize(Roles = Roles.LecturerOrAdmin)]
 public sealed class ExamSessionsController(IExamSessionQueries queries) : ControllerBase
 {

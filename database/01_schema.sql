@@ -1,8 +1,8 @@
 -- =====================================================================
 -- AIVES - AI-powered Viva Exam System
 -- 01_schema.sql : creates the tables for PostgreSQL (>= 13)
--- Follows docs/ConceptualERD.drawio + docs/ClassDiagram.drawio, with the
--- F1 question-bank/material tables and the course_lecturers join table added.
+-- Follows docs/ConceptualERD.drawio + docs/ClassDiagram.drawio, with shared rubric templates/versions.
+-- It also includes the F1 question-bank/material tables and course_lecturers join table.
 -- Enums are stored as VARCHAR + CHECK so they map easily to EF Core (string conversion).
 -- Derived values (rubrics.max_score, question_responses.ai_suggested_score) are kept
 -- in sync by triggers at the end of this file.
@@ -12,7 +12,8 @@
 DROP TABLE IF EXISTS criterion_scores, score_reviews, ai_evaluations, interview_turns,
     question_responses, interview_attempts, participants, rubric_criteria, rubrics,
     questions, material_chunks, course_materials, question_bank_revisions,
-    question_bank_items, exam_sessions, course_lecturers, courses, ai_service_configs, audit_logs,
+    question_bank_items, exam_sessions, rubric_versions, rubric_templates, course_lecturers,
+    courses, ai_service_configs, audit_logs,
     email_link_tokens, password_setup_tokens, user_accounts, users, roles CASCADE;
 
 -- ---------------------------------------------------------------------
@@ -169,7 +170,7 @@ CREATE TABLE question_bank_items (
     topic       VARCHAR(200) NOT NULL,
     bloom       VARCHAR(30) NOT NULL CHECK (bloom IN ('Remember', 'Understand', 'Apply', 'Analyze')),
     content     TEXT NOT NULL,
-    normalized_content TEXT GENERATED ALWAYS AS (lower(btrim(content))) STORED,
+    content_hash VARCHAR(64) NOT NULL,
     origin      VARCHAR(20) NOT NULL CHECK (origin IN ('Manual', 'Import', 'Ai')),
     status      VARCHAR(20) NOT NULL DEFAULT 'Draft' CHECK (status IN ('Draft', 'Approved', 'Rejected', 'Archived')),
     created_by  UUID NOT NULL REFERENCES users(id),
@@ -177,8 +178,7 @@ CREATE TABLE question_bank_items (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX ix_question_bank_course_status ON question_bank_items(course_id, status);
-CREATE UNIQUE INDEX ux_question_bank_course_normalized_content
-    ON question_bank_items(course_id, normalized_content);
+CREATE UNIQUE INDEX ux_question_bank_course_content_hash ON question_bank_items(course_id, content_hash);
 
 CREATE TABLE question_bank_revisions (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -415,6 +415,7 @@ CREATE TABLE interview_attempts (
     completed_at    TIMESTAMPTZ,
     status          VARCHAR(20) NOT NULL DEFAULT 'InProgress'
                     CHECK (status IN ('InProgress', 'Interrupted', 'PendingReview', 'Finalized')),
+    partial_completed BOOLEAN NOT NULL DEFAULT FALSE,
     CHECK (completed_at IS NULL OR completed_at >= started_at)
 );
 CREATE INDEX ix_interview_attempts_participant ON interview_attempts(participant_id);
@@ -431,9 +432,12 @@ CREATE TABLE question_responses (
     ai_suggested_score  NUMERIC(5,2)  CHECK (ai_suggested_score >= 0),
     ai_feedback         TEXT,
     evaluated_at        TIMESTAMPTZ,
-    ai_evaluation_state VARCHAR(20) NOT NULL DEFAULT 'NotStarted'
-                        CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed')),
+    ai_evaluation_state VARCHAR(20) NOT NULL DEFAULT 'NotStarted',
     ai_evaluation_error VARCHAR(500),
+    ai_evaluation_claim_token UUID,
+    ai_evaluation_claimed_at TIMESTAMPTZ,
+    CONSTRAINT ck_question_response_ai_state
+        CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed')),
     UNIQUE (attempt_id, question_id)
 );
 CREATE INDEX ix_responses_question ON question_responses(question_id);
@@ -449,10 +453,18 @@ CREATE TABLE interview_turns (
     audio_url             VARCHAR(500),            -- the audio file lives in object storage
     asked_at              TIMESTAMPTZ  NOT NULL DEFAULT now(),
     answered_at           TIMESTAMPTZ,
+    audio_completion_received_at TIMESTAMPTZ,
+    audio_accepted_at     TIMESTAMPTZ,
     is_timed_out          BOOLEAN      NOT NULL DEFAULT FALSE,
     processing_status     VARCHAR(20)  NOT NULL DEFAULT 'AwaitingAnswer',
     processing_started_at TIMESTAMPTZ,
     retry_count           INT          NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
+    transcription_retry_count INT      NOT NULL DEFAULT 0
+                              CONSTRAINT ck_interview_turns_transcription_retry_count
+                              CHECK (transcription_retry_count >= 0),
+    manual_recovery_count INT          NOT NULL DEFAULT 0
+                               CONSTRAINT ck_interview_turns_manual_recovery_count
+                               CHECK (manual_recovery_count BETWEEN 0 AND 1),
     next_retry_at         TIMESTAMPTZ,
     processing_token      UUID,
     submission_result     JSONB,
@@ -478,7 +490,7 @@ CREATE TABLE criterion_scores (
     rubric_criterion_id   UUID          NOT NULL REFERENCES rubric_criteria(id),
     points                NUMERIC(5,2)  NOT NULL CHECK (points >= 0),
     comment               TEXT,
-    UNIQUE (question_response_id, rubric_criterion_id)
+    CONSTRAINT ux_criterion_scores_response_criterion UNIQUE (question_response_id, rubric_criterion_id)
 );
 CREATE INDEX ix_criterion_scores_criterion ON criterion_scores(rubric_criterion_id);
 

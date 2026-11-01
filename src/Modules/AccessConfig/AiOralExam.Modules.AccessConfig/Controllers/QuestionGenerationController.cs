@@ -2,7 +2,6 @@ using AiOralExam.Modules.AccessConfig.Application.QuestionGeneration;
 using AiOralExam.Modules.AccessConfig.Application.QuestionBank;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AiOralExam.Modules.AccessConfig.Controllers;
@@ -10,7 +9,7 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 [ApiController]
 [Route("api/courses/{courseId:guid}/question-bank/generations")]
 [Authorize(Roles = Roles.LecturerOrAdmin)]
-[Tags("Question bank AI")]
+[ApiExplorerSettings(GroupName = "v1")]
 public sealed class QuestionGenerationController(IQuestionGenerator generator, IQuestionBankService bank) : ControllerBase
 {
     /// <summary>

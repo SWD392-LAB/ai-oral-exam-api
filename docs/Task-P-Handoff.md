@@ -24,13 +24,28 @@ Pending/Failed suggestions out of confirmed student results.
 - `GET /api/interview-attempts/{id}/turns/{turnId}/answer-audio` returns the
   private recording for its owner, assigned lecturer, or administrator.
 
-The default provider mode is mock. For a no-billing local demo, configure
+The default provider mode is mock. F1 generation and F3 analysis/scoring share
+`AiProviders:LlmProvider`: `Mock` uses source-grounded deterministic drafts;
+`Ollama` uses local `qwen2.5:3b`; `Gemini` sends selected course evidence to
+Gemini. Both validate every returned source ID and verbatim citation quote
+before saving a Draft. The Development profile selects Ollama, faster-whisper,
+and Piper without a hosted LLM credential. For a Gemini-backed run, configure
+`AiProviders:LlmProvider=Gemini` and its key. For a no-billing voice demo, configure
 `AiProviders:SttProvider=LocalHttp` and `AiProviders:TtsProvider=LocalHttp`.
 The sidecar request/response shapes are documented in the root README.
-The current backend exposes complete-turn audio/transcript endpoints. Partial
-transcript streaming and reconnect event ordering remain the Minh-owned
-SignalR/event integration seam; the FE should use `currentTurn.turnId` and
-retry the same turn until that contract is merged.
+The current backend exposes complete-turn audio/transcript endpoints and
+returns the local server transcript from the audio submit response. Mock mode
+can preview browser partial transcript; real API mode sends audio only to the
+configured server STT and displays its transcript after submit. SignalR
+partial-transcript streaming and ordered reconnect events remain the
+Minh-owned integration seam; the FE reloads the current turn after reconnect
+and uses `currentTurn.turnId` to retry the same turn until that contract is
+merged.
+
+Local Ollama/Whisper/Piper API acceptance evidence, measured sample latency,
+F1 draft review, F3 voice completion, F6 pending/confirmed regression, and the
+remaining PR #9/#11 integration dependencies are recorded in
+[Provider-Readiness.md](Provider-Readiness.md).
 
 ## F1 generation demo
 
@@ -46,5 +61,8 @@ attachment; approval/review and attach remain explicit question-bank actions.
 Course source material is uploaded through
 `/api/courses/{courseId}/materials`, ingested through
 `/api/courses/{courseId}/materials/{materialId}/ingest`, and retrieved only
-within the same course. The demo extractor supports PDF, PPTX, TXT and
-Markdown and emits citation-labelled chunks.
+within the same course. The extractor supports PDF, PPTX, TXT and Markdown.
+PDF citations include page numbers, PPTX citations include slide numbers, and
+text files use chunk numbers. Ingestion currently runs synchronously with
+local private storage; durable background ingestion and production object
+storage remain deployment work.

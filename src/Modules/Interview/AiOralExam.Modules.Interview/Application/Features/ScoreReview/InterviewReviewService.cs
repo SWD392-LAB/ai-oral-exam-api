@@ -59,7 +59,7 @@ internal sealed class InterviewReviewService(
         Guid attemptId,
         SubmitScoreReviewRequest request,
         CancellationToken ct = default) =>
-        WithAttemptLockAsync(attemptId, async () =>
+        InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
         {
             var attempt = await LoadReviewAttemptAsync(attemptId, ct);
             if (attempt.Status == AttemptStatus.Interrupted)
@@ -78,7 +78,7 @@ internal sealed class InterviewReviewService(
 
             var session = await GetSessionAsync(attempt.Participant.ExamSessionId, ct);
             EnsureEvaluationComplete(attempt, session);
-            ValidateScoreReviewRequest(request, session.TotalMaxScore);
+            ValidateScoreReviewRequest(request, attempt, session);
             await ValidateAttemptScoresAsync(attemptId, session, ct);
 
             var review = attempt.Review ?? CreateReview(attempt);
@@ -97,7 +97,7 @@ internal sealed class InterviewReviewService(
     public async Task<ScoreReviewResult> ConfirmScoreReviewAsync(Guid attemptId, CancellationToken ct = default)
     {
         InterviewAttemptEvent? interviewEvent = null;
-        var result = await WithAttemptLockAsync(attemptId, async () =>
+        var result = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
         {
             var attempt = await LoadReviewAttemptAsync(attemptId, ct);
             if (attempt.Review is { Status: ReviewStatus.Approved } approved)
@@ -116,7 +116,8 @@ internal sealed class InterviewReviewService(
             if (review.ReviewerId != currentUser.Id)
                 throw new ForbiddenException("This review is assigned to another lecturer.");
 
-            ValidateScoreReviewRequest(new SubmitScoreReviewRequest(review.FinalScore, review.Comment), session.TotalMaxScore);
+            ValidateScoreReviewRequest(
+                new SubmitScoreReviewRequest(review.FinalScore, review.Comment), attempt, session);
             await ValidateAttemptScoresAsync(attemptId, session, ct);
             ApproveReview(attempt, review);
             interviewEvent = CreateFinalizedEvent(attempt, session.Id);
@@ -134,7 +135,7 @@ internal sealed class InterviewReviewService(
         CancellationToken ct = default)
     {
         InterviewAttemptEvent? interviewEvent = null;
-        var result = await WithAttemptLockAsync(attemptId, async () =>
+        var result = await InterviewAttemptLock.ExecuteAsync(db, attemptId, async () =>
         {
             var attempt = await LoadReviewAttemptAsync(attemptId, ct);
             if (attempt.Status == AttemptStatus.Finalized && attempt.Review is { Status: ReviewStatus.Approved } finalized)
@@ -155,7 +156,7 @@ internal sealed class InterviewReviewService(
                 throw new ConflictException("attempt_not_pending_review", "Only attempts pending review can be finalized.");
             if (attempt.Review is { Status: not ReviewStatus.Pending })
                 throw new ConflictException("score_review_already_submitted", "A score review has already been submitted.");
-            ValidateScoreReviewRequest(request, session.TotalMaxScore);
+            ValidateScoreReviewRequest(request, attempt, session);
             await ValidateAttemptScoresAsync(attemptId, session, ct);
 
             var review = attempt.Review ?? CreateReview(attempt);
@@ -174,24 +175,6 @@ internal sealed class InterviewReviewService(
         if (interviewEvent is not null)
             await eventPublisher.PublishAsync(interviewEvent, ct);
         return result;
-    }
-
-    private async Task<T> WithAttemptLockAsync<T>(Guid attemptId, Func<Task<T>> operation, CancellationToken ct)
-    {
-        if (db.Database.ProviderName == "Npgsql.EntityFrameworkCore.PostgreSQL")
-        {
-            await using var transaction = await db.Database.BeginTransactionAsync(ct);
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT id FROM interview_attempts WHERE id = {attemptId} FOR UPDATE", ct);
-            var result = await operation();
-            await db.SaveChangesAsync(ct);
-            await transaction.CommitAsync(ct);
-            return result;
-        }
-
-        var inMemoryResult = await operation();
-        await db.SaveChangesAsync(ct);
-        return inMemoryResult;
     }
 
     private async Task<InterviewAttempt> LoadReviewAttemptAsync(Guid attemptId, CancellationToken ct)
@@ -214,11 +197,19 @@ internal sealed class InterviewReviewService(
     private static void EnsureEvaluationComplete(InterviewAttempt attempt, ExamSessionInfo session)
     {
         var expectedQuestionIds = session.Questions.Select(question => question.Id).ToHashSet();
+        var responseQuestionIds = attempt.Responses.Select(response => response.QuestionId).ToHashSet();
+        var hasDuplicateOrUnexpectedResponses = responseQuestionIds.Count != attempt.Responses.Count
+            || !responseQuestionIds.IsSubsetOf(expectedQuestionIds);
+        var hasMissingResponses = responseQuestionIds.Count < expectedQuestionIds.Count;
+        var responseSetIsValid = attempt.IsPartialCompleted
+            ? hasMissingResponses && !hasDuplicateOrUnexpectedResponses
+            : !hasMissingResponses && !hasDuplicateOrUnexpectedResponses
+                && responseQuestionIds.SetEquals(expectedQuestionIds);
         if (attempt.Status is AttemptStatus.InProgress or AttemptStatus.Interrupted
             || expectedQuestionIds.Count == 0
-            || attempt.Responses.Count != expectedQuestionIds.Count
-            || !attempt.Responses.Select(response => response.QuestionId).ToHashSet().SetEquals(expectedQuestionIds)
+            || !responseSetIsValid
             || attempt.Responses.Any(response => !response.IsFinished
+            || response.AiEvaluationState != AiEvaluationState.Completed
             || response.AiSuggestedScore is null
             || response.EvaluatedAt is null
             || response.Turns.Count == 0
@@ -255,19 +246,15 @@ internal sealed class InterviewReviewService(
                     .Select(c => new CriterionScoreResult(c.Id, null, null, c.Description, c.MaxPoints)).ToList() };
             }
 
-            if (scores.Select(s => s.RubricCriterionId).Distinct().Count() != scores.Count)
-                throw InvalidCriterionScores();
-            var byCriterion = scores.ToDictionary(s => s.RubricCriterionId);
-            if (scores.Count != question.Criteria.Count || byCriterion.Count != scores.Count)
+            if (CriterionScoreValidation.Validate(
+                    question.Criteria, scores.Select(score => (score.RubricCriterionId, score.Points)))
+                != CriterionScoreValidationResult.Valid)
                 throw InvalidCriterionScores();
 
+            var byCriterion = scores.ToDictionary(s => s.RubricCriterionId);
             var details = question.Criteria.Select(criterion =>
             {
-                if (!byCriterion.TryGetValue(criterion.Id, out var score)
-                    || score.Points is not decimal points
-                    || points < 0 || points > criterion.MaxPoints
-                    || points != decimal.Round(points, 2))
-                    throw InvalidCriterionScores();
+                var score = byCriterion[criterion.Id];
                 return score with { Description = criterion.Description, MaxPoints = criterion.MaxPoints };
             }).ToList();
             if (details.Sum(s => s.Points!.Value) != response.SuggestedScore)
@@ -309,16 +296,27 @@ internal sealed class InterviewReviewService(
         var turnId = attempt.Responses.SelectMany(response => response.Turns)
             .MaxBy(turn => turn.AskedAt)?.Id;
         return new InterviewAttemptEvent(Guid.NewGuid(), attempt.Id, sessionId,
-            sequence, turnId, sequence, "review.finalized", UtcNow);
+            sequence, turnId, sequence, InterviewEventTypes.ReviewFinalized, UtcNow);
     }
 
     private static ScoreReviewResult ToResult(ScoreReviewEntity review) =>
         new(review.ReviewerId, review.FinalScore, review.Comment, review.Status, review.ReviewedAt);
 
-    private static void ValidateScoreReviewRequest(SubmitScoreReviewRequest request, decimal sessionMaxScore)
+    private static void ValidateScoreReviewRequest(
+        SubmitScoreReviewRequest request,
+        InterviewAttempt attempt,
+        ExamSessionInfo session)
     {
+        var maximumScore = attempt.IsPartialCompleted
+            ? session.Questions
+                .Where(question => attempt.Responses
+                    .Select(response => response.QuestionId)
+                    .Distinct()
+                    .Contains(question.Id))
+                .Sum(question => question.MaxScore)
+            : session.TotalMaxScore;
         var errors = new Dictionary<string, string[]>();
-        if (request.FinalScore < 0 || request.FinalScore > 999.99m || request.FinalScore > sessionMaxScore)
+        if (request.FinalScore < 0 || request.FinalScore > 999.99m || request.FinalScore > maximumScore)
             errors[nameof(request.FinalScore)] = ["Final score must be non-negative and no greater than the session maximum."];
         else if (request.FinalScore != decimal.Round(request.FinalScore, 2))
             errors[nameof(request.FinalScore)] = ["Final score must have no more than two decimal places."];

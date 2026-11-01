@@ -1,8 +1,15 @@
 # Plan triển khai BE Feature 1 — Ngân hàng câu hỏi và rubric nền tảng
 
-Tài liệu này ghi yêu cầu và thiết kế F1, sau đó cần đối chiếu với implementation status bên dưới; các route hoặc migration được mô tả là "dự kiến" trong phần thiết kế không đồng nghĩa với việc chưa có trong repo.
+Cập nhật: 2026-10-25; đối chiếu repo tại `793cd73` và feedback của nhóm cho PR #7. Đây là **thiết kế dự kiến**; code/schema hiện tại vẫn dùng rubric theo từng câu hỏi.
 
-**Implementation status:** repository hiện có schema bank/revision và source-revision link (`database/01_schema.sql`, `database/07_question_bank.sql`), course-scoped bank APIs, import, moderation, attach, private course material upload/ingest/retrieval, deterministic generation và citation provenance. Platform rubric templates/versions, session pinning, AccessConfig APIs và publish integration cũng đã có schema/code. Frontend read-only rubric and question-bank flows remain deferred to `ai-oral-exam-web`. The current AccessConfig module build passes; question-bank unit/HTTP contract tests and the complete PostgreSQL/Keycloak flow still need verification after unrelated F3 compile errors are resolved.
+**Implementation note (Task-P):** backend có question-bank Draft/revision,
+course-scoped material upload/ingest and lexical retrieval, deterministic
+generation and opt-in Gemini/Ollama generation. PDF page and PPTX slide citations are
+preserved; generated quotes are checked against retrieved source text. Ingest
+is still synchronous and local storage is a development adapter. Platform
+rubric version/publish pin and the read-only rubric FE remain Minh/Khang seams;
+the `platform_rubric_*` references below are still a migration contract and
+must not be assumed to exist in the current database.
 
 Sequence diagram: [F1 – AI Question Generation and Review](SequenceDiagram-F1-Question-Bank-RAG.drawio). Luồng cấu hình và publish phiên dùng [diagram F7](SequenceDiagram-F7-Exam-Configuration.drawio).
 
@@ -18,14 +25,14 @@ F1 sở hữu ngân hàng, nguồn tài liệu, RAG và duyệt câu. AccessConf
 
 | Thành phần hiện có | Sự thật trong repo | Thay đổi cần thiết |
 | --- | --- | --- |
-| `question_bank_items`, `question_bank_revisions`, `questions` | Bank theo course, immutable content revisions và nullable source revision link có trong `01_schema.sql`/`07_question_bank.sql`; AccessConfig mapping/service/controller triển khai bank flows | PostgreSQL upgrade, uniqueness under concurrent imports and published-session end-to-end behavior still require verification |
-| `QuestionsController`, `QuestionBankController`, attach controller | Legacy questions API remains session-scoped; separate course-scoped list/detail/create/update/import/moderation and `questions/from-bank` routes exist | Frontend must switch to bank APIs for new flows; legacy behavior remains for compatibility |
-| `RubricsController`, platform rubric APIs/services | Legacy per-question rubric APIs remain; shared platform rubric templates/versions and read APIs also exist | Frontend should use the read-only platform rubric for the new flow; confirm legacy write-route rollout/deprecation separately |
-| `ExamSessionCommands.PublishAsync` | Platform rubric version is validated and pinned on publish for the platform-rubric flow | Verify end-to-end with PostgreSQL and F3; preserve legacy session behavior |
-| `IExamConfigurationApi` and F3 | Session configuration exposes the pinned rubric criteria for platform-rubric sessions while retaining the legacy path | Run integration checks across new and historical sessions after F3 builds |
-| Storage/AI | Private course material upload/ingestion/retrieval, deterministic generation and citation provenance are present | External provider smoke tests and frontend flows are not part of local verification |
+| `questions`, `rubrics`, `rubric_criteria` | Câu hỏi thuộc `exam_session_id`; một rubric gắn với một câu, criterion được lecturer sửa trong phiên Draft | Tạo bank thuộc course và platform rubric version độc lập; ngừng cho lecturer tạo/sửa rubric khi luồng mới sẵn sàng |
+| `QuestionsController` | CRUD/import JSON `{orderNo, content}` vào một phiên Draft | Thêm bank API theo course; import bank không nhận rubric |
+| `RubricsController`, `RubricService` | API ghi rubric theo câu đang hoạt động; chỉ cho session `Legacy` ở trạng thái `Draft` | Workflow platform dùng rubric version; giữ route ghi legacy cho session/data tương thích và không dùng route này cho `SharedVersion` |
+| `ExamSessionCommands.PublishAsync` | Yêu cầu mọi câu có rubric riêng và ít nhất một participant | Yêu cầu câu + participant + **active platform rubric version**, pin version vào session khi publish |
+| `IExamConfigurationApi` và F3 | Trả `QuestionInfo.Criteria` và `MaxScore` theo từng câu; `criterion_scores` FK tới criterion cũ | Với session mới, project criteria từ rubric version đã pin; bảo toàn đường đọc dữ liệu lịch sử |
+| Storage/AI | Chưa có ingest, retrieval, object storage; F3 đang dùng mock | Thêm adapter sinh câu hỏi riêng cho F1, không dùng mock scorer của F3 làm generation |
 
-Schema changes remain owned by Minh. Do not edit SQL or publish implementation as part of Khang's backend task without explicit authorization.
+Không sửa các bảng sản xuất theo giả định diagram đã triển khai. `README`, ERD và schema hiện phản ánh mô hình cũ cho đến PR migration; mọi thay đổi phải có script nâng cấp tiến lên và test với dữ liệu cũ.
 
 ## 3. Rubric chung và tương thích F3
 
@@ -33,7 +40,11 @@ Schema changes remain owned by Minh. Do not edit SQL or publish implementation a
 - `exam_sessions.platform_rubric_version_id` được pin khi publish. Mọi câu trong cùng phiên dùng **cùng bộ criteria**. `QuestionInfo.Criteria` tiếp tục trả danh sách per question để không buộc F3 đổi giao diện contract, nhưng nguồn là version của session, không phải rubric do lecturer tạo cho từng câu.
 - `QuestionInfo.MaxScore = SUM(platform_rubric_criteria.max_points)` cho từng câu; `ExamSession.TotalMaxScore = số câu × MaxScore`. Kiểm tra tổng phiên nằm trong giới hạn cột `score_reviews.final_score` hiện tại hoặc nâng kiểu cột trong cùng migration.
 - `criterion_scores` hiện FK tới `rubric_criteria` cũ. Migration phải cho điểm mới tham chiếu `platform_rubric_criteria` (ví dụ cột `platform_criterion_id` và CHECK đúng một trong hai FK); điểm cũ tiếp tục đọc theo FK cũ. F3 scorer dùng ID criterion của version đã pin. Test báo cáo F6 cho cả session cũ và mới.
-- Chốt phạm vi khóa route ghi rubric theo câu ở lượt rollout cùng FE. Không để lecturer ghi rubric cũ sau khi session mới đã dùng rubric nền tảng. Không xóa rubric/criterion cũ khi attempt lịch sử còn tham chiếu.
+- Chính sách tương thích hiện tại là coexistence, không đặt sunset date: route
+  ghi rubric theo câu vẫn phục vụ session `Legacy` ở trạng thái `Draft`, còn
+  session `SharedVersion` dùng rubric version platform và từ chối rubric theo
+  câu. Không xóa rubric/criterion cũ khi attempt lịch sử còn tham chiếu.
+  Client mới dùng platform workflow; client cũ được giữ nguyên route legacy.
 
 ## 4. F1-A — Ngân hàng thủ công, duyệt và đưa vào phiên
 

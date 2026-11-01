@@ -13,7 +13,7 @@ public class InterviewAttemptTests
     [InlineData(AttemptStatus.InProgress, AttemptStatus.Finalized, false)]
     [InlineData(AttemptStatus.Finalized, AttemptStatus.InProgress, false)]
     [InlineData(AttemptStatus.PendingReview, AttemptStatus.InProgress, false)]
-    [InlineData(AttemptStatus.Interrupted, AttemptStatus.PendingReview, false)]
+    [InlineData(AttemptStatus.Interrupted, AttemptStatus.PendingReview, true)]
     [InlineData(AttemptStatus.Interrupted, AttemptStatus.InProgress, false)]
     public void CanTransition_follows_state_machine(AttemptStatus from, AttemptStatus to, bool expected) =>
         Assert.Equal(expected, InterviewAttempt.CanTransition(from, to));
@@ -89,10 +89,71 @@ public class InterviewAttemptTests
         turn.AnswerTranscript = "saved transcript";
         turn.AnsweredAt = DateTime.UtcNow;
         turn.ProcessingStatus = TurnProcessingStatus.Retry;
-        var attempt = new InterviewAttempt { Id = Guid.NewGuid(), Responses = [response] };
 
-        Assert.Same(response, attempt.CurrentResponse);
-        Assert.Same(turn, Assert.Single(response.Turns));
         Assert.Equal("saved transcript", turn.AnswerTranscript);
+        Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
+        Assert.Null(response.CurrentTurn);
+    }
+
+    [Fact]
+    public void Manual_recovery_resets_only_the_exhausted_ai_retry_counter_and_preserves_answer_data()
+    {
+        var answeredAt = DateTime.UtcNow;
+        var audioAcceptedAt = answeredAt.AddSeconds(-1);
+        var turn = new InterviewTurn
+        {
+            ProcessingStatus = TurnProcessingStatus.Failed,
+            RetryCount = 4,
+            TranscriptionRetryCount = 2,
+            AnswerTranscript = "accepted transcript",
+            AnsweredAt = answeredAt,
+            AudioAcceptedAt = audioAcceptedAt,
+            SubmissionResultJson = "{\"result\":true}"
+        };
+
+        turn.PrepareManualRecovery(AttemptStatus.Interrupted);
+
+        Assert.Equal(0, turn.RetryCount);
+        Assert.Equal(2, turn.TranscriptionRetryCount);
+        Assert.Equal(1, turn.ManualRecoveryCount);
+        Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
+        Assert.Equal("accepted transcript", turn.AnswerTranscript);
+        Assert.Equal(answeredAt, turn.AnsweredAt);
+        Assert.Equal(audioAcceptedAt, turn.AudioAcceptedAt);
+        Assert.Equal("{\"result\":true}", turn.SubmissionResultJson);
+    }
+
+    [Fact]
+    public void Manual_recovery_resets_the_transcription_retry_counter_for_an_accepted_audio_turn()
+    {
+        var turn = new InterviewTurn
+        {
+            ProcessingStatus = TurnProcessingStatus.Failed,
+            AudioAcceptedAt = DateTime.UtcNow,
+            TranscriptionRetryCount = 3,
+            RetryCount = 2
+        };
+
+        turn.PrepareManualRecovery(AttemptStatus.Interrupted);
+
+        Assert.Equal(0, turn.TranscriptionRetryCount);
+        Assert.Equal(2, turn.RetryCount);
+    }
+
+    [Fact]
+    public void Manual_recovery_is_rejected_after_the_single_recovery_budget_is_used()
+    {
+        var turn = new InterviewTurn
+        {
+            ProcessingStatus = TurnProcessingStatus.Failed
+        };
+
+        turn.PrepareManualRecovery(AttemptStatus.Interrupted);
+        turn.ProcessingStatus = TurnProcessingStatus.Failed;
+
+        var exception = Assert.Throws<ConflictException>(
+            () => turn.PrepareManualRecovery(AttemptStatus.Interrupted));
+
+        Assert.Equal("manual_recovery_already_used", exception.Code);
     }
 }

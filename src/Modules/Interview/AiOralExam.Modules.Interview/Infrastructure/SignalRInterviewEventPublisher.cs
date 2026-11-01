@@ -29,13 +29,13 @@ internal sealed class SignalRInterviewEventPublisher(
         try
         {
             var attemptGroup = hubContext.Clients.Group(InterviewHubGroups.Attempt(interviewEvent.AttemptId));
-            if (interviewEvent.Type == "InterviewError")
+            if (interviewEvent.Type == InterviewEventTypes.InterviewError)
             {
                 await attemptGroup.SendAsync("InterviewError", interviewEvent, ct);
                 return;
             }
 
-            var clientEventName = interviewEvent.Type == "turn.opened" ? "QuestionReady" : "AttemptUpdated";
+            var clientEventName = interviewEvent.Type == InterviewEventTypes.TurnOpened ? "QuestionReady" : "AttemptUpdated";
             await Task.WhenAll(
                 attemptGroup.SendAsync("InterviewAttemptUpdated", interviewEvent, ct),
                 attemptGroup.SendAsync(clientEventName, interviewEvent, ct),

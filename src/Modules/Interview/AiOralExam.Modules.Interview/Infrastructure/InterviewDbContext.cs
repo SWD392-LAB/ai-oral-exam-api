@@ -41,6 +41,9 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.ToTable("interview_attempts");
             e.HasKey(x => x.Id);
             e.Property(x => x.Status);
+            e.Property(x => x.IsPartialCompleted)
+                .HasColumnName("partial_completed")
+                .HasDefaultValue(false);
             e.Ignore(x => x.CurrentResponse);
             e.HasMany(x => x.Responses).WithOne().HasForeignKey(r => r.AttemptId);
             e.HasOne(x => x.Review).WithOne().HasForeignKey<ScoreReview>(r => r.AttemptId);
@@ -54,6 +57,7 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.Property(x => x.AiSuggestedScore).HasPrecision(5, 2);
             e.Property(x => x.AiEvaluationState).HasMaxLength(20);
             e.Property(x => x.AiEvaluationError).HasMaxLength(500);
+            e.Property(x => x.AiEvaluationClaimToken).IsConcurrencyToken();
             e.HasMany(x => x.Turns).WithOne().HasForeignKey(t => t.QuestionResponseId);
             e.HasMany(x => x.CriterionScores).WithOne().HasForeignKey(s => s.QuestionResponseId);
         });
@@ -62,9 +66,14 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
         {
             e.ToTable("interview_turns");
             e.HasKey(x => x.Id);
+            e.Property(x => x.AudioUrl).IsConcurrencyToken();
             e.Property(x => x.ProcessingStatus).HasDefaultValue(TurnProcessingStatus.AwaitingAnswer);
             e.Property(x => x.ProcessingToken).HasColumnName("processing_token");
             e.Property(x => x.RetryCount).HasColumnName("retry_count");
+            e.Property(x => x.AudioCompletionReceivedAt).HasColumnName("audio_completion_received_at");
+            e.Property(x => x.AudioAcceptedAt).HasColumnName("audio_accepted_at");
+            e.Property(x => x.TranscriptionRetryCount).HasColumnName("transcription_retry_count").HasDefaultValue(0);
+            e.Property(x => x.ManualRecoveryCount).HasColumnName("manual_recovery_count").HasDefaultValue(0);
             e.Property(x => x.NextRetryAt).HasColumnName("next_retry_at");
             e.Property(x => x.SubmissionResultJson).HasColumnName("submission_result").HasColumnType("jsonb");
             e.HasIndex(x => new { x.ProcessingStatus, x.ProcessingStartedAt })
@@ -77,6 +86,8 @@ public sealed class InterviewDbContext(DbContextOptions<InterviewDbContext> opti
             e.ToTable("criterion_scores");
             e.HasKey(x => x.Id);
             e.Property(x => x.Points).HasPrecision(5, 2);
+            e.HasIndex(x => new { x.QuestionResponseId, x.RubricCriterionId }).IsUnique()
+                .HasDatabaseName("ux_criterion_scores_response_criterion");
         });
 
         b.Entity<ScoreReview>(e =>

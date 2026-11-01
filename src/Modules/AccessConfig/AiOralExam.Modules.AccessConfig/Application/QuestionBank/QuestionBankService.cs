@@ -16,29 +16,13 @@ internal sealed class QuestionBankService(
     AccessConfigDbContext db,
     ICurrentUser currentUser) : IQuestionBankService
 {
-    public async Task<IReadOnlyList<QuestionBankListItemDto>> ListAsync(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct)
+    public async Task<IReadOnlyList<QuestionBankItemDto>> ListAsync(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct)
     {
         await EnsureCourseAccessAsync(courseId, ct);
-        var query = db.QuestionBankItems.AsNoTracking().Where(x => x.CourseId == courseId);
+        var query = db.QuestionBankItems.AsNoTracking().Include(x => x.Revisions).Where(x => x.CourseId == courseId);
         if (status is not null)
             query = query.Where(x => x.Status == ToStatus(status.Value));
-        var items = await query.OrderByDescending(x => x.UpdatedAt)
-            .Select(x => new
-            {
-                x.Id,
-                x.CourseId,
-                x.Topic,
-                x.Bloom,
-                x.Content,
-                x.Origin,
-                x.Status,
-                x.CreatedAt,
-                x.UpdatedAt
-            })
-            .ToListAsync(ct);
-        return items.Select(x => new QuestionBankListItemDto(
-            x.Id, x.CourseId, x.Topic, x.Bloom, x.Content, x.Origin.ToString(), x.Status.ToString(),
-            x.CreatedAt, x.UpdatedAt)).ToList();
+        return (await query.OrderByDescending(x => x.UpdatedAt).ToListAsync(ct)).Select(ToDto).ToList();
     }
 
     public async Task<QuestionBankItemDto> GetAsync(Guid courseId, Guid itemId, CancellationToken ct)
@@ -51,64 +35,52 @@ internal sealed class QuestionBankService(
     {
         await EnsureCourseAccessAsync(courseId, ct);
         ValidateText(request.Topic, request.Content);
-        ValidateBloom(request.Bloom, "bloom");
-        var item = NewItem(courseId, request.Topic, request.Bloom, request.Content, QuestionBankOrigin.Manual, null);
+        var contentHash = await QuestionBankContentHash.ComputeAsync(db, request.Content.Trim(), ct);
+        await EnsureContentNotUsedAsync(courseId, contentHash, null, ct);
+        var item = NewItem(courseId, request.Topic, request.Bloom, request.Content, contentHash, QuestionBankOrigin.Manual, null);
         db.QuestionBankItems.Add(item);
         AddAudit(AuditActions.Create, item.Id, $"Manual question bank item in course {courseId}");
-        await SaveChangesWithDuplicateConflictAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return ToDto(item);
     }
 
     public async Task<IReadOnlyList<QuestionBankItemDto>> ImportAsync(Guid courseId, ImportQuestionBankRequest request, CancellationToken ct)
     {
         await EnsureCourseAccessAsync(courseId, ct);
-        if (request?.Items is not { Count: > 0 } items)
-            throw new ValidationException(new Dictionary<string, string[]> { ["items"] = ["At least one item is required."] });
-
         var errors = new Dictionary<string, string[]>();
-        for (var i = 0; i < items.Count; i++)
+        if (request.Items is null || request.Items.Count == 0)
+            errors["items"] = ["At least one item is required."];
+        else
         {
-            var item = items[i];
-            if (item is null || string.IsNullOrWhiteSpace(item.Content))
-                errors[$"items[{i}].content"] = ["Content is required."];
-            else if (item.Content.Length > 10000)
-                errors[$"items[{i}].content"] = ["Content must not exceed 10000 characters."];
-            if (item is null || string.IsNullOrWhiteSpace(item.Topic))
-                errors[$"items[{i}].topic"] = ["Topic is required."];
-            else if (item.Topic.Length > 200)
-                errors[$"items[{i}].topic"] = ["Topic must not exceed 200 characters."];
-            if (item is not null && !Enum.IsDefined(item.Bloom))
-                errors[$"items[{i}].bloom"] = ["Bloom must be Remember, Understand, Apply, or Analyze."];
+            for (var i = 0; i < request.Items.Count; i++)
+            {
+                var item = request.Items[i];
+                if (item is null || string.IsNullOrWhiteSpace(item.Content))
+                    errors[$"items[{i}].content"] = ["Content is required."];
+                if (item is null || string.IsNullOrWhiteSpace(item.Topic))
+                    errors[$"items[{i}].topic"] = ["Topic is required."];
+            }
         }
         if (errors.Count > 0) throw new ValidationException(errors);
 
-        var normalizedItems = await NormalizeContentForDatabaseAsync(items.Select(x => x.Content), ct);
-        var duplicateRows = normalizedItems.Select((content, index) => (Content: content, Index: index))
-            .GroupBy(x => x.Content, StringComparer.Ordinal)
-            .Where(group => group.Count() > 1)
-            .SelectMany(group => group.Select(row => row.Index));
-        foreach (var index in duplicateRows)
-            errors[$"items[{index}].content"] = ["Question content must be unique within the import batch."];
-        if (errors.Count > 0) throw new ValidationException(errors);
+        var contentHashes = await QuestionBankContentHash.ComputeManyAsync(
+            db, request.Items!.Select(x => x.Content.Trim()).ToArray(), ct);
+        var duplicates = contentHashes
+            .GroupBy(x => x).Where(x => x.Count() > 1).Select(x => x.Key).ToHashSet();
+        if (duplicates.Count > 0)
+            throw new ValidationException(new Dictionary<string, string[]> { ["items"] = ["Duplicate question content is not allowed in one import batch."] });
 
-        var existingContent = db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory"
-            ? (await db.QuestionBankItems.Where(x => x.CourseId == courseId)
-                .Select(x => x.Content).ToListAsync(ct))
-                .Select(x => x.Trim().ToLowerInvariant()).ToHashSet(StringComparer.Ordinal)
-            : (await db.QuestionBankItems.Where(x => x.CourseId == courseId)
-                .Select(x => x.NormalizedContent).ToListAsync(ct))
-                .ToHashSet(StringComparer.Ordinal);
-        for (var index = 0; index < items.Count; index++)
-        {
-            if (existingContent.Contains(normalizedItems[index]))
-                errors[$"items[{index}].content"] = ["Question content already exists in this course."];
-        }
-        if (errors.Count > 0) throw new ValidationException(errors);
+        var incomingHashes = contentHashes.ToHashSet(StringComparer.Ordinal);
+        var existingHashes = await db.QuestionBankItems.Where(x => x.CourseId == courseId)
+            .Select(x => x.ContentHash).ToListAsync(ct);
+        if (incomingHashes.Overlaps(existingHashes))
+            throw DuplicateQuestion();
 
-        var imported = items.Select(x => NewItem(courseId, x.Topic, x.Bloom, x.Content, QuestionBankOrigin.Import, null)).ToList();
+        var imported = request.Items!.Select((x, index) => NewItem(
+            courseId, x.Topic, x.Bloom, x.Content, contentHashes[index], QuestionBankOrigin.Import, null)).ToList();
         db.QuestionBankItems.AddRange(imported);
         foreach (var item in imported) AddAudit(AuditActions.Create, item.Id, $"Imported question bank item in course {courseId}");
-        await SaveChangesWithDuplicateConflictAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return imported.Select(ToDto).ToList();
     }
 
@@ -116,17 +88,19 @@ internal sealed class QuestionBankService(
     {
         await EnsureCourseAccessAsync(courseId, ct);
         ValidateText(request.Topic, request.Content);
-        ValidateBloom(request.Bloom, "bloom");
         var item = await GetItemAsync(courseId, itemId, ct);
         if (item.Status != QuestionBankStatus.Draft)
             throw new ConflictException("question_bank_locked", "Only Draft bank items can be edited.");
+        var contentHash = await QuestionBankContentHash.ComputeAsync(db, request.Content.Trim(), ct);
+        await EnsureContentNotUsedAsync(courseId, contentHash, item.Id, ct);
         item.Topic = request.Topic.Trim();
         item.Bloom = request.Bloom.ToString();
         item.Content = request.Content.Trim();
+        item.ContentHash = contentHash;
         item.UpdatedAt = DateTime.UtcNow;
         AddRevision(item, null);
         AddAudit(AuditActions.Update, item.Id, "Updated Draft question bank item");
-        await SaveChangesWithDuplicateConflictAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return ToDto(item);
     }
 
@@ -139,77 +113,46 @@ internal sealed class QuestionBankService(
         if (drafts.Count == 0) return [];
         if (string.IsNullOrWhiteSpace(topic))
             throw new ValidationException(new Dictionary<string, string[]> { ["topic"] = ["A topic is required."] });
-        var errors = new Dictionary<string, string[]>();
-        for (var index = 0; index < drafts.Count; index++)
-        {
-            var draft = drafts[index];
-            if (draft.DraftId == Guid.Empty)
-                errors[$"drafts[{index}].draftId"] = ["Draft ID must not be empty."];
-            if (string.IsNullOrWhiteSpace(draft.Content))
-                errors[$"drafts[{index}].content"] = ["Content is required."];
-            if (draft.Content?.Length > 10000)
-                errors[$"drafts[{index}].content"] = ["Content must not exceed 10000 characters."];
-            if (!Enum.IsDefined(draft.Bloom))
-                errors[$"drafts[{index}].bloom"] = ["Bloom must be Remember, Understand, Apply, or Analyze."];
-            if (!string.Equals(draft.Status, "Draft", StringComparison.Ordinal))
-                errors[$"drafts[{index}].status"] = ["Generated questions must be Drafts."];
-        }
-        foreach (var duplicate in drafts.Select((draft, index) => (draft.DraftId, index))
-            .Where(x => x.DraftId != Guid.Empty)
-            .GroupBy(x => x.DraftId)
-            .Where(group => group.Count() > 1)
-            .SelectMany(group => group))
-            errors[$"drafts[{duplicate.index}].draftId"] = ["Draft IDs must be unique within the generation result."];
-        if (errors.Count > 0)
-            throw new ValidationException(errors);
-        var items = drafts.Select(d => NewItem(
-            courseId, topic, d.Bloom, d.Content, QuestionBankOrigin.Ai,
+        var contentHashes = await QuestionBankContentHash.ComputeManyAsync(
+            db, drafts.Select(d => d.Content.Trim()).ToArray(), ct);
+        var items = drafts.Select((d, index) => NewItem(
+            courseId, topic, d.Bloom, d.Content, contentHashes[index], QuestionBankOrigin.Ai,
             JsonSerializer.Serialize(new { d.PlatformRubricVersionId, d.Citations, SourceMaterialIds = sourceMaterialIds ?? Array.Empty<Guid>() }), d.DraftId)).ToList();
         db.QuestionBankItems.AddRange(items);
         foreach (var item in items) AddAudit(AuditActions.Create, item.Id, "AI generated Draft question bank item");
-        await SaveChangesWithDuplicateConflictAsync(ct);
+        await SaveQuestionContentChangesAsync(ct);
         return items.Select(ToDto).ToList();
     }
 
     public async Task<IReadOnlyList<Guid>> AttachApprovedAsync(Guid sessionId, AttachQuestionBankRequest request, CancellationToken ct)
     {
-        if (request?.ItemIds is not { Count: > 0 } itemIds)
-            throw new ValidationException(new Dictionary<string, string[]> { ["itemIds"] = ["At least one question bank item is required."] });
-        if (itemIds.Distinct().Count() != itemIds.Count)
-            throw new ValidationException(new Dictionary<string, string[]> { ["itemIds"] = ["Question bank item IDs must be unique."] });
-
         var session = await db.ExamSessions.Include(x => x.Course).ThenInclude(x => x.Lecturers).Include(x => x.Questions)
             .FirstOrDefaultAsync(x => x.Id == sessionId, ct)
             ?? throw new NotFoundException("exam_session_not_found", "Exam session not found.");
         EnsureCourseAccess(session.Course);
         if (session.Status != ExamSessionStatus.Draft)
             throw new ConflictException("exam_session_locked", "Only Draft sessions can attach question bank items.");
-        var ids = itemIds.ToArray();
+        var ids = request.ItemIds.Distinct().ToArray();
         var items = await db.QuestionBankItems.Include(x => x.Revisions)
             .Where(x => ids.Contains(x.Id) && x.CourseId == session.CourseId && x.Status == QuestionBankStatus.Approved)
             .ToListAsync(ct);
         if (items.Count != ids.Length)
             throw new ConflictException("question_bank_item_not_approved", "Every selected item must be Approved and belong to the session course.");
         var orderedItems = ids.Select(id => items.Single(item => item.Id == id)).ToList();
-        var revisions = orderedItems.ToDictionary(
-            item => item.Id,
-            item => item.Revisions.OrderByDescending(revision => revision.RevisionNo).FirstOrDefault());
-        if (revisions.Values.Any(revision => revision is null))
-            throw new ConflictException("question_bank_revision_missing", "Every Approved bank item must have a revision.");
         var attachedRevisionIds = session.Questions
             .Where(x => x.SourceBankRevisionId.HasValue)
             .Select(x => x.SourceBankRevisionId!.Value)
             .ToHashSet();
-        if (revisions.Values.Any(revision => attachedRevisionIds.Contains(revision!.Id)))
+        if (orderedItems.Select(x => x.Revisions.OrderByDescending(r => r.RevisionNo).First().Id).Any(attachedRevisionIds.Contains))
             throw new ConflictException("question_bank_item_already_attached", "A selected bank item is already attached to this session.");
 
         var nextOrder = session.Questions.Count == 0 ? 1 : session.Questions.Max(x => x.OrderNo) + 1;
         foreach (var item in orderedItems)
         {
-            var revision = revisions[item.Id]!;
+            var revision = item.Revisions.OrderByDescending(x => x.RevisionNo).First();
             var question = new Question
             {
-                Id = Guid.NewGuid(), ExamSessionId = session.Id, OrderNo = nextOrder++, Content = revision.Content,
+                Id = Guid.NewGuid(), ExamSessionId = session.Id, OrderNo = nextOrder++, Content = item.Content,
                 SourceBankRevisionId = revision.Id
             };
             db.Questions.Add(question);
@@ -223,12 +166,9 @@ internal sealed class QuestionBankService(
     {
         await EnsureCourseAccessAsync(courseId, ct);
         var item = await GetItemAsync(courseId, itemId, ct);
-        if (item.Status == QuestionBankStatus.Archived)
-            throw new ConflictException("question_bank_locked", "Archived bank items cannot change status.");
-        if (item.Status == status)
-            return ToDto(item);
         if (item.Status != QuestionBankStatus.Draft)
-            throw new ConflictException("question_bank_status_conflict", "Only Draft bank items can be approved or rejected.");
+            throw new ConflictException("question_bank_transition_invalid",
+                "Only Draft items can be approved or rejected. Create a new Draft to resubmit a rejected item.");
         item.Status = status;
         item.UpdatedAt = DateTime.UtcNow;
         AddAudit(status == QuestionBankStatus.Approved ? AuditActions.Approve : AuditActions.Reject, item.Id, $"Question bank item marked {status}");
@@ -253,12 +193,14 @@ internal sealed class QuestionBankService(
             throw new ForbiddenException("You are not assigned to this course.");
     }
 
-    private QuestionBankItem NewItem(Guid courseId, string topic, BloomLevel bloom, string content, QuestionBankOrigin origin, string? provenance, Guid? itemId = null)
+    private QuestionBankItem NewItem(Guid courseId, string topic, BloomLevel bloom, string content, string contentHash,
+        QuestionBankOrigin origin, string? provenance, Guid? itemId = null)
     {
         var now = DateTime.UtcNow;
         var item = new QuestionBankItem
         {
             Id = itemId ?? Guid.NewGuid(), CourseId = courseId, Topic = topic.Trim(), Bloom = bloom.ToString(), Content = content.Trim(),
+            ContentHash = contentHash,
             Origin = origin, Status = QuestionBankStatus.Draft, CreatedBy = currentUser.Id, CreatedAt = now, UpdatedAt = now
         };
         AddRevision(item, provenance);
@@ -278,61 +220,47 @@ internal sealed class QuestionBankService(
     private void AddAudit(string action, Guid id, string description) =>
         CourseService.AddAudit(db, currentUser.Id, action, AuditEntities.QuestionBankItem, id, description);
 
-    private async Task<List<string>> NormalizeContentForDatabaseAsync(IEnumerable<string> contents, CancellationToken ct)
-    {
-        var values = contents.Select(x => x.Trim()).ToArray();
-        if (db.Database.ProviderName == "Microsoft.EntityFrameworkCore.InMemory")
-            return values.Select(x => x.Trim().ToLowerInvariant()).ToList();
-
-        return await db.Database.SqlQueryRaw<string>(
-            """
-            SELECT lower(btrim(input.content)) AS "Value"
-            FROM unnest({0}::text[]) WITH ORDINALITY AS input(content, ordinality)
-            ORDER BY input.ordinality
-            """,
-            values).ToListAsync(ct);
-    }
-
-    private async Task SaveChangesWithDuplicateConflictAsync(CancellationToken ct)
+    private async Task SaveQuestionContentChangesAsync(CancellationToken ct)
     {
         try
         {
             await db.SaveChangesAsync(ct);
         }
-        catch (DbUpdateException ex) when (ex.InnerException is PostgresException
+        catch (DbUpdateException ex) when (IsQuestionContentDuplicate(ex))
         {
-            SqlState: PostgresErrorCodes.UniqueViolation,
-            ConstraintName: "ux_question_bank_course_normalized_content"
-        })
-        {
-            throw new ConflictException(
-                "question_bank_duplicate",
-                "A question with the same content already exists in this course.");
+            throw DuplicateQuestion();
         }
+    }
+
+    private async Task EnsureContentNotUsedAsync(Guid courseId, string contentHash, Guid? exceptItemId, CancellationToken ct)
+    {
+        var duplicateExists = await db.QuestionBankItems.AnyAsync(item => item.CourseId == courseId
+            && item.ContentHash == contentHash
+            && (exceptItemId == null || item.Id != exceptItemId), ct);
+        if (duplicateExists) throw DuplicateQuestion();
+    }
+
+    private static ConflictException DuplicateQuestion() =>
+        new("question_bank_duplicate", "A question with the same content already exists in this course.");
+
+    private static bool IsQuestionContentDuplicate(DbUpdateException exception)
+    {
+        for (var cause = exception.InnerException; cause is not null; cause = cause.InnerException)
+        {
+            if (cause is PostgresException
+                {
+                    SqlState: PostgresErrorCodes.UniqueViolation,
+                    ConstraintName: "ux_question_bank_course_content_hash"
+                })
+                return true;
+        }
+        return false;
     }
 
     private static void ValidateText(string topic, string content)
     {
-        var errors = new Dictionary<string, string[]>();
-        if (string.IsNullOrWhiteSpace(topic))
-            errors["topic"] = ["Topic is required."];
-        else if (topic.Length > 200)
-            errors["topic"] = ["Topic must not exceed 200 characters."];
-        if (string.IsNullOrWhiteSpace(content))
-            errors["content"] = ["Content is required."];
-        else if (content.Length > 10000)
-            errors["content"] = ["Content must not exceed 10000 characters."];
-        if (errors.Count > 0)
-            throw new ValidationException(errors);
-    }
-
-    private static void ValidateBloom(BloomLevel bloom, string key)
-    {
-        if (!Enum.IsDefined(bloom))
-            throw new ValidationException(new Dictionary<string, string[]>
-            {
-                [key] = ["Bloom must be Remember, Understand, Apply, or Analyze."]
-            });
+        if (string.IsNullOrWhiteSpace(topic) || string.IsNullOrWhiteSpace(content))
+            throw new ValidationException(new Dictionary<string, string[]> { ["content"] = ["Topic and content are required."] });
     }
 
     private static QuestionBankStatus ToStatus(QuestionBankStatusFilter filter) => (QuestionBankStatus)filter;

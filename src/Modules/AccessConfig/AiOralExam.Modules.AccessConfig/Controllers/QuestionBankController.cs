@@ -1,7 +1,6 @@
 using AiOralExam.Modules.AccessConfig.Application.QuestionBank;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AiOralExam.Modules.AccessConfig.Controllers;
@@ -9,11 +8,11 @@ namespace AiOralExam.Modules.AccessConfig.Controllers;
 [ApiController]
 [Route("api/courses/{courseId:guid}/question-bank")]
 [Authorize(Roles = Roles.LecturerOrAdmin)]
-[Tags("Question bank")]
+[ApiExplorerSettings(GroupName = "v1")]
 public sealed class QuestionBankController(IQuestionBankService service) : ControllerBase
 {
     [HttpGet]
-    public Task<IReadOnlyList<QuestionBankListItemDto>> List(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct) =>
+    public Task<IReadOnlyList<QuestionBankItemDto>> List(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct) =>
         service.ListAsync(courseId, status, ct);
 
     [HttpGet("{itemId:guid}")]
