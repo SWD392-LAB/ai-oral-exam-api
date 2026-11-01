@@ -339,6 +339,7 @@ CREATE TABLE question_responses (
     ai_evaluation_state VARCHAR(20) NOT NULL DEFAULT 'NotStarted',
     ai_evaluation_error VARCHAR(500),
     ai_evaluation_claim_token UUID,
+    ai_evaluation_claimed_at TIMESTAMPTZ,
     CONSTRAINT ck_question_response_ai_state
         CHECK (ai_evaluation_state IN ('NotStarted', 'Pending', 'Failed', 'Completed')),
     UNIQUE (attempt_id, question_id)

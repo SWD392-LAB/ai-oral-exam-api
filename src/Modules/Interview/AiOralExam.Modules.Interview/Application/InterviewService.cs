@@ -140,13 +140,21 @@ internal sealed class InterviewService(
         // its transcript or calling an external provider. The last-turn check
         // also rejects a stale request after another submission added a
         // follow-up and moved the response back to Completed.
-        var previousEvaluationState = response.AiEvaluationState;
-        var previousEvaluationError = response.AiEvaluationError;
+        var reclaimingPendingEvaluation = response.AiEvaluationState == AiEvaluationState.Pending;
+        var previousEvaluationState = reclaimingPendingEvaluation ? AiEvaluationState.Failed : response.AiEvaluationState;
+        var previousEvaluationError = reclaimingPendingEvaluation
+            ? "The previous AI evaluation was interrupted. Retry is available."
+            : response.AiEvaluationError;
         var claimToken = Guid.NewGuid();
+        var claimStartedAt = UtcNow;
+        var staleClaimBefore = claimStartedAt.AddSeconds(-Math.Clamp(_options.EvaluationClaimTimeoutSeconds, 660, 3600));
         var claimed = await db.QuestionResponses
             .Where(candidate => candidate.Id == response.Id
                 && !candidate.IsFinished
-                && candidate.AiEvaluationState != AiEvaluationState.Pending
+                && (candidate.AiEvaluationState != AiEvaluationState.Pending
+                    || candidate.AiEvaluationClaimToken == null
+                    || candidate.AiEvaluationClaimedAt == null
+                    || candidate.AiEvaluationClaimedAt < staleClaimBefore)
                 && db.InterviewAttempts.Any(activeAttempt => activeAttempt.Id == candidate.AttemptId
                     && activeAttempt.Status == AttemptStatus.InProgress)
                 && candidate.Turns.OrderByDescending(candidateTurn => candidateTurn.TurnNo)
@@ -154,13 +162,15 @@ internal sealed class InterviewService(
             .ExecuteUpdateAsync(update => update
                 .SetProperty(candidate => candidate.AiEvaluationState, AiEvaluationState.Pending)
                 .SetProperty(candidate => candidate.AiEvaluationError, (string?)null)
-                .SetProperty(candidate => candidate.AiEvaluationClaimToken, claimToken), ct);
+                .SetProperty(candidate => candidate.AiEvaluationClaimToken, claimToken)
+                .SetProperty(candidate => candidate.AiEvaluationClaimedAt, claimStartedAt), ct);
         if (claimed != 1)
             throw new ConflictException("turn_processing", "This turn is already being evaluated or is no longer current.");
 
         response.AiEvaluationState = AiEvaluationState.Pending;
         response.AiEvaluationError = null;
         response.AiEvaluationClaimToken = claimToken;
+        response.AiEvaluationClaimedAt = claimStartedAt;
         db.Entry(response).Property(candidate => candidate.AiEvaluationClaimToken).OriginalValue = claimToken;
 
         // 1) Store the answer. Past the time limit + grace => timed out, the transcript is not stored.
@@ -193,7 +203,8 @@ internal sealed class InterviewService(
                     .ExecuteUpdateAsync(update => update
                         .SetProperty(candidate => candidate.AiEvaluationState, previousEvaluationState)
                         .SetProperty(candidate => candidate.AiEvaluationError, previousEvaluationError)
-                        .SetProperty(candidate => candidate.AiEvaluationClaimToken, (Guid?)null), CancellationToken.None);
+                        .SetProperty(candidate => candidate.AiEvaluationClaimToken, (Guid?)null)
+                        .SetProperty(candidate => candidate.AiEvaluationClaimedAt, (DateTime?)null), CancellationToken.None);
             }
             catch (Exception releaseException)
             {
@@ -219,6 +230,7 @@ internal sealed class InterviewService(
                 response.AiEvaluationState = AiEvaluationState.Completed;
                 response.AiEvaluationError = null;
                 response.AiEvaluationClaimToken = null;
+                response.AiEvaluationClaimedAt = null;
                 await db.SaveChangesAsync(ct);
                 logger.LogInformation("Attempt {AttemptId}: follow-up {Count} for question {QuestionId}",
                     attempt.Id, response.FollowUpCount, question.Id);
@@ -270,18 +282,54 @@ internal sealed class InterviewService(
                 : null;
             return new SubmitAnswerResponse(outcome, timedOut, evaluation, ToState(attempt, session));
         }
-        catch (AiEvaluationException)
+        catch (Exception evaluationException)
         {
-            // Keep the transcript/audio reference, but reopen the turn so a
-            // retry can run the provider again instead of silently scoring zero.
-            turn.AnsweredAt = null;
-            response.AiEvaluationState = AiEvaluationState.Failed;
-            response.AiEvaluationError = "AI evaluation failed. Retry is available.";
-            response.AiEvaluationClaimToken = null;
-            await db.SaveChangesAsync(ct);
-            logger.LogWarning("Attempt {AttemptId}: AI evaluation failed for question {QuestionId}; answer kept for retry",
-                attempt.Id, question.Id);
+            // Provider failures, request cancellation, and persistence failures
+            // all release only this request's claim. The transcript/audio stays
+            // available, while a stale-claim cutoff covers process termination.
+            var error = evaluationException is OperationCanceledException
+                ? "AI evaluation was cancelled. Retry is available."
+                : "AI evaluation failed. Retry is available.";
+            await TryReleaseEvaluationClaimAsync(response.Id, turn.Id, claimToken, error, attempt.Id, question.Id);
             throw;
+        }
+    }
+
+    private async Task TryReleaseEvaluationClaimAsync(
+        Guid responseId,
+        Guid turnId,
+        Guid claimToken,
+        string error,
+        Guid attemptId,
+        Guid questionId)
+    {
+        try
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(CancellationToken.None);
+            await db.InterviewTurns
+                .Where(candidateTurn => candidateTurn.Id == turnId
+                    && db.QuestionResponses.Any(candidateResponse => candidateResponse.Id == responseId
+                        && candidateResponse.AiEvaluationClaimToken == claimToken))
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(candidateTurn => candidateTurn.AnsweredAt, (DateTime?)null), CancellationToken.None);
+            var released = await db.QuestionResponses
+                .Where(candidate => candidate.Id == responseId
+                    && candidate.AiEvaluationClaimToken == claimToken)
+                .ExecuteUpdateAsync(update => update
+                    .SetProperty(candidate => candidate.AiEvaluationState, AiEvaluationState.Failed)
+                    .SetProperty(candidate => candidate.AiEvaluationError, error)
+                    .SetProperty(candidate => candidate.AiEvaluationClaimToken, (Guid?)null)
+                    .SetProperty(candidate => candidate.AiEvaluationClaimedAt, (DateTime?)null), CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
+
+            if (released == 1)
+                logger.LogWarning("Attempt {AttemptId}: AI evaluation failed for question {QuestionId}; answer kept for retry",
+                    attemptId, questionId);
+        }
+        catch (Exception releaseException)
+        {
+            logger.LogWarning(releaseException,
+                "Could not release answer-processing claim for response {ResponseId}", responseId);
         }
     }
 

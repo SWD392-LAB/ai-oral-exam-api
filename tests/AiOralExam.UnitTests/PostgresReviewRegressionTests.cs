@@ -104,6 +104,100 @@ public sealed class PostgresReviewRegressionTests
     }
 
     [PostgresFact]
+    public async Task CancelledEvaluationReleasesItsClaimAndAllowsRetry()
+    {
+        var sessionId = Guid.NewGuid();
+        var studentId = Guid.NewGuid();
+        var questionId = Guid.NewGuid();
+        var examConfig = new FixedExamConfigurationApi(CreateSession(sessionId, questionId));
+
+        await WithInterviewSchemaAsync(async connectionString =>
+        {
+            await using (var setup = CreateDbContext(connectionString))
+            {
+                await CreateSchemaTablesAsync(setup);
+                var ids = await SeedOpenAttemptAsync(setup, sessionId, studentId, questionId);
+                examConfig.SetIds(ids.AttemptId, ids.TurnId, ids.ResponseId);
+            }
+
+            var analyzer = new GatedAnswerAnalyzer();
+            using var cancellation = new CancellationTokenSource();
+            await using (var db = CreateDbContext(connectionString))
+            {
+                var service = CreateService(db, examConfig, analyzer, studentId);
+                var submission = service.SubmitAnswerAsync(
+                    examConfig.AttemptId,
+                    new SubmitAnswerRequest("The answer", examConfig.TurnId),
+                    cancellation.Token);
+                await analyzer.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                cancellation.Cancel();
+                await Assert.ThrowsAnyAsync<OperationCanceledException>(() => submission);
+            }
+
+            await using (var verify = CreateDbContext(connectionString))
+            {
+                var response = await verify.QuestionResponses.AsNoTracking().SingleAsync(x => x.Id == examConfig.ResponseId);
+                var turn = await verify.InterviewTurns.AsNoTracking().SingleAsync(x => x.Id == examConfig.TurnId);
+                Assert.Equal(AiEvaluationState.Failed, response.AiEvaluationState);
+                Assert.Null(response.AiEvaluationClaimToken);
+                Assert.Null(response.AiEvaluationClaimedAt);
+                Assert.Equal("The answer", turn.AnswerTranscript);
+                Assert.Null(turn.AnsweredAt);
+            }
+
+            analyzer.Release.TrySetResult();
+            await using var retryDb = CreateDbContext(connectionString);
+            var retryService = CreateService(retryDb, examConfig, analyzer, studentId);
+            var retry = await retryService.SubmitAnswerAsync(
+                examConfig.AttemptId,
+                new SubmitAnswerRequest("The answer", examConfig.TurnId));
+            Assert.Equal(SubmitOutcome.Completed, retry.Outcome);
+            Assert.Equal(2, analyzer.CallCount);
+        });
+    }
+
+    [PostgresFact]
+    public async Task AbandonedExpiredClaimCanBeReclaimedOnRetry()
+    {
+        var sessionId = Guid.NewGuid();
+        var studentId = Guid.NewGuid();
+        var questionId = Guid.NewGuid();
+        var examConfig = new FixedExamConfigurationApi(CreateSession(sessionId, questionId));
+        var abandonedToken = Guid.NewGuid();
+
+        await WithInterviewSchemaAsync(async connectionString =>
+        {
+            await using (var setup = CreateDbContext(connectionString))
+            {
+                await CreateSchemaTablesAsync(setup);
+                var ids = await SeedOpenAttemptAsync(setup, sessionId, studentId, questionId);
+                examConfig.SetIds(ids.AttemptId, ids.TurnId, ids.ResponseId);
+                var response = await setup.QuestionResponses.SingleAsync(x => x.Id == ids.ResponseId);
+                response.AiEvaluationState = AiEvaluationState.Pending;
+                response.AiEvaluationClaimToken = abandonedToken;
+                response.AiEvaluationClaimedAt = DateTime.UtcNow.AddHours(-1);
+                await setup.SaveChangesAsync();
+            }
+
+            var analyzer = new GatedAnswerAnalyzer();
+            analyzer.Release.TrySetResult();
+            await using var retryDb = CreateDbContext(connectionString);
+            var retryService = CreateService(retryDb, examConfig, analyzer, studentId);
+            var result = await retryService.SubmitAnswerAsync(
+                examConfig.AttemptId,
+                new SubmitAnswerRequest("The answer", examConfig.TurnId));
+
+            Assert.Equal(SubmitOutcome.Completed, result.Outcome);
+            Assert.Equal(1, analyzer.CallCount);
+            await using var verify = CreateDbContext(connectionString);
+            var responseAfterRetry = await verify.QuestionResponses.AsNoTracking().SingleAsync(x => x.Id == examConfig.ResponseId);
+            Assert.Equal(AiEvaluationState.Completed, responseAfterRetry.AiEvaluationState);
+            Assert.Null(responseAfterRetry.AiEvaluationClaimToken);
+            Assert.Null(responseAfterRetry.AiEvaluationClaimedAt);
+        });
+    }
+
+    [PostgresFact]
     public async Task CriterionScoresEnforceOneScorePerResponseAndCriterionInPostgres()
     {
         var sessionId = Guid.NewGuid();

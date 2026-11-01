@@ -9,6 +9,12 @@ public sealed class InterviewOptions
     public int TimeLimitGraceSeconds { get; set; } = 15;
 
     /// <summary>
+    /// Time after which a Pending AI evaluation is considered abandoned and can be reclaimed.
+    /// The minimum is enforced above the combined maximum timeout of the analyzer and scorer.
+    /// </summary>
+    public int EvaluationClaimTimeoutSeconds { get; set; } = 900;
+
+    /// <summary>
     /// Students only see scores after the lecturer confirms them. A mock-only
     /// demo may explicitly enable this setting in a local override.
     /// </summary>

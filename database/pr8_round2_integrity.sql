@@ -1,4 +1,4 @@
--- Forward-only upgrade for PR #8 Round 2 review findings.
+-- Forward-only upgrade for PR #8 Round 2/3 review findings.
 -- Fresh databases get the claim column and named unique constraint from 01_schema.sql.
 -- Run manually with psql variable app_schema set; this script never selects a database.
 BEGIN;
@@ -22,6 +22,15 @@ BEGIN
     END IF;
 
     EXECUTE format('ALTER TABLE %I.question_responses ADD COLUMN IF NOT EXISTS ai_evaluation_claim_token UUID', v_schema);
+    EXECUTE format('ALTER TABLE %I.question_responses ADD COLUMN IF NOT EXISTS ai_evaluation_claimed_at TIMESTAMPTZ', v_schema);
+    -- Give claims created by the previous application version a full lease after upgrade.
+    EXECUTE format($sql$
+        UPDATE %I.question_responses
+           SET ai_evaluation_claimed_at = now()
+         WHERE ai_evaluation_state = 'Pending'
+           AND ai_evaluation_claim_token IS NOT NULL
+           AND ai_evaluation_claimed_at IS NULL
+    $sql$, v_schema);
 
     EXECUTE format($sql$
         SELECT EXISTS (
