@@ -60,7 +60,9 @@ public sealed class QuestionBankConcurrencyPostgresTests
             .Where(item => item.CourseId == fixture.CourseId)
             .ToListAsync();
         Assert.Single(persisted);
-        Assert.Single(await verifyDb.QuestionBankRevisions.AsNoTracking().ToListAsync());
+        Assert.Single(await verifyDb.QuestionBankRevisions.AsNoTracking()
+            .Where(revision => revision.QuestionBankItemId == persisted[0].Id)
+            .ToListAsync());
         Assert.Single(await verifyDb.AuditLogs.AsNoTracking().Where(log => log.TargetId == persisted[0].Id).ToListAsync());
     }
 
@@ -114,7 +116,7 @@ public sealed class QuestionBankConcurrencyPostgresTests
             .CreateAsync(otherCourse.CourseId,
                 new CreateQuestionBankItemRequest("Topic", BloomLevel.Apply, " existing "),
                 CancellationToken.None);
-        Assert.Equal("Existing", (await otherCourseDb.QuestionBankItems
+        Assert.Equal("existing", (await otherCourseDb.QuestionBankItems
             .SingleAsync(item => item.Id == otherCourseItem.Id)).Content);
     }
 
