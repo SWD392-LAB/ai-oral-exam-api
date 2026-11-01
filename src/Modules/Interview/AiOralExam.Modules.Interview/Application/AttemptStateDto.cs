@@ -11,4 +11,5 @@ public sealed record AttemptStateDto(
     int AnsweredQuestions,
     DateTime StartedAt,
     DateTime? CompletedAt,
-    CurrentTurnDto? CurrentTurn);
+    CurrentTurnDto? CurrentTurn,
+    long StateVersion);

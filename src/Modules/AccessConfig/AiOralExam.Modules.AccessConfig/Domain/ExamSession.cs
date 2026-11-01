@@ -8,6 +8,9 @@ public class ExamSession
     public Guid Id { get; set; }
     public Guid CourseId { get; set; }
     public Course Course { get; set; } = null!;
+    public RubricMode RubricMode { get; set; } = RubricMode.SharedVersion;
+    public Guid? RubricVersionId { get; set; }
+    public RubricVersion? RubricVersion { get; set; }
     public Guid CreatedBy { get; set; }
     public string Title { get; set; } = null!;
     public DateTime StartTime { get; set; }

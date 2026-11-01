@@ -53,9 +53,11 @@ F3 không đọc bản nháp AI hay tài liệu RAG trong lúc thi.
 
 Khoảng trống hiện tại: toàn bộ AI dùng mock; chưa có audio API/storage, SignalR,
 worker kết thúc **attempt**; submit chưa nhận `turnId` và chưa idempotent. Kiểm tra
-hết giờ câu chỉ chạy khi submit, chưa kiểm tra `EndTime` trong submit. Đặc biệt
-`ShowAiScoreToStudent` ở default options và `appsettings.json` vẫn là `true`, có
-thể lộ điểm AI trong submit trước khi lecturer duyệt.
+hết giờ câu chỉ chạy khi submit, chưa kiểm tra `EndTime` trong submit. Submit hiện
+không trả `Evaluation` cho sinh viên; điểm AI, điểm criterion và feedback chỉ
+được giữ cho luồng review/report nội bộ. Student report chỉ trả metadata cho tới khi
+lecturer xác nhận; realtime event cũng chỉ chứa state/event và transcript metadata,
+không chứa dữ liệu chấm.
 
 **Độ lệch schema với yêu cầu mới:** hiện `rubrics.question_id` và
 `rubric_criteria` là dữ liệu theo câu, lecturer có thể sửa trong phiên Draft.
@@ -96,6 +98,20 @@ diagram không chứng minh các luồng đó đã có code.
   business service tiếp tục gọi các interface hiện có.
 - API key/credential lấy từ environment hoặc user-secrets; commit file mẫu
   cấu hình không chứa credential thật.
+
+### Phase 5 completion boundary
+
+Phase 5 audio/STT is not claimed as production-complete in this repository.
+Development and test use the in-memory audio store, while the default
+production registration uses `UnavailableAudioChunkStore` and
+`UnavailableSpeechToTextService`; both report that deployment configuration is
+missing. No real object-storage or STT provider adapter, credential plan, or
+provider verification is included here. The audio workflow and its tests are
+therefore implementation/test scaffolding only, not operational production
+support. A later provider-specific change must select a private storage
+service, configure credentials outside source control, implement the adapters,
+and verify upload, transcription, failure, retry, and privacy behavior before
+updating the Phase 5 completion claim.
 
 **Bước readiness — chọn và thử provider:**
 
@@ -155,9 +171,9 @@ Phần còn phải làm:
   `POST /api/interview-attempts/{id}/score-review/confirm` xác nhận draft.
   Giữ `PUT /score-review` hiện có để client cũ chốt trong một bước; cả hai
   đường xác nhận dùng cùng validation/concurrency guard.
-- Đặt `ShowAiScoreToStudent=false` ở `InterviewOptions` và `appsettings.json`;
-  kiểm tra response Student ở submit, F6 và event tương lai không lộ điểm AI
-  trước khi duyệt.
+- Không expose `Evaluation` trong response student ở submit. Kiểm tra response
+  Student ở submit, F6 và event realtime không lộ điểm AI, criterion score,
+  evaluation detail hoặc provisional feedback trước khi duyệt.
 - Kiểm tra các response đã nhận đều xử lý điểm xong; khi AI còn pending/lỗi,
   từ chối duyệt với `409 evaluation_pending` sau PR 03.
 - Hiện retry sau `Finalized` luôn trả conflict. Cho retry cùng lecturer/cùng

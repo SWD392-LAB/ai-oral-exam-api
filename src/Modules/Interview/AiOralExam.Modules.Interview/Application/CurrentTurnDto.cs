@@ -9,4 +9,5 @@ public sealed record CurrentTurnDto(
     string Type,
     string QuestionText,
     DateTime AskedAt,
-    DateTime DeadlineAt);
+    DateTime DeadlineAt,
+    Guid TurnId);

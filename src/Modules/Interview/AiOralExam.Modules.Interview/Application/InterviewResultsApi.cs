@@ -17,7 +17,8 @@ internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewRes
     public async Task<IReadOnlyList<AttemptResult>> GetSessionResultsAsync(Guid examSessionId, CancellationToken ct = default)
     {
         var attempts = await Query()
-            .Where(a => a.Participant.ExamSessionId == examSessionId && a.Status != AttemptStatus.InProgress)
+            .Where(a => a.Participant.ExamSessionId == examSessionId
+                && (a.Status == AttemptStatus.PendingReview || a.Status == AttemptStatus.Finalized))
             .ToListAsync(ct);
         return attempts.Select(ToResult).ToList();
     }
@@ -48,6 +49,7 @@ internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewRes
         .Include(a => a.Participant)
         .Include(a => a.Review)
         .Include(a => a.Responses).ThenInclude(r => r.Turns)
+        .Include(a => a.Responses).ThenInclude(r => r.CriterionScores)
         .AsSplitQuery();
 
     private static AttemptResult ToResult(InterviewAttempt a) => new(
@@ -65,6 +67,9 @@ internal sealed class InterviewResultsApi(InterviewDbContext db) : IInterviewRes
                 r.AiSuggestedScore, r.AiFeedback,
                 r.Turns.OrderBy(t => t.TurnNo)
                     .Select(t => new TurnResult(t.TurnNo, t.Type, t.QuestionText, t.AnswerTranscript, t.AskedAt, t.AnsweredAt))
+                    .ToList(),
+                r.CriterionScores.OrderBy(s => s.RubricCriterionId)
+                    .Select(s => new CriterionScoreResult(s.RubricCriterionId, s.Points, s.Comment))
                     .ToList()))
             .ToList());
 }

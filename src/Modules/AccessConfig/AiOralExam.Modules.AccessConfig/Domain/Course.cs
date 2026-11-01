@@ -9,4 +9,5 @@ public class Course
 
     public ICollection<CourseLecturer> Lecturers { get; set; } = new List<CourseLecturer>();
     public ICollection<ExamSession> ExamSessions { get; set; } = new List<ExamSession>();
+    public ICollection<RubricTemplate> RubricTemplates { get; set; } = new List<RubricTemplate>();
 }

@@ -5,4 +5,5 @@ public sealed record SubmitAnswerResponse(
     bool TimedOut,
     // Null when Outcome = FollowUp or when AI scores are hidden from students.
     EvaluationDto? Evaluation,
-    AttemptStateDto Attempt);
+    AttemptStateDto Attempt,
+    bool Duplicate = false);

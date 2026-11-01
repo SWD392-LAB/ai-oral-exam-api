@@ -18,7 +18,7 @@ F1 sở hữu ngân hàng, nguồn tài liệu, RAG và duyệt câu. AccessConf
 | --- | --- | --- |
 | `questions`, `rubrics`, `rubric_criteria` | Câu hỏi thuộc `exam_session_id`; một rubric gắn với một câu, criterion được lecturer sửa trong phiên Draft | Tạo bank thuộc course và platform rubric version độc lập; ngừng cho lecturer tạo/sửa rubric khi luồng mới sẵn sàng |
 | `QuestionsController` | CRUD/import JSON `{orderNo, content}` vào một phiên Draft | Thêm bank API theo course; import bank không nhận rubric |
-| `RubricsController`, `RubricService` | API ghi rubric theo câu đang hoạt động | Chuyển lecturer sang read-only platform rubric; lập lộ trình deprecate/khóa route ghi sau migration và cập nhật FE |
+| `RubricsController`, `RubricService` | API ghi rubric theo câu đang hoạt động; chỉ cho session `Legacy` ở trạng thái `Draft` | Workflow platform dùng rubric version; giữ route ghi legacy cho session/data tương thích và không dùng route này cho `SharedVersion` |
 | `ExamSessionCommands.PublishAsync` | Yêu cầu mọi câu có rubric riêng và ít nhất một participant | Yêu cầu câu + participant + **active platform rubric version**, pin version vào session khi publish |
 | `IExamConfigurationApi` và F3 | Trả `QuestionInfo.Criteria` và `MaxScore` theo từng câu; `criterion_scores` FK tới criterion cũ | Với session mới, project criteria từ rubric version đã pin; bảo toàn đường đọc dữ liệu lịch sử |
 | Storage/AI | Chưa có ingest, retrieval, object storage; F3 đang dùng mock | Thêm adapter sinh câu hỏi riêng cho F1, không dùng mock scorer của F3 làm generation |
@@ -31,7 +31,11 @@ Không sửa các bảng sản xuất theo giả định diagram đã triển kh
 - `exam_sessions.platform_rubric_version_id` được pin khi publish. Mọi câu trong cùng phiên dùng **cùng bộ criteria**. `QuestionInfo.Criteria` tiếp tục trả danh sách per question để không buộc F3 đổi giao diện contract, nhưng nguồn là version của session, không phải rubric do lecturer tạo cho từng câu.
 - `QuestionInfo.MaxScore = SUM(platform_rubric_criteria.max_points)` cho từng câu; `ExamSession.TotalMaxScore = số câu × MaxScore`. Kiểm tra tổng phiên nằm trong giới hạn cột `score_reviews.final_score` hiện tại hoặc nâng kiểu cột trong cùng migration.
 - `criterion_scores` hiện FK tới `rubric_criteria` cũ. Migration phải cho điểm mới tham chiếu `platform_rubric_criteria` (ví dụ cột `platform_criterion_id` và CHECK đúng một trong hai FK); điểm cũ tiếp tục đọc theo FK cũ. F3 scorer dùng ID criterion của version đã pin. Test báo cáo F6 cho cả session cũ và mới.
-- Chốt phạm vi khóa route ghi rubric theo câu ở lượt rollout cùng FE. Không để lecturer ghi rubric cũ sau khi session mới đã dùng rubric nền tảng. Không xóa rubric/criterion cũ khi attempt lịch sử còn tham chiếu.
+- Chính sách tương thích hiện tại là coexistence, không đặt sunset date: route
+  ghi rubric theo câu vẫn phục vụ session `Legacy` ở trạng thái `Draft`, còn
+  session `SharedVersion` dùng rubric version platform và từ chối rubric theo
+  câu. Không xóa rubric/criterion cũ khi attempt lịch sử còn tham chiếu.
+  Client mới dùng platform workflow; client cũ được giữ nguyên route legacy.
 
 ## 4. F1-A — Ngân hàng thủ công, duyệt và đưa vào phiên
 

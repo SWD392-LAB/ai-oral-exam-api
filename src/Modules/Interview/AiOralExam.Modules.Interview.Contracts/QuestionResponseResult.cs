@@ -7,4 +7,5 @@ public sealed record QuestionResponseResult(
     bool IsFinished,
     decimal? SuggestedScore,
     string? AiFeedback,
-    IReadOnlyList<TurnResult> Turns);
+    IReadOnlyList<TurnResult> Turns,
+    IReadOnlyList<CriterionScoreResult>? CriterionScores = null);
