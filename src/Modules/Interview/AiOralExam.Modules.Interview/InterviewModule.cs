@@ -2,12 +2,14 @@ using AiOralExam.Modules.Interview.Application;
 using AiOralExam.Modules.Interview.Application.Ai;
 using AiOralExam.Modules.Interview.Application.Ai.Mock;
 using AiOralExam.Modules.Interview.Application.Audio;
+using AiOralExam.Modules.Interview.Application.Events;
 using AiOralExam.Modules.Interview.Application.Features.ScoreReview;
 using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.Modules.Interview.Infrastructure;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -15,7 +17,11 @@ namespace AiOralExam.Modules.Interview;
 
 public static class InterviewModule
 {
-    public static IServiceCollection AddInterviewModule(this IServiceCollection services, string connectionString, IConfiguration configuration)
+    public static IServiceCollection AddInterviewModule(
+        this IServiceCollection services,
+        string connectionString,
+        IConfiguration configuration,
+        string environmentName = "Production")
     {
         services.AddDbContext<InterviewDbContext>(o => o
             .UseNpgsql(connectionString)
@@ -25,16 +31,28 @@ public static class InterviewModule
         services.Configure<AiProviderOptions>(configuration.GetSection(AiProviderOptions.SectionName));
 
         services.AddScoped<IInterviewService, InterviewService>();
+        services.AddScoped<IInterviewAudioSubmissionService, InterviewAudioSubmissionService>();
+        if (!services.Any(descriptor => descriptor.ServiceType == typeof(IAudioChunkStore)))
+        {
+            if (string.Equals(environmentName, Environments.Development, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(environmentName, "Testing", StringComparison.OrdinalIgnoreCase))
+                services.AddSingleton<IAudioChunkStore, InMemoryAudioChunkStore>();
+            else
+                services.AddScoped<IAudioChunkStore, UnavailableAudioChunkStore>();
+        }
         services.AddScoped<IInterviewReviewService, InterviewReviewService>();
         services.AddScoped<IInterviewResultsApi, InterviewResultsApi>();
+        services.AddSingleton<IInterviewEventPublisher, SignalRInterviewEventPublisher>();
+        services.AddHostedService<InterviewAttemptDeadlineWorker>();
 
-        // ---- AI: mocks remain the safe default; real adapters are opt-in through AiProviders ----
+        // Mocks remain the default; local Ollama/Gemini and speech adapters are configured via AiProviders.
         services.AddSingleton<MockAnswerAnalyzer>(sp =>
             new MockAnswerAnalyzer(sp.GetRequiredService<IOptions<InterviewOptions>>().Value.Mock.EnableFollowUps));
         services.AddSingleton<MockRubricScorer>();
         services.AddSingleton<MockLlmService>();
         services.AddSingleton<MockSpeechToTextService>();
         services.AddSingleton<MockTextToSpeechService>();
+
         services.AddHttpClient<GeminiLlmService>((sp, client) =>
         {
             var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;
@@ -55,6 +73,7 @@ public static class InterviewModule
             var seconds = sp.GetRequiredService<IOptions<AiProviderOptions>>().Value.RequestTimeoutSeconds;
             client.Timeout = TimeSpan.FromSeconds(Math.Clamp(seconds, 5, 300));
         });
+
         services.AddScoped<LlmAnswerAnalyzer>();
         services.AddScoped<LlmRubricScorer>();
         services.AddScoped<ILlmService>(sp =>
@@ -95,6 +114,8 @@ public static class InterviewModule
                 ? sp.GetRequiredService<LocalHttpTextToSpeechService>()
                 : sp.GetRequiredService<MockTextToSpeechService>();
         });
+
+        // Direct audio uploads/playback (Phuc's F3 API) and chunked/recoverable audio (PR #9).
         services.AddSingleton<IAudioStorage, LocalAudioStorage>();
         services.AddScoped<IInterviewAudioService, InterviewAudioService>();
 

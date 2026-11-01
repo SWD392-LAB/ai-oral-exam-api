@@ -5,6 +5,8 @@ using AiOralExam.Modules.AccessConfig;
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.Modules.Interview;
+using AiOralExam.Modules.Interview.Application.Audio;
+using AiOralExam.Modules.Interview.Hubs;
 using AiOralExam.Modules.Reporting;
 using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
@@ -22,6 +24,8 @@ var connectionString = config.GetConnectionString("Database")
 
 // ---------------------------------------------------------------- Shared
 builder.Services.AddHttpContextAccessor();
+builder.Services.AddSignalR(options =>
+    options.MaximumReceiveMessageSize = AudioChunkLimits.MaximumSignalRMessageBytes);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 
@@ -29,7 +33,7 @@ builder.Services.AddScoped<ICurrentUser, CurrentUser>();
 // Each module registers its own DbContext + services. Modules talk to each other only through *.Contracts.
 builder.Services
     .AddAccessConfigModule(connectionString, config)
-    .AddInterviewModule(connectionString, config)
+    .AddInterviewModule(connectionString, config, builder.Environment.EnvironmentName)
     .AddReportingModule();
 
 // ---------------------------------------------------------------- Auth (Keycloak access tokens)
@@ -55,6 +59,14 @@ builder.Services
         // 401/403 also use the ApiError format
         o.Events = new JwtBearerEvents
         {
+            OnMessageReceived = ctx =>
+            {
+                var accessToken = ctx.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken)
+                    && ctx.HttpContext.Request.Path.StartsWithSegments("/hubs/interview"))
+                    ctx.Token = accessToken;
+                return Task.CompletedTask;
+            },
             // The database decides access: users.is_active must be true, and users.role_id replaces the
             // token's role, so a change made in AIVES applies at once even if Keycloak lags behind.
             // ponytail: one DB lookup per request; add a short MemoryCache if it shows up in profiling.
@@ -185,6 +197,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<InterviewUpdatesHub>("/hubs/interview").RequireAuthorization();
 app.MapHealthChecks("/health");
 app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 

@@ -117,13 +117,13 @@ INSERT INTO course_lecturers (course_id, lecturer_id, assigned_at) VALUES
   ('22222222-0000-0000-0000-000000000004', '11111111-0000-0000-0000-000000000010', '2026-09-25 08:05+07');
 
 -- ---------- Exam sessions ----------
-INSERT INTO exam_sessions (id, course_id, created_by, title, start_time, end_time, time_limit_per_answer_seconds, max_follow_ups, status, created_at) VALUES
-  ('33333333-0000-0000-0000-000000000001', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000002', 'SWD392 Midterm Oral Exam', timestamptz '2026-10-01 08:00+07', now() + interval '30 days', 120, 2, 'Published', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000002', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000003', 'PRN232 Final Oral Exam', now() + interval '30 days', now() + interval '30 days 9 hours', 150, 1, 'Draft', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000003', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000011', 'SWD392 Midterm Oral Exam - Class SE1802', timestamptz '2026-09-15 08:00+07', timestamptz '2026-09-15 17:00+07', 120, 2, 'Closed', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000004', '22222222-0000-0000-0000-000000000003', '11111111-0000-0000-0000-000000000009', 'DBI202 Oral Exam - SQL & Normalization', now() - interval '2 days', now() + interval '14 days', 90, 2, 'Published', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000005', '22222222-0000-0000-0000-000000000004', '11111111-0000-0000-0000-000000000010', 'SWT301 Oral Test', timestamptz '2026-09-22 08:00+07', timestamptz '2026-09-22 12:00+07', 120, 1, 'Closed', '2026-09-26 10:00+07'),
-  ('33333333-0000-0000-0000-000000000006', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000012', 'PRN232 Midterm Oral Exam', now() + interval '3 days', now() + interval '4 days', 120, 2, 'Published', '2026-09-26 10:00+07');
+INSERT INTO exam_sessions (id, course_id, created_by, title, start_time, end_time, time_limit_per_answer_seconds, max_follow_ups, status, rubric_mode, created_at) VALUES
+  ('33333333-0000-0000-0000-000000000001', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000002', 'SWD392 Midterm Oral Exam', timestamptz '2026-10-01 08:00+07', now() + interval '30 days', 120, 2, 'Published', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000002', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000003', 'PRN232 Final Oral Exam', now() + interval '30 days', now() + interval '30 days 9 hours', 150, 1, 'Draft', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000003', '22222222-0000-0000-0000-000000000001', '11111111-0000-0000-0000-000000000011', 'SWD392 Midterm Oral Exam - Class SE1802', timestamptz '2026-09-15 08:00+07', timestamptz '2026-09-15 17:00+07', 120, 2, 'Closed', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000004', '22222222-0000-0000-0000-000000000003', '11111111-0000-0000-0000-000000000009', 'DBI202 Oral Exam - SQL & Normalization', now() - interval '2 days', now() + interval '14 days', 90, 2, 'Published', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000005', '22222222-0000-0000-0000-000000000004', '11111111-0000-0000-0000-000000000010', 'SWT301 Oral Test', timestamptz '2026-09-22 08:00+07', timestamptz '2026-09-22 12:00+07', 120, 1, 'Closed', 'Legacy', '2026-09-26 10:00+07'),
+  ('33333333-0000-0000-0000-000000000006', '22222222-0000-0000-0000-000000000002', '11111111-0000-0000-0000-000000000012', 'PRN232 Midterm Oral Exam', now() + interval '3 days', now() + interval '4 days', 120, 2, 'Published', 'Legacy', '2026-09-26 10:00+07');
 
 -- ---------- Questions (1..5: original; 6..22: added) ----------
 INSERT INTO questions (id, exam_session_id, order_no, content) VALUES
@@ -236,6 +236,36 @@ INSERT INTO rubric_criteria (id, rubric_id, order_no, description, max_points) V
   ('99999999-0000-0000-0000-000000000212', '88888888-0000-0000-0000-000000000021', 2, 'Cost and management of threads', 5),
   ('99999999-0000-0000-0000-000000000221', '88888888-0000-0000-0000-000000000022', 1, 'Binding sources: route, query, body', 5),
   ('99999999-0000-0000-0000-000000000222', '88888888-0000-0000-0000-000000000022', 2, 'DataAnnotations and ModelState / [ApiController]', 5);
+
+-- ---------- Initial platform-owned shared rubric (safe to repeat independently) ----------
+INSERT INTO rubric_templates (id, course_id, name, created_by)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000001', NULL, 'Platform Shared Oral Rubric',
+        '11111111-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO rubric_versions (id, template_id, course_id, version_no, max_score, is_sealed, is_active, created_by)
+VALUES ('aaaaaaaa-0000-0000-0000-000000000002',
+        'aaaaaaaa-0000-0000-0000-000000000001', NULL, 1, 10.00, FALSE, FALSE,
+        '11111111-0000-0000-0000-000000000001')
+ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO rubric_criteria (id, rubric_id, rubric_version_id, order_no, description, max_points)
+VALUES
+  ('aaaaaaaa-0000-0000-0000-000000000003', NULL, 'aaaaaaaa-0000-0000-0000-000000000002', 1, 'Accuracy and correctness', 5.00),
+  ('aaaaaaaa-0000-0000-0000-000000000004', NULL, 'aaaaaaaa-0000-0000-0000-000000000002', 2, 'Clarity and completeness', 5.00)
+ON CONFLICT (id) DO NOTHING;
+
+UPDATE rubric_versions
+SET is_sealed = TRUE, max_score = 10.00
+WHERE id = 'aaaaaaaa-0000-0000-0000-000000000002' AND NOT is_sealed;
+
+UPDATE rubric_versions
+SET is_active = TRUE
+WHERE id = 'aaaaaaaa-0000-0000-0000-000000000002'
+  AND NOT EXISTS (
+      SELECT 1 FROM rubric_versions active
+      WHERE active.is_active
+  );
 
 -- ---------- Participants (joined_at = when the lecturer imported the student list) ----------
 INSERT INTO participants (id, exam_session_id, student_id, joined_at, status) VALUES

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using System.Text;
 using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.Interview.Contracts;
@@ -22,6 +23,24 @@ public class ReportServiceTests
         Assert.Null(report.FinalScore);
         Assert.Null(report.LecturerComment);
         Assert.Empty(report.Questions);
+    }
+
+    [Fact]
+    public async Task Student_pending_report_serializes_only_null_score_fields_and_no_evaluation_details()
+    {
+        var data = new ReportData();
+        var report = await data.Service.GetAttemptReportAsync(data.Attempt.AttemptId);
+
+        using var document = JsonDocument.Parse(JsonSerializer.Serialize(report, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        var response = document.RootElement;
+
+        Assert.Equal(JsonValueKind.Null, response.GetProperty("suggestedTotalScore").ValueKind);
+        Assert.Equal(JsonValueKind.Null, response.GetProperty("finalScore").ValueKind);
+        Assert.Equal(JsonValueKind.Null, response.GetProperty("lecturerComment").ValueKind);
+        Assert.Empty(response.GetProperty("questions").EnumerateArray());
+        Assert.DoesNotContain("aiSuggestedScore", document.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("criterionScores", document.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("aiFeedback", document.RootElement.GetRawText(), StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

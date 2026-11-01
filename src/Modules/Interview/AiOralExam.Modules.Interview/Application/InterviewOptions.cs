@@ -9,12 +9,6 @@ public sealed class InterviewOptions
     public int TimeLimitGraceSeconds { get; set; } = 15;
 
     /// <summary>
-    /// Time after which a Pending AI evaluation is considered abandoned and can be reclaimed.
-    /// The minimum is enforced above the combined maximum timeout of the analyzer and scorer.
-    /// </summary>
-    public int EvaluationClaimTimeoutSeconds { get; set; } = 900;
-
-    /// <summary>
     /// Students only see scores after the lecturer confirms them. A mock-only
     /// demo may explicitly enable this setting in a local override.
     /// </summary>
@@ -22,6 +16,15 @@ public sealed class InterviewOptions
 
     /// <summary>Allow another attempt after a finished one (open point - off by default).</summary>
     public bool AllowRetake { get; set; }
+
+    /// <summary>Number of retries allowed after the initial turn-processing attempt.</summary>
+    public int MaximumTurnRetries { get; set; } = 3;
+
+    /// <summary>Initial delay before retrying failed turn processing.</summary>
+    public int InitialTurnRetryDelaySeconds { get; set; } = 5;
+
+    /// <summary>Upper bound for exponential turn-processing retry delays.</summary>
+    public int MaximumTurnRetryDelaySeconds { get; set; } = 300;
 
     /// <summary>Language passed to the analyzer/scorer; F7 can override this in deployment config.</summary>
     public string Language { get; set; } = "Vietnamese";

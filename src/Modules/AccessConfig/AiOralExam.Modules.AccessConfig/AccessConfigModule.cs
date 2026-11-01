@@ -11,6 +11,8 @@ using AiOralExam.Modules.AccessConfig.Application.QuestionGeneration;
 using AiOralExam.Modules.AccessConfig.Application.QuestionBank;
 using AiOralExam.Modules.AccessConfig.Application.Materials;
 using AiOralExam.Modules.AccessConfig.Application.Rubrics;
+using AiOralExam.Modules.AccessConfig.Application.RubricVersions;
+using AiOralExam.Modules.AccessConfig.Application.RubricTemplates;
 using AiOralExam.Modules.AccessConfig.Application.Users;
 using AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
 using AiOralExam.Modules.AccessConfig.Application.Users.GetUser;
@@ -66,6 +68,8 @@ public static class AccessConfigModule
         services.AddSingleton<IMaterialStorage, LocalMaterialStorage>();
         services.AddScoped<IMaterialService, MaterialService>();
         services.AddScoped<IRubricService, RubricService>();
+        services.AddScoped<IRubricTemplateService, RubricTemplateService>();
+        services.AddScoped<IRubricVersionService, RubricVersionService>();
         services.AddScoped<CreateUserService>();
         services.AddScoped<UpdateUserService>();
         services.AddScoped<ListUsersService>();
@@ -74,7 +78,9 @@ public static class AccessConfigModule
         services.AddScoped<IParticipantService, ParticipantService>();
         services.AddScoped<ILecturerAssignmentService, LecturerAssignmentService>();
         services.AddScoped<IAiConfigService, AiConfigService>();
-        services.AddScoped<IAuditLogService, AuditLogService>();
+        services.AddScoped<AuditLogService>();
+        services.AddScoped<IAuditLogService>(sp => sp.GetRequiredService<AuditLogService>());
+        services.AddScoped<IAuditLogWriter>(sp => sp.GetRequiredService<AuditLogService>());
         services.AddOptions<KeycloakAdminOptions>()
             .Bind(configuration.GetSection(KeycloakAdminOptions.SectionName))
             .Validate(o => !string.IsNullOrWhiteSpace(o.ClientSecret),

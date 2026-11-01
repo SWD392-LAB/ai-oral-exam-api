@@ -10,4 +10,6 @@ public sealed record ExamSessionCommandDto(
     int MaxFollowUps,
     string Status,
     int QuestionCount,
-    int ParticipantCount);
+    int ParticipantCount,
+    string RubricMode = "Legacy",
+    Guid? RubricVersionId = null);

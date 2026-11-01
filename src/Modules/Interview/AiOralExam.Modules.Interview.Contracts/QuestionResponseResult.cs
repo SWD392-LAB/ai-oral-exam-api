@@ -9,4 +9,5 @@ public sealed record QuestionResponseResult(
     string? AiFeedback,
     IReadOnlyList<TurnResult> Turns,
     string AiEvaluationState = "Completed",
-    string? AiEvaluationError = null);
+    string? AiEvaluationError = null,
+    IReadOnlyList<CriterionScoreResult>? CriterionScores = null);

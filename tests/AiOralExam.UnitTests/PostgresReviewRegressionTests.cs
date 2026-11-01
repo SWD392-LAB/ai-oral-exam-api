@@ -3,13 +3,13 @@ using AiOralExam.Modules.AccessConfig.Contracts;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.Modules.Interview.Application;
 using AiOralExam.Modules.Interview.Application.Ai;
+using AiOralExam.Modules.Interview.Application.Audio;
+using AiOralExam.Modules.Interview.Application.Events;
 using AiOralExam.Modules.Interview.Contracts;
 using AiOralExam.Modules.Interview.Domain;
 using AiOralExam.Modules.Interview.Infrastructure;
-using AiOralExam.SharedKernel.Errors;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -36,7 +36,7 @@ public sealed class PostgresReviewRegressionTests
                 (attemptId, turnId, responseId) = await SeedOpenAttemptAsync(setup, sessionId, studentId, questionId);
             }
 
-            var examConfig = new TwoRequestExamConfigurationApi(session);
+        var examConfig = new FixedExamConfigurationApi(session);
             examConfig.SetIds(attemptId, turnId, responseId);
             var analyzer = new GatedAnswerAnalyzer();
             await using var firstDb = CreateDbContext(connectionString);
@@ -46,16 +46,13 @@ public sealed class PostgresReviewRegressionTests
             var request = new SubmitAnswerRequest("The answer", turnId);
 
             var firstTask = first.SubmitAnswerAsync(attemptId, request);
-            var secondTask = second.SubmitAnswerAsync(attemptId, request);
             await analyzer.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
-
-            var rejectedTask = await Task.WhenAny(firstTask, secondTask).WaitAsync(TimeSpan.FromSeconds(10));
-            await Assert.ThrowsAsync<ConflictException>(() => rejectedTask);
+            var duplicate = await second.SubmitAnswerAsync(attemptId, request).WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.True(duplicate.Duplicate);
             Assert.Equal(1, analyzer.CallCount);
 
             analyzer.Release.TrySetResult();
-            var acceptedTask = ReferenceEquals(rejectedTask, firstTask) ? secondTask : firstTask;
-            var result = await acceptedTask.WaitAsync(TimeSpan.FromSeconds(10));
+            var result = await firstTask.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.Equal(SubmitOutcome.Completed, result.Outcome);
 
             await using var verify = CreateDbContext(connectionString);
@@ -63,43 +60,6 @@ public sealed class PostgresReviewRegressionTests
             Assert.Equal(AiEvaluationState.Completed, response.AiEvaluationState);
             Assert.Null(response.AiEvaluationClaimToken);
             Assert.Equal(1, analyzer.CallCount);
-        });
-    }
-
-    [PostgresFact]
-    public async Task FailedTranscriptSaveCannotReleaseAClaimOwnedByAnotherRequest()
-    {
-        var sessionId = Guid.NewGuid();
-        var studentId = Guid.NewGuid();
-        var questionId = Guid.NewGuid();
-        var session = CreateSession(sessionId, questionId);
-        var replacementToken = Guid.NewGuid();
-        var examConfig = new FixedExamConfigurationApi(session);
-
-        await WithInterviewSchemaAsync(async connectionString =>
-        {
-            await using (var setup = CreateDbContext(connectionString))
-            {
-                await CreateSchemaTablesAsync(setup);
-                var ids = await SeedOpenAttemptAsync(setup, sessionId, studentId, questionId);
-                examConfig.SetIds(ids.AttemptId, ids.TurnId, ids.ResponseId);
-            }
-
-            var analyzer = new GatedAnswerAnalyzer();
-            var interceptor = new ReplaceClaimTokenAndFailSaveInterceptor(
-                connectionString, examConfig.ResponseId, replacementToken);
-            await using var db = CreateDbContext(connectionString, interceptor);
-            var service = CreateService(db, examConfig, analyzer, studentId);
-
-            await Assert.ThrowsAsync<InvalidOperationException>(() =>
-                service.SubmitAnswerAsync(examConfig.AttemptId,
-                    new SubmitAnswerRequest("The answer", examConfig.TurnId)));
-
-            await using var verify = CreateDbContext(connectionString);
-            var response = await verify.QuestionResponses.AsNoTracking().SingleAsync(x => x.Id == examConfig.ResponseId);
-            Assert.Equal(AiEvaluationState.Pending, response.AiEvaluationState);
-            Assert.Equal(replacementToken, response.AiEvaluationClaimToken);
-            Assert.Equal(0, analyzer.CallCount);
         });
     }
 
@@ -121,10 +81,11 @@ public sealed class PostgresReviewRegressionTests
             }
 
             var analyzer = new GatedAnswerAnalyzer();
+            var options = new InterviewOptions { InitialTurnRetryDelaySeconds = 0, MaximumTurnRetryDelaySeconds = 0 };
             using var cancellation = new CancellationTokenSource();
             await using (var db = CreateDbContext(connectionString))
             {
-                var service = CreateService(db, examConfig, analyzer, studentId);
+                var service = CreateService(db, examConfig, analyzer, studentId, interviewOptions: options);
                 var submission = service.SubmitAnswerAsync(
                     examConfig.AttemptId,
                     new SubmitAnswerRequest("The answer", examConfig.TurnId),
@@ -142,58 +103,18 @@ public sealed class PostgresReviewRegressionTests
                 Assert.Null(response.AiEvaluationClaimToken);
                 Assert.Null(response.AiEvaluationClaimedAt);
                 Assert.Equal("The answer", turn.AnswerTranscript);
-                Assert.Null(turn.AnsweredAt);
+                Assert.NotNull(turn.AnsweredAt);
+                Assert.Equal(TurnProcessingStatus.Retry, turn.ProcessingStatus);
             }
 
             analyzer.Release.TrySetResult();
             await using var retryDb = CreateDbContext(connectionString);
-            var retryService = CreateService(retryDb, examConfig, analyzer, studentId);
+            var retryService = CreateService(retryDb, examConfig, analyzer, studentId, interviewOptions: options);
             var retry = await retryService.SubmitAnswerAsync(
                 examConfig.AttemptId,
                 new SubmitAnswerRequest("The answer", examConfig.TurnId));
             Assert.Equal(SubmitOutcome.Completed, retry.Outcome);
             Assert.Equal(2, analyzer.CallCount);
-        });
-    }
-
-    [PostgresFact]
-    public async Task AbandonedExpiredClaimCanBeReclaimedOnRetry()
-    {
-        var sessionId = Guid.NewGuid();
-        var studentId = Guid.NewGuid();
-        var questionId = Guid.NewGuid();
-        var examConfig = new FixedExamConfigurationApi(CreateSession(sessionId, questionId));
-        var abandonedToken = Guid.NewGuid();
-
-        await WithInterviewSchemaAsync(async connectionString =>
-        {
-            await using (var setup = CreateDbContext(connectionString))
-            {
-                await CreateSchemaTablesAsync(setup);
-                var ids = await SeedOpenAttemptAsync(setup, sessionId, studentId, questionId);
-                examConfig.SetIds(ids.AttemptId, ids.TurnId, ids.ResponseId);
-                var response = await setup.QuestionResponses.SingleAsync(x => x.Id == ids.ResponseId);
-                response.AiEvaluationState = AiEvaluationState.Pending;
-                response.AiEvaluationClaimToken = abandonedToken;
-                response.AiEvaluationClaimedAt = DateTime.UtcNow.AddHours(-1);
-                await setup.SaveChangesAsync();
-            }
-
-            var analyzer = new GatedAnswerAnalyzer();
-            analyzer.Release.TrySetResult();
-            await using var retryDb = CreateDbContext(connectionString);
-            var retryService = CreateService(retryDb, examConfig, analyzer, studentId);
-            var result = await retryService.SubmitAnswerAsync(
-                examConfig.AttemptId,
-                new SubmitAnswerRequest("The answer", examConfig.TurnId));
-
-            Assert.Equal(SubmitOutcome.Completed, result.Outcome);
-            Assert.Equal(1, analyzer.CallCount);
-            await using var verify = CreateDbContext(connectionString);
-            var responseAfterRetry = await verify.QuestionResponses.AsNoTracking().SingleAsync(x => x.Id == examConfig.ResponseId);
-            Assert.Equal(AiEvaluationState.Completed, responseAfterRetry.AiEvaluationState);
-            Assert.Null(responseAfterRetry.AiEvaluationClaimToken);
-            Assert.Null(responseAfterRetry.AiEvaluationClaimedAt);
         });
     }
 
@@ -226,33 +147,32 @@ public sealed class PostgresReviewRegressionTests
             await analyzer.FirstRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
 
             // Simulate the lease expiring while request A is still blocked in its provider call.
+            var options = new InterviewOptions { InitialTurnRetryDelaySeconds = 0, MaximumTurnRetryDelaySeconds = 0 };
             await using (var expireLeaseDb = CreateDbContext(connectionString))
             {
                 var response = await expireLeaseDb.QuestionResponses.SingleAsync(x => x.Id == examConfig.ResponseId);
                 Assert.Equal(AiEvaluationState.Pending, response.AiEvaluationState);
                 Assert.NotNull(response.AiEvaluationClaimToken);
-                response.AiEvaluationClaimedAt = DateTime.UtcNow.AddHours(-1);
+                var turn = await expireLeaseDb.InterviewTurns.SingleAsync(x => x.Id == examConfig.TurnId);
+                turn.ProcessingStartedAt = DateTime.UtcNow.AddHours(-1);
                 await expireLeaseDb.SaveChangesAsync();
             }
 
-            // B reclaims the expired lease and finishes before A is allowed to resume.
+            // The recovery worker expires A's turn lease; request B then retries and takes ownership.
             await using (var winnerDb = CreateDbContext(connectionString))
             {
-                var winnerService = CreateService(winnerDb, examConfig, analyzer, studentId, scorer);
+                var winnerService = CreateService(winnerDb, examConfig, analyzer, studentId, scorer, options);
+                await winnerService.ExpireOverdueAttemptsAsync();
                 var winner = await winnerService.SubmitAnswerAsync(
                     examConfig.AttemptId,
-                    new SubmitAnswerRequest("winner answer", examConfig.TurnId));
+                    new SubmitAnswerRequest("stale answer", examConfig.TurnId));
                 Assert.Equal(SubmitOutcome.Completed, winner.Outcome);
             }
 
-            // Remove the score uniqueness guard in this isolated schema so the stale save
-            // must be rejected by the response's EF concurrency token, not a duplicate-score index.
-            await using (var isolateConcurrencyDb = CreateDbContext(connectionString))
-                await isolateConcurrencyDb.Database.ExecuteSqlRawAsync("DROP INDEX ux_criterion_scores_response_criterion");
-
             analyzer.ReleaseFirstRequest.TrySetResult();
-            var staleSave = await Assert.ThrowsAsync<DbUpdateConcurrencyException>(() => staleRequest);
-            Assert.Contains(staleSave.Entries, entry => entry.Entity is QuestionResponse);
+            var staleResult = await staleRequest;
+            Assert.True(staleResult.Duplicate);
+            Assert.Equal(SubmitOutcome.Completed, staleResult.Outcome);
 
             await using var verify = CreateDbContext(connectionString);
             var persistedResponse = await verify.QuestionResponses.AsNoTracking()
@@ -273,8 +193,9 @@ public sealed class PostgresReviewRegressionTests
             Assert.Equal("winner", persistedScore.Comment);
 
             var persistedTurn = await verify.InterviewTurns.AsNoTracking().SingleAsync(x => x.Id == examConfig.TurnId);
-            Assert.Equal("winner answer", persistedTurn.AnswerTranscript);
+            Assert.Equal("stale answer", persistedTurn.AnswerTranscript);
             Assert.NotNull(persistedTurn.AnsweredAt);
+            Assert.Equal(TurnProcessingStatus.Completed, persistedTurn.ProcessingStatus);
             Assert.Equal(1, await verify.InterviewTurns.CountAsync(x => x.QuestionResponseId == examConfig.ResponseId));
 
             var persistedAttempt = await verify.InterviewAttempts.AsNoTracking()
@@ -338,12 +259,11 @@ public sealed class PostgresReviewRegressionTests
         }
     }
 
-    private static InterviewDbContext CreateDbContext(string connectionString, IInterceptor? interceptor = null)
+    private static InterviewDbContext CreateDbContext(string connectionString)
     {
         var options = new DbContextOptionsBuilder<InterviewDbContext>()
             .UseNpgsql(connectionString)
             .UseSnakeCaseNamingConvention();
-        if (interceptor is not null) options.AddInterceptors(interceptor);
         return new InterviewDbContext(options.Options);
     }
 
@@ -355,14 +275,20 @@ public sealed class PostgresReviewRegressionTests
         IExamConfigurationApi examConfig,
         IAnswerAnalyzer analyzer,
         Guid studentId,
-        IRubricScorer? scorer = null) => new(
+        IRubricScorer? scorer = null,
+        InterviewOptions? interviewOptions = null) => new(
         db,
         examConfig,
         analyzer,
         scorer ?? new EmptyRubricScorer(),
+        new NoopAudioChunkStore(),
+        new NoopSpeechToTextService(),
+        new NoopInterviewEventPublisher(),
+        new NoopAuditLogWriter(),
         new TestCurrentUser(studentId),
         TimeProvider.System,
-        Options.Create(new InterviewOptions()),
+        Options.Create(interviewOptions ?? new InterviewOptions()),
+        Options.Create(new AiProviderOptions()),
         NullLogger<InterviewService>.Instance);
 
     private static ExamSessionInfo CreateSession(Guid sessionId, Guid questionId, RubricCriterionInfo? criterion = null) => new(
@@ -467,19 +393,6 @@ public sealed class PostgresReviewRegressionTests
         }
     }
 
-    private sealed class TwoRequestExamConfigurationApi(ExamSessionInfo session) : FixedExamConfigurationApi(session)
-    {
-        private readonly TaskCompletionSource _bothRequestsLoaded = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _calls;
-
-        public override async Task<ExamSessionInfo?> GetSessionAsync(Guid examSessionId, CancellationToken ct = default)
-        {
-            if (Interlocked.Increment(ref _calls) == 2) _bothRequestsLoaded.TrySetResult();
-            await _bothRequestsLoaded.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);
-            return await base.GetSessionAsync(examSessionId, ct);
-        }
-    }
-
     private sealed class GatedAnswerAnalyzer : IAnswerAnalyzer
     {
         private int _callCount;
@@ -534,30 +447,36 @@ public sealed class PostgresReviewRegressionTests
             Task.FromResult(new RubricScore([], "Scored."));
     }
 
-    private sealed class ReplaceClaimTokenAndFailSaveInterceptor(
-        string connectionString,
-        Guid responseId,
-        Guid replacementToken) : SaveChangesInterceptor
+    private sealed class NoopAudioChunkStore : IAudioChunkStore
     {
-        private int _ran;
+        public Task<AudioChunkAppendResult> AppendAsync(Guid attemptId, Guid turnId, int sequence, byte[] chunk,
+            string contentType, CancellationToken ct) => throw new NotSupportedException();
 
-        public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
-            DbContextEventData eventData,
-            InterceptionResult<int> result,
-            CancellationToken cancellationToken = default)
-        {
-            if (Interlocked.Exchange(ref _ran, 1) == 0)
-            {
-                await using var connection = new NpgsqlConnection(connectionString);
-                await connection.OpenAsync(cancellationToken);
-                await using var command = new NpgsqlCommand("UPDATE question_responses SET ai_evaluation_claim_token = @replacement WHERE id = @response AND ai_evaluation_claim_token IS NOT NULL", connection);
-                command.Parameters.AddWithValue("replacement", replacementToken);
-                command.Parameters.AddWithValue("response", responseId);
-                Assert.Equal(1, await command.ExecuteNonQueryAsync(cancellationToken));
-                throw new InvalidOperationException("Simulated transcript persistence failure.");
-            }
-            return result;
-        }
+        public Task<AudioChunkCheckpoint?> GetCheckpointAsync(Guid attemptId, Guid turnId, CancellationToken ct) =>
+            Task.FromResult<AudioChunkCheckpoint?>(null);
+
+        public Task<CompletedAudio> CompleteUploadAsync(Guid attemptId, Guid turnId, CancellationToken ct) =>
+            throw new NotSupportedException();
+
+        public Task<string> SaveTranscriptIfAbsentAsync(Guid attemptId, Guid turnId, string transcript, CancellationToken ct) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class NoopSpeechToTextService : ISpeechToTextService
+    {
+        public Task<string> TranscribeAsync(Stream audio, string contentType, string language, CancellationToken ct = default) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class NoopInterviewEventPublisher : IInterviewEventPublisher
+    {
+        public Task PublishAsync(InterviewAttemptEvent interviewEvent, CancellationToken ct = default) => Task.CompletedTask;
+        public Task PublishTranscriptUpdatedAsync(TranscriptUpdatedEvent transcriptEvent, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    private sealed class NoopAuditLogWriter : IAuditLogWriter
+    {
+        public Task AppendAsync(AuditLogEntry entry, CancellationToken ct = default) => Task.CompletedTask;
     }
 }
 

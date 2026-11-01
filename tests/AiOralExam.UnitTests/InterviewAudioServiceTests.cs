@@ -137,7 +137,12 @@ public sealed class InterviewAudioServiceTests
         public Task<IReadOnlyList<MySessionDto>> GetMySessionsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<(AttemptStateDto State, bool Created)> StartAttemptAsync(StartAttemptRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<SubmitAnswerResponse> SubmitAnswerAsync(Guid attemptId, SubmitAnswerRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<SubmitAnswerResponse> SubmitAudioAnswerAsync(Guid attemptId, Guid turnId, DateTime receiptAt, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<SubmitAnswerResponse> RecoverInterruptedTurnAsync(Guid attemptId, Guid turnId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<AttemptStateDto> GetAttemptStateAsync(Guid attemptId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<Guid> AuthorizeAttemptSubscriptionAsync(Guid attemptId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task AuthorizeSessionSubscriptionAsync(Guid examSessionId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<int> ExpireOverdueAttemptsAsync(CancellationToken ct = default) => throw new NotSupportedException();
     }
 
     private sealed class StubSpeechToTextService : ISpeechToTextService

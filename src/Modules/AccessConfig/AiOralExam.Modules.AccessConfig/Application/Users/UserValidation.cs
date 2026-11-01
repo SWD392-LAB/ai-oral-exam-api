@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Collections.Generic;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.SharedKernel.Errors;
 using ValidationException = AiOralExam.SharedKernel.Errors.ValidationException;

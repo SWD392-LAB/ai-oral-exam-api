@@ -7,4 +7,5 @@ public sealed record SubmitAnswerResponse(
     EvaluationDto? Evaluation,
     AttemptStateDto Attempt,
     // Returned only by the audio endpoint so the student sees the provider transcript.
-    string? Transcript = null);
+    string? Transcript = null,
+    bool Duplicate = false);

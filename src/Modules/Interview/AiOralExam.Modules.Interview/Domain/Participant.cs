@@ -1,3 +1,5 @@
+using AiOralExam.Modules.Interview.Contracts;
+
 namespace AiOralExam.Modules.Interview.Domain;
 
 /// <summary>ERD: PARTICIPANT - a student registered for an exam session.</summary>
@@ -11,4 +13,13 @@ public class Participant
     public ParticipantStatus Status { get; set; } = ParticipantStatus.Registered;
 
     public ICollection<InterviewAttempt> Attempts { get; set; } = new List<InterviewAttempt>();
+
+    public void ReconcileStatus()
+    {
+        Status = Attempts.Any(attempt => attempt.Status == AttemptStatus.InProgress)
+            ? ParticipantStatus.InProgress
+            : Attempts.Any(attempt => attempt.Status is AttemptStatus.PendingReview or AttemptStatus.Finalized)
+                ? ParticipantStatus.Completed
+                : ParticipantStatus.Registered;
+    }
 }
