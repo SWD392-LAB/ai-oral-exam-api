@@ -104,7 +104,7 @@ internal sealed class QuestionService(AccessConfigDbContext db, ICurrentUser me)
         var questions = r.Questions!;
         var orderNumbers = questions.Select(x => x.OrderNo).ToArray();
         var existingOrderNumbers = await db.Questions
-            .Where(x => x.ExamSessionId == sid && orderNumbers.Contains(x.OrderNo))
+            .Where(x => x.ExamSessionId == sid && Enumerable.Contains(orderNumbers, x.OrderNo))
             .Select(x => x.OrderNo)
             .ToListAsync(ct);
         foreach (var item in questions.Select((question, index) => (question, index)))
