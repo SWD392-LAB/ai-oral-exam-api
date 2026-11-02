@@ -182,6 +182,7 @@ create_exam() {
   local bank_item_id
   local bank_item_content
   local attached_item_ids
+  local approved_item
   local publish
 
   start_time="$(date -u --date='1 minute ago' '+%Y-%m-%dT%H:%M:%SZ')"
@@ -191,34 +192,34 @@ create_exam() {
       "$(jq -n --arg course "$course_id" --arg title "$title" \
         --arg start "$start_time" --arg end_at "$end_time" --argjson limit "$time_limit" \
         '{courseId:$course,title:$title,startTime:$start,endTime:$end_at,timeLimitPerAnswerSeconds:$limit,maxFollowUps:0}')"
-  )"
-  session_id="$(jq -er '.id' <<<"$response")"
+  )" || return
+  session_id="$(jq -er '.id' <<<"$response")" || return
 
   item_response="$(
     api_json "$lecturer_token" POST "$api_url/api/courses/$course_id/question-bank" \
       "$(jq -n \
         --arg topic 'CI Question Bank' \
         --arg bloom 'Understand' \
-        --arg content 'Explain the purpose of this CI oral examination.' \
+        --arg content "Explain the purpose of the $title oral examination." \
         '{topic:$topic,bloom:$bloom,content:$content}')"
-  )"
-  bank_item_id="$(jq -er '.id' <<<"$item_response")"
-  bank_item_content="$(jq -er '.content' <<<"$item_response")"
-  approved_item="$(api_json "$lecturer_token" POST "$api_url/api/courses/$course_id/question-bank/$bank_item_id/approve")"
-  [[ "$(jq -er '.status' <<<"$approved_item")" == "Approved" ]]
+  )" || return
+  bank_item_id="$(jq -er '.id' <<<"$item_response")" || return
+  bank_item_content="$(jq -er '.content' <<<"$item_response")" || return
+  approved_item="$(api_json "$lecturer_token" POST "$api_url/api/courses/$course_id/question-bank/$bank_item_id/approve")" || return
+  [[ "$(jq -er '.status' <<<"$approved_item")" == "Approved" ]] || return
 
   attached_item_ids="$(
     api_json "$lecturer_token" POST "$api_url/api/exam-sessions/$session_id/questions/from-bank" \
       "$(jq -n --arg item_id "$bank_item_id" '{itemIds:[$item_id]}')"
-  )"
-  jq -e --arg item_id "$bank_item_id" '. == [$item_id]' <<<"$attached_item_ids" >/dev/null
+  )" || return
+  jq -e --arg item_id "$bank_item_id" '. == [$item_id]' <<<"$attached_item_ids" >/dev/null || return
   jq -e --arg expected "$bank_item_content" '. | length == 1 and .[0].content == $expected' \
-    <<<"$(api_json "$lecturer_token" GET "$api_url/api/exam-sessions/$session_id/questions")" >/dev/null
+    <<<"$(api_json "$lecturer_token" GET "$api_url/api/exam-sessions/$session_id/questions")" >/dev/null || return
 
   api_json "$lecturer_token" POST "$api_url/api/exam-sessions/$session_id/participants/import" \
-    '{"studentCodes":["SE180003"]}' >/dev/null
-  publish="$(api_json "$lecturer_token" POST "$api_url/api/exam-sessions/$session_id/publish")"
-  [[ "$(jq -er '.status' <<<"$publish")" == "Published" ]]
+    '{"studentCodes":["SE180003"]}' >/dev/null || return
+  publish="$(api_json "$lecturer_token" POST "$api_url/api/exam-sessions/$session_id/publish")" || return
+  [[ "$(jq -er '.status' <<<"$publish")" == "Published" ]] || return
 
   printf '%s\n' "$session_id"
 }
@@ -229,7 +230,7 @@ start_attempt() {
   response="$(
     api_json "$student_token" POST "$api_url/api/interview-attempts" \
       "$(jq -n --arg session "$session_id" '{examSessionId:$session}')"
-  )"
+  )" || return
   printf '%s\n' "$response"
 }
 
