@@ -16,7 +16,8 @@ api_pid=""
 cleanup() {
   local exit_code=$?
   if [[ "$exit_code" -ne 0 ]]; then
-    cat "$api_log" >&2
+    echo "API diagnostic tail (last 60 lines):" >&2
+    tail -n 60 "$api_log" >&2
   fi
   if [[ -n "$api_pid" ]] && kill -0 "$api_pid" 2>/dev/null; then
     kill "$api_pid"
@@ -25,6 +26,7 @@ cleanup() {
   rm -f "$api_log" "$audio_file" "$csv_file"
   return "$exit_code"
 }
+trap 'echo "E2E failed at line ${LINENO}; API output below is limited to 60 lines." >&2' ERR
 trap cleanup EXIT
 
 keycloak_admin_token="$(
@@ -141,6 +143,9 @@ start_api() {
   AiProviders__SttProvider=Mock \
   AiProviders__TtsProvider=Mock \
   Interview__TimeLimitGraceSeconds=0 \
+  Logging__LogLevel__Default=Warning \
+  Logging__LogLevel__Microsoft.AspNetCore=Warning \
+  Logging__LogLevel__Microsoft.EntityFrameworkCore=Warning \
   dotnet src/AiOralExam.Api/bin/Release/net8.0/AiOralExam.Api.dll >>"$api_log" 2>&1 &
   api_pid=$!
 
@@ -333,7 +338,10 @@ voice_result="$(
     "$api_url/api/interview-attempts/$voice_attempt_id/audio/complete?turnId=$voice_turn_id"
 )"
 [[ "$(jq -er '.attempt.status' <<<"$voice_result")" == "PendingReview" ]]
-[[ "$(jq -er '.transcript' <<<"$voice_result")" == "[Mock STT] This is a simulated transcript of the answer." ]]
+voice_review="$(api_json "$lecturer_token" GET "$api_url/api/interview-attempts/$voice_attempt_id/review")"
+jq -e --arg transcript "[Mock STT] This is a simulated transcript of the answer." \
+  '[.responses[].turns[].answerTranscript] | index($transcript) != null' \
+  <<<"$voice_review" >/dev/null
 review_attempt "$voice_attempt_id"
 
 timeout_session_id="$(create_exam 'CI PostgreSQL Keycloak timeout E2E' 5)"
