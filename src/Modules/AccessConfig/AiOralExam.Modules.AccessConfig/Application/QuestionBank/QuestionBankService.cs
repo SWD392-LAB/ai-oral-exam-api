@@ -272,7 +272,7 @@ internal sealed class QuestionBankService(
             if (cause is PostgresException
                 {
                     SqlState: PostgresErrorCodes.UniqueViolation,
-                    ConstraintName: "ux_question_bank_course_content_hash" or "ux_question_bank_course_normalized_content"
+                    ConstraintName: "ux_question_bank_course_content_hash"
                 })
                 return true;
         }

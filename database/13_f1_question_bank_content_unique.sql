@@ -1,4 +1,5 @@
--- Forward-only upgrade for existing databases. Fresh databases get these objects from 01_schema.sql.
+-- Reconcile legacy question-bank hashes with the canonical content hash used by the application
+-- and database/01_schema.sql. Whitespace is collapsed and content is case-insensitive.
 BEGIN;
 
 SELECT set_config('aives.application_schema', :'app_schema', true);
@@ -17,7 +18,8 @@ BEGIN
         FROM (
             SELECT course_id, array_agg(id ORDER BY id) AS item_ids
             FROM %I.question_bank_items
-            GROUP BY course_id, lower(btrim(content))
+            GROUP BY course_id,
+                encode(sha256(convert_to(upper(btrim(regexp_replace(content, '\s+', ' ', 'g'))), 'UTF8')), 'hex')
             HAVING count(*) > 1
             ORDER BY course_id
             LIMIT 20
@@ -26,15 +28,23 @@ BEGIN
     INTO v_collisions;
 
     IF v_collisions IS NOT NULL THEN
-        RAISE EXCEPTION 'Resolve existing normalized question-bank content duplicates before applying this migration. Sample collision groups: %',
+        RAISE EXCEPTION 'Resolve existing canonical question-bank content duplicates before applying this migration. Sample collision groups: %',
             v_collisions;
     END IF;
 
+    EXECUTE format('DROP INDEX IF EXISTS %I.ux_question_bank_course_normalized_content', v_schema);
+    EXECUTE format('ALTER TABLE %I.question_bank_items DROP COLUMN IF EXISTS normalized_content', v_schema);
+
+    -- Prevent transient unique-index conflicts while replacing legacy hashes.
+    EXECUTE format('DROP INDEX IF EXISTS %I.ux_question_bank_course_content_hash', v_schema);
+    EXECUTE format($sql$
+        UPDATE %I.question_bank_items
+           SET content_hash = encode(sha256(convert_to(upper(btrim(regexp_replace(content, '\s+', ' ', 'g'))), 'UTF8')), 'hex')
+         WHERE content_hash IS DISTINCT FROM
+            encode(sha256(convert_to(upper(btrim(regexp_replace(content, '\s+', ' ', 'g'))), 'UTF8')), 'hex')
+    $sql$, v_schema);
     EXECUTE format(
-        'ALTER TABLE %I.question_bank_items ADD COLUMN IF NOT EXISTS normalized_content TEXT GENERATED ALWAYS AS (lower(btrim(content))) STORED',
-        v_schema);
-    EXECUTE format(
-        'CREATE UNIQUE INDEX IF NOT EXISTS ux_question_bank_course_normalized_content ON %I.question_bank_items(course_id, normalized_content)',
+        'CREATE UNIQUE INDEX IF NOT EXISTS ux_question_bank_course_content_hash ON %I.question_bank_items(course_id, content_hash)',
         v_schema);
 END;
 $$;
