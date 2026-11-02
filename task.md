@@ -1,31 +1,34 @@
-Round 5 review — Request Changes
-Reviewed head: aeeb3c74506fba3f98bc131afd3c5aff3d459bb6 against develop.
+Round 6 re-review — Request Changes
+Reviewed head: d91aa2ef0d044827afc17872081812cc09b84844 against develop.
 
-Resolved from the previous review
-The row-specific import duplicate errors, compact question-bank list DTO, EF-safe attach filter, migration format() fix, and PostgreSQL conflict mapping are present. They passed the local checks listed below. The branch is mergeable, and all four GitHub Actions checks are green.
+The previous schema-parity finding is addressed: migration 13 now recomputes the canonical hash already used by the fresh schema, and CI checks the legacy upgrade path. The new PostgreSQL/Keycloak script also exercises real student and lecturer tokens, a published text attempt through review/feedback/statistics/CSV, mock voice upload/transcription, retry, authorization failures, timeout, and API restart recovery. GitHub reports all four checks green and the branch mergeable.
 
-Remaining blockers
-Fresh-install and upgrade schemas differ. PostgreSQL 16 initialization from database/01_schema.sql does not create normalized_content; I verified the column-existence query returns false. Migration 13 adds the column and unique index for upgraded databases. The CI job creates a fresh schema and then applies migration 13, so it does not validate a pristine install. Please use one canonical uniqueness rule across 01_schema.sql and migration 13, and add a clean-install parity check. Details are on the inline comment at database/13_f1_question_bank_content_unique.sql:34.
+Local Docker verification
+Full solution: 366 unit and 52 integration tests passed; 0 failed (11 unit and 13 integration tests skipped).
+Migration 13 duplicate-detection and legacy-hash upgrade checks passed.
+Role-authenticated E2E passed against PostgreSQL 16 and Keycloak 26.8 with jq 1.7; PostgreSQL-filtered tests passed (6 passed, 5 skipped).
+In the Debian-based .NET SDK Docker image, the E2E script fails with jq 1.6 at create_exam: $end is parsed as jq's end keyword. It passes with the Ubuntu SDK image's jq 1.7, so the script has an unpinned runtime compatibility issue.
+Remaining findings
+1 The PostgreSQL E2E bypasses F1 question-bank create/import, approval, and attach by creating questions directly on the session. The existing HTTP question-bank tests still use EF InMemory; the PostgreSQL tests call services directly. TASK-K's bank/attach contract is therefore not exercised end-to-end against PostgreSQL/Keycloak.
+2 Migration 13 lacks the schema/table validation used by the neighboring upgrade scripts, and the work plan assigns database/ ownership to Minh. Please coordinate this data-rewriting migration with him.
+3 The E2E jq command is not portable to jq 1.6, which is installed by the Debian .NET SDK image used for local Docker runs.
+4 This PR still includes unused GeminiAnswerAnalyzer/GeminiRubricScorer F3 adapters. InterviewModule registers the generic LlmAnswerAnalyzer/LlmRubricScorer instead; F3 AI implementation belongs to Phúc/Minh under the work plan.
 
-TASK-K's required end-to-end workflow is missing. The new PostgreSQL/Keycloak smoke script validates a service-account token with only GET /api/auth/me; it does not verify student/lecturer role behavior or the required publish → exam → lecturer review → student feedback → statistics/CSV flow. The question-bank HTTP contracts still use EF InMemory, and the PostgreSQL tests call services directly. Please add the role-authenticated E2E harness and coordinate the voice/reconnect and F3 steps with Minh/Phúc. Details are on the inline comment at .github/workflows/backend-ci.yml:113.
+The inline comments give concrete fixes for each item. I am keeping this review at Request Changes until these remaining contract, ownership, and test-runner issues are addressed.
 
-Local validation
-In disposable Docker containers: the solution suite passed (366 unit, 52 integration; 0 failures; 11 unit and 13 integration skipped); PostgreSQL-filtered tests passed (6 passed, 5 skipped); migration 13 rejected a duplicate legacy fixture and then applied successfully; and a Keycloak-issued token authenticated against the PostgreSQL-backed API. These results verify the covered contracts but do not satisfy the missing full E2E acceptance.
+.github/scripts/postgres-keycloak-api-e2e.sh 192-195
 
-database/13_f1_question_bank_content_unique.sql lines 31-34
-[P2] Align the fresh-install schema with migration 13.
+[P2] Exercise the F1 bank and attach path in the PostgreSQL E2E. create_exam inserts the question directly through /api/exam-sessions/{id}/questions; it never calls the question-bank create/import, approve, or /questions/from-bank routes. The HTTP question-bank contracts still run against EF InMemory, while PostgreSQL tests call the service directly. As a result, this E2E can pass even if the real PostgreSQL/Keycloak bank-to-session contract is broken. Please create/import a Draft through the bank API, approve it, attach it to the Draft session, and assert the attached source revision/snapshot before publishing.
 
-Reproduction: create a clean PostgreSQL 16 database/schema and run only database/01_schema.sql; then query information_schema.columns for question_bank_items.normalized_content. I ran this and the result was false. The same file does not define ux_question_bank_course_normalized_content.
+database/13_f1_question_bank_content_unique.sql 9-12
 
-Impact: existing databases that apply migration 13 receive this extra generated column and unique index, while clean installs do not. The CI job initializes from 01_schema.sql and immediately applies migration 13, so it masks the difference. The migration header also claims fresh installs already receive these objects, which is not true on this head.
+[P2] Validate the selected application schema before rewriting its hashes. This migration only checks that app_schema is non-null; unlike migrations 11, 12, and 14, it does not verify that the schema exists or contains the expected question_bank_items table. A mistaken but valid schema name can make the subsequent DROP INDEX / UPDATE / CREATE INDEX operate on the wrong bank table. Please add the schema and relation checks used by the neighboring migrations. The work plan also assigns database/ and migrations to Minh; please have him own/review this change while Khang supplies the bank contract and tests.
 
-Requested fix: choose one canonical uniqueness definition and make fresh schema and upgrade migration produce the same result. Either include the generated column/index in 01_schema.sql and test a pristine install, or remove this migration-only rule and rely on the existing canonical content-hash constraint. Please also reconcile this lower(btrim(content)) key with the application hash's whitespace normalization so fresh and upgraded databases enforce the same contract.
+.github/scripts/postgres-keycloak-api-e2e.sh
 
-.github/workflows/backend-ci.yml lines 110-113
+[P2] Avoid the jq 1.6 reserved variable name end. This command passes --arg end and reads $end; in the Debian-based mcr.microsoft.com/dotnet/sdk:8.0 container with jq 1.6, jq errors with unexpected end at this filter and the E2E then sends an empty session payload. I reproduced that failure locally. The current Ubuntu GitHub runner has jq 1.8 and passes, and the rerun with jq 1.7 passed. Rename the variable to end_at (including the filter reference), or pin/check the required jq version so the documented local Docker workflow is reproducible.
 
-[P2] Cover the TASK-K publish-to-report acceptance flow.
+src/Modules/Interview/AiOralExam.Modules.Interview/Application/Ai/GeminiAnswerAnalyzer.cs
 
-The new script obtains a Keycloak service-account token and makes one authenticated request: GET /api/auth/me. That proves token validation and user lookup, but it does not exercise student/lecturer roles, publishing a session, taking an exam, lecturer review, student feedback, or statistics/CSV. The question-bank HTTP contract tests use EF InMemory, and the PostgreSQL-filtered tests call services directly.
-
-Requested fix: add a disposable PostgreSQL/Keycloak E2E scenario with role-specific student and lecturer identities that follows the work plan through publish → text/voice exam → lecturer review → student feedback → statistics/CSV. Include the required permission, timeout/retry, reconnect, and worker-restart cases; coordinate provider-dependent voice and interview/review steps with Minh/Phúc. Until that scenario runs in CI, TASK-K's stated E2E acceptance is still open.
+[P2] Keep F3 AI implementation out of TASK-K's bank/CI PR. This Gemini analyzer and GeminiRubricScorer have no registrations or call sites; InterviewModule resolves LlmAnswerAnalyzer and LlmRubricScorer instead. The work plan assigns Interview/Application/Ai to Phúc and says Khang tests F3 rather than implementing its business logic. Please remove these unused duplicate adapters from this PR or move the intended implementation to Phúc's owned change.
 

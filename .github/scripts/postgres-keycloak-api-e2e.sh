@@ -178,7 +178,10 @@ create_exam() {
   local end_time
   local response
   local session_id
-  local question
+  local item_response
+  local bank_item_id
+  local bank_item_content
+  local attached_item_ids
   local publish
 
   start_time="$(date -u --date='1 minute ago' '+%Y-%m-%dT%H:%M:%SZ')"
@@ -186,16 +189,31 @@ create_exam() {
   response="$(
     api_json "$lecturer_token" POST "$api_url/api/exam-sessions" \
       "$(jq -n --arg course "$course_id" --arg title "$title" \
-        --arg start "$start_time" --arg end "$end_time" --argjson limit "$time_limit" \
-        '{courseId:$course,title:$title,startTime:$start,endTime:$end,timeLimitPerAnswerSeconds:$limit,maxFollowUps:0}')"
+        --arg start "$start_time" --arg end_at "$end_time" --argjson limit "$time_limit" \
+        '{courseId:$course,title:$title,startTime:$start,endTime:$end_at,timeLimitPerAnswerSeconds:$limit,maxFollowUps:0}')"
   )"
   session_id="$(jq -er '.id' <<<"$response")"
 
-  question="$(
-    api_json "$lecturer_token" POST "$api_url/api/exam-sessions/$session_id/questions" \
-      '{"orderNo":1,"content":"Explain the purpose of this CI oral examination."}'
+  item_response="$(
+    api_json "$lecturer_token" POST "$api_url/api/courses/$course_id/question-bank" \
+      "$(jq -n \
+        --arg topic 'CI Question Bank' \
+        --arg bloom 'Understand' \
+        --arg content 'Explain the purpose of this CI oral examination.' \
+        '{topic:$topic,bloom:$bloom,content:$content}')"
   )"
-  jq -e '.id' <<<"$question" >/dev/null
+  bank_item_id="$(jq -er '.id' <<<"$item_response")"
+  bank_item_content="$(jq -er '.content' <<<"$item_response")"
+  approved_item="$(api_json "$lecturer_token" POST "$api_url/api/courses/$course_id/question-bank/$bank_item_id/approve")"
+  [[ "$(jq -er '.status' <<<"$approved_item")" == "Approved" ]]
+
+  attached_item_ids="$(
+    api_json "$lecturer_token" POST "$api_url/api/exam-sessions/$session_id/questions/from-bank" \
+      "$(jq -n --arg item_id "$bank_item_id" '{itemIds:[$item_id]}')"
+  )"
+  jq -e --arg item_id "$bank_item_id" '. == [$item_id]' <<<"$attached_item_ids" >/dev/null
+  jq -e --arg expected "$bank_item_content" '. | length == 1 and .[0].content == $expected' \
+    <<<"$(api_json "$lecturer_token" GET "$api_url/api/exam-sessions/$session_id/questions")" >/dev/null
 
   api_json "$lecturer_token" POST "$api_url/api/exam-sessions/$session_id/participants/import" \
     '{"studentCodes":["SE180003"]}' >/dev/null
