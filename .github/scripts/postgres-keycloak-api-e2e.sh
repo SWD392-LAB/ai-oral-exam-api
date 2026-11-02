@@ -133,6 +133,7 @@ api_json() {
 }
 
 start_api() {
+  env \
   ASPNETCORE_ENVIRONMENT=Development \
   ASPNETCORE_URLS="$api_url" \
   ConnectionStrings__Database='Host=localhost;Port=5432;Database=aives_f1_concurrency_test;Username=postgres;Password=postgres;Search Path=e2e' \
@@ -144,8 +145,8 @@ start_api() {
   AiProviders__TtsProvider=Mock \
   Interview__TimeLimitGraceSeconds=0 \
   Logging__LogLevel__Default=Warning \
-  Logging__LogLevel__Microsoft.AspNetCore=Warning \
-  Logging__LogLevel__Microsoft.EntityFrameworkCore=Warning \
+  "Logging__LogLevel__Microsoft.AspNetCore=Warning" \
+  "Logging__LogLevel__Microsoft.EntityFrameworkCore=Warning" \
   dotnet src/AiOralExam.Api/bin/Release/net8.0/AiOralExam.Api.dll >>"$api_log" 2>&1 &
   api_pid=$!
 
