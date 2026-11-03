@@ -47,7 +47,7 @@ internal sealed class ExamSessionQueries(
 
         var sessionIds = sessions.Select(s => s.Id).ToArray();
         var participantCounts = await db.Participants.AsNoTracking()
-            .Where(p => sessionIds.Contains(p.ExamSessionId))
+            .Where(p => Enumerable.Contains(sessionIds, p.ExamSessionId))
             .GroupBy(p => p.ExamSessionId)
             .Select(g => new { ExamSessionId = g.Key, Count = g.Count() })
             .ToDictionaryAsync(x => x.ExamSessionId, x => x.Count, ct);

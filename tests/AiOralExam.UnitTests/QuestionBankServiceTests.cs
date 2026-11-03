@@ -53,13 +53,14 @@ public sealed class QuestionBankServiceTests
                     new ImportQuestionBankItem("RAG", BloomLevel.Remember, " \twhat   IS retrieval augmented generation?\n ")
                 ]), default));
 
-            Assert.Contains("items", error.Details!.Keys);
+            Assert.Contains("items[0].content", error.Details!.Keys);
+            Assert.Contains("items[1].content", error.Details.Keys);
             Assert.Empty(await db.QuestionBankItems.ToListAsync());
         }
     }
 
     [Fact]
-    public async Task Import_rejects_content_that_already_exists_in_the_course()
+    public async Task Import_reports_existing_content_duplicate_by_row()
     {
         var (db, courseId, lecturerId) = await CreateCourseDb();
         await using (db)
@@ -68,11 +69,11 @@ public sealed class QuestionBankServiceTests
             await service.CreateAsync(courseId,
                 new CreateQuestionBankItemRequest("RAG", BloomLevel.Understand, "Explain retrieval."), default);
 
-            var error = await Assert.ThrowsAsync<ConflictException>(() => service.ImportAsync(courseId,
+            var error = await Assert.ThrowsAsync<ValidationException>(() => service.ImportAsync(courseId,
                 new ImportQuestionBankRequest(
                     [new ImportQuestionBankItem("RAG", BloomLevel.Understand, "\texplain  retrieval.\n")]), default));
 
-            Assert.Equal("question_bank_duplicate", error.Code);
+            Assert.Contains("items[0].content", error.Details!.Keys);
             Assert.Single(await db.QuestionBankItems.ToListAsync());
         }
     }

@@ -43,9 +43,20 @@ public sealed record QuestionBankItemDto(
     DateTime UpdatedAt,
     IReadOnlyList<QuestionBankRevisionDto> Revisions);
 
+public sealed record QuestionBankItemListDto(
+    Guid Id,
+    Guid CourseId,
+    string Topic,
+    string Bloom,
+    string Content,
+    string Origin,
+    string Status,
+    DateTime CreatedAt,
+    DateTime UpdatedAt);
+
 public interface IQuestionBankService
 {
-    Task<IReadOnlyList<QuestionBankItemDto>> ListAsync(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct);
+    Task<IReadOnlyList<QuestionBankItemListDto>> ListAsync(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct);
     Task<QuestionBankItemDto> GetAsync(Guid courseId, Guid itemId, CancellationToken ct);
     Task<QuestionBankItemDto> CreateAsync(Guid courseId, CreateQuestionBankItemRequest request, CancellationToken ct);
     Task<IReadOnlyList<QuestionBankItemDto>> ImportAsync(Guid courseId, ImportQuestionBankRequest request, CancellationToken ct);

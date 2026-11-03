@@ -253,7 +253,7 @@ ai-oral-exam-api/
 
 | Module | Does | Owns tables | Depends on |
 |---|---|---|---|
-| **AccessConfig** (F7) | user profiles, lecturer assignment, exam sessions, questions, rubrics, AI settings, audit log | `users`, `roles`, `courses`, `course_lecturers`, `exam_sessions`, `questions`, `rubrics`, `rubric_criteria`, `ai_service_configs`, `audit_logs` | – |
+| **AccessConfig** (F7) | user profiles, lecturer assignment, exam sessions, question bank, course materials, platform/legacy rubrics, AI settings, audit log | `users`, `roles`, `courses`, `course_lecturers`, `exam_sessions`, `questions`, `question_bank_items`, `question_bank_revisions`, `course_materials`, `material_chunks`, `rubric_templates`, `rubric_versions`, `rubric_criteria` (legacy and versioned), `rubrics`, `ai_service_configs`, `audit_logs` | – |
 | **Interview** (F3) | runs the exam, follow-ups, AI score suggestions (per rubric criterion), lecturer score review and finalization | `participants`, `interview_attempts`, `question_responses`, `interview_turns`, `criterion_scores`, `score_reviews` | `AccessConfig.Contracts` |
 | **Reporting** (F6) | student reports, results, class statistics, grade sheet export | *(none)* | `Interview.Contracts`, `AccessConfig.Contracts` |
 
@@ -557,6 +557,28 @@ The upgrade is transactional. Its regular index build may briefly block writes; 
 dotnet build
 dotnet test
 ```
+
+The PostgreSQL concurrency tests are skipped by default. To run them, provision a
+dedicated disposable database named `aives_f1_concurrency_test`, apply
+`database/01_schema.sql` and `database/02_seed.sql` in schema `fresh`, and set:
+
+```text
+AIVES_F1A1_CONCURRENCY_CONNECTION=Host=localhost;Port=5432;Database=aives_f1_concurrency_test;Username=...;Password=...;Search Path=fresh
+AIVES_F1A1_CONCURRENCY_DISPOSABLE_CONFIRM=YES
+```
+
+Then run:
+
+```sh
+dotnet test tests/AiOralExam.UnitTests/AiOralExam.UnitTests.csproj --filter "FullyQualifiedName~Postgres"
+```
+
+Never point these destructive-capable test fixtures at a shared or production
+database. CI creates a disposable PostgreSQL database, verifies the forward
+migration, runs the concurrency tests, and validates a short-lived
+Keycloak-issued token against a PostgreSQL-backed API endpoint using a
+CI-created service account. The public realm clients' password grants remain
+disabled.
 
 Current unit tests cover the attempt state machine, deterministic mock AI,
 AI output validation/retry errors, deterministic question-generation citations,

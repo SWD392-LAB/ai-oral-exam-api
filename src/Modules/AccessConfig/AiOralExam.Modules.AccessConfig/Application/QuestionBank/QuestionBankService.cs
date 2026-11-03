@@ -16,13 +16,29 @@ internal sealed class QuestionBankService(
     AccessConfigDbContext db,
     ICurrentUser currentUser) : IQuestionBankService
 {
-    public async Task<IReadOnlyList<QuestionBankItemDto>> ListAsync(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct)
+    public async Task<IReadOnlyList<QuestionBankItemListDto>> ListAsync(Guid courseId, QuestionBankStatusFilter? status, CancellationToken ct)
     {
         await EnsureCourseAccessAsync(courseId, ct);
-        var query = db.QuestionBankItems.AsNoTracking().Include(x => x.Revisions).Where(x => x.CourseId == courseId);
+        var query = db.QuestionBankItems.AsNoTracking().Where(x => x.CourseId == courseId);
         if (status is not null)
             query = query.Where(x => x.Status == ToStatus(status.Value));
-        return (await query.OrderByDescending(x => x.UpdatedAt).ToListAsync(ct)).Select(ToDto).ToList();
+        var items = await query.OrderByDescending(x => x.UpdatedAt)
+            .Select(x => new
+            {
+                x.Id,
+                x.CourseId,
+                x.Topic,
+                x.Bloom,
+                x.Content,
+                x.Origin,
+                x.Status,
+                x.CreatedAt,
+                x.UpdatedAt
+            })
+            .ToListAsync(ct);
+        return items.Select(x => new QuestionBankItemListDto(
+            x.Id, x.CourseId, x.Topic, x.Bloom, x.Content, x.Origin.ToString(), x.Status.ToString(),
+            x.CreatedAt, x.UpdatedAt)).ToList();
     }
 
     public async Task<QuestionBankItemDto> GetAsync(Guid courseId, Guid itemId, CancellationToken ct)
@@ -65,16 +81,22 @@ internal sealed class QuestionBankService(
 
         var contentHashes = await QuestionBankContentHash.ComputeManyAsync(
             db, request.Items!.Select(x => x.Content.Trim()).ToArray(), ct);
-        var duplicates = contentHashes
-            .GroupBy(x => x).Where(x => x.Count() > 1).Select(x => x.Key).ToHashSet();
-        if (duplicates.Count > 0)
-            throw new ValidationException(new Dictionary<string, string[]> { ["items"] = ["Duplicate question content is not allowed in one import batch."] });
+        var duplicateIndices = contentHashes.Select((hash, index) => (hash, index))
+            .GroupBy(x => x.hash, StringComparer.Ordinal)
+            .Where(group => group.Count() > 1)
+            .SelectMany(group => group.Select(item => item.index));
+        foreach (var index in duplicateIndices)
+            errors[$"items[{index}].content"] = ["Duplicate question content is not allowed in one import batch."];
+        if (errors.Count > 0) throw new ValidationException(errors);
 
-        var incomingHashes = contentHashes.ToHashSet(StringComparer.Ordinal);
-        var existingHashes = await db.QuestionBankItems.Where(x => x.CourseId == courseId)
-            .Select(x => x.ContentHash).ToListAsync(ct);
-        if (incomingHashes.Overlaps(existingHashes))
-            throw DuplicateQuestion();
+        var existingHashes = (await db.QuestionBankItems.Where(x => x.CourseId == courseId)
+            .Select(x => x.ContentHash).ToListAsync(ct)).ToHashSet(StringComparer.Ordinal);
+        for (var i = 0; i < contentHashes.Count; i++)
+        {
+            if (existingHashes.Contains(contentHashes[i]))
+                errors[$"items[{i}].content"] = ["A question with the same content already exists in this course."];
+        }
+        if (errors.Count > 0) throw new ValidationException(errors);
 
         var imported = request.Items!.Select((x, index) => NewItem(
             courseId, x.Topic, x.Bloom, x.Content, contentHashes[index], QuestionBankOrigin.Import, null)).ToList();
@@ -134,7 +156,7 @@ internal sealed class QuestionBankService(
             throw new ConflictException("exam_session_locked", "Only Draft sessions can attach question bank items.");
         var ids = request.ItemIds.Distinct().ToArray();
         var items = await db.QuestionBankItems.Include(x => x.Revisions)
-            .Where(x => ids.Contains(x.Id) && x.CourseId == session.CourseId && x.Status == QuestionBankStatus.Approved)
+            .Where(x => Enumerable.Contains(ids, x.Id) && x.CourseId == session.CourseId && x.Status == QuestionBankStatus.Approved)
             .ToListAsync(ct);
         if (items.Count != ids.Length)
             throw new ConflictException("question_bank_item_not_approved", "Every selected item must be Approved and belong to the session course.");

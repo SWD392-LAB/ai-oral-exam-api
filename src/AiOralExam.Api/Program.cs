@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using AiOralExam.Api.Infrastructure;
 using AiOralExam.Modules.AccessConfig;
@@ -121,10 +122,18 @@ builder.Services
         // [Required]/[EmailAddress]... errors also use the ApiError format
         o.InvalidModelStateResponseFactory = ctx =>
         {
+            string CamelCaseKey(string key) => string.Join(".", key.Split('.').Select(segment =>
+            {
+                var bracketIndex = segment.IndexOf('[');
+                var propertyName = bracketIndex < 0 ? segment : segment[..bracketIndex];
+                var index = bracketIndex < 0 ? "" : segment[bracketIndex..];
+                return JsonNamingPolicy.CamelCase.ConvertName(propertyName) + index;
+            }));
+
             var details = ctx.ModelState
                 .Where(kv => kv.Value?.Errors.Count > 0)
                 .ToDictionary(
-                    kv => kv.Key,
+                    kv => CamelCaseKey(kv.Key),
                     kv => kv.Value!.Errors.Select(e => string.IsNullOrEmpty(e.ErrorMessage) ? "Invalid value." : e.ErrorMessage).ToArray());
             return new BadRequestObjectResult(new ApiError(
                 "validation_failed", "The submitted data is invalid.", ctx.HttpContext.TraceIdentifier, details));
