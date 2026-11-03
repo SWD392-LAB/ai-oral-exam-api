@@ -88,7 +88,7 @@ jobs:
             \$\$"
           index_before="$(psql -h localhost -U postgres -d aives_f1_concurrency_test -Atc "SELECT pg_get_indexdef('fresh.ux_question_bank_course_content_hash'::regclass)")"
           PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "INSERT INTO question_bank_items (course_id, topic, bloom, content, content_hash, origin, status, created_by) SELECT (SELECT id FROM courses ORDER BY id LIMIT 1), 'CI migration collision', bloom, content, md5(gen_random_uuid()::text), 'Manual', 'Draft', (SELECT id FROM users WHERE role_id = (SELECT id FROM roles WHERE name = 'Lecturer') ORDER BY id LIMIT 1) FROM (VALUES ('Remember', 'CI migration collision content'), ('Remember', '  ci   MIGRATION collision CONTENT  ')) AS collision(bloom, content)"
-          if output=$(psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -v app_schema=fresh -f database/13_f1_question_bank_content_unique.sql 2>&1); then
+          if output=$(psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -v app_schema=fresh -f database/16_f1_question_bank_content_unique.sql 2>&1); then
             echo "Migration unexpectedly accepted duplicate legacy content."
             exit 1
           fi
@@ -96,7 +96,7 @@ jobs:
           PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "DELETE FROM question_bank_items WHERE topic = 'CI migration collision'"
           PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "INSERT INTO question_bank_items (course_id, topic, bloom, content, content_hash, origin, status, created_by) VALUES ((SELECT id FROM courses ORDER BY id LIMIT 1), 'CI migration hash normalization', 'Remember', '  Mixed   Case content  ', md5(gen_random_uuid()::text), 'Manual', 'Draft', (SELECT id FROM users WHERE role_id = (SELECT id FROM roles WHERE name = 'Lecturer') ORDER BY id LIMIT 1))"
           PGOPTIONS="-c search_path=fresh" psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "ALTER TABLE question_bank_items ADD COLUMN normalized_content TEXT GENERATED ALWAYS AS (lower(btrim(content))) STORED; CREATE UNIQUE INDEX ux_question_bank_course_normalized_content ON question_bank_items(course_id, normalized_content)"
-          psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -v app_schema=fresh -f database/13_f1_question_bank_content_unique.sql
+          psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -v app_schema=fresh -f database/16_f1_question_bank_content_unique.sql
           index_after="$(psql -h localhost -U postgres -d aives_f1_concurrency_test -Atc "SELECT pg_get_indexdef('fresh.ux_question_bank_course_content_hash'::regclass)")"
           test "$index_before" = "$index_after"
           PGPASSWORD=postgres psql -h localhost -U postgres -d aives_f1_concurrency_test -v ON_ERROR_STOP=1 -c "
@@ -107,14 +107,14 @@ jobs:
                 WHERE table_schema = 'fresh' AND table_name = 'question_bank_items'
                   AND column_name = 'normalized_content'
               ) THEN
-                RAISE EXCEPTION 'Migration 13 must not add a different uniqueness rule.';
+                RAISE EXCEPTION 'Migration 16 must not add a different uniqueness rule.';
               END IF;
               IF NOT EXISTS (
                 SELECT 1 FROM fresh.question_bank_items
                 WHERE topic = 'CI migration hash normalization'
                   AND content_hash = encode(sha256(convert_to(upper(btrim(regexp_replace(content, '\s+', ' ', 'g'))), 'UTF8')), 'hex')
               ) THEN
-                RAISE EXCEPTION 'Migration 13 did not apply canonical whitespace/case normalization.';
+                RAISE EXCEPTION 'Migration 16 did not apply canonical whitespace/case normalization.';
               END IF;
             END
             \$\$"

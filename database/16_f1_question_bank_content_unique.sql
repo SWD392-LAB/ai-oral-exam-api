@@ -1,4 +1,4 @@
--- Reconcile legacy question-bank hashes with the canonical content hash used by the application
+-- Reconcile legacy question-bank hashes with the canonical application content hash
 -- and database/01_schema.sql. Whitespace is collapsed and content is case-insensitive.
 BEGIN;
 
