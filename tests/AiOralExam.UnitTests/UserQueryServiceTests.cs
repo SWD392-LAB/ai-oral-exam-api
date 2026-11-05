@@ -56,7 +56,7 @@ public class UserQueryServiceTests
     {
         await using var db = await CreateSeededDatabaseAsync();
 
-        var result = await new ListUsersService(db).ListAsync(null, null, null, CancellationToken.None);
+        var result = await new ListUsersService(db).ListAsync(null, null, null, 1, 10, CancellationToken.None);
 
         Assert.Equal(
             [
@@ -69,7 +69,11 @@ public class UserQueryServiceTests
                 new UserDto(ZoeId, "Zoe Admin", "zoe@example.test", "zoe.a",
                     UserRole.Administrator.ToString(), null, null, true)
             ],
-            result);
+            result.Items);
+        Assert.Equal(4, result.TotalCount);
+        Assert.Equal(1, result.Page);
+        Assert.Equal(10, result.PageSize);
+        Assert.Equal(1, result.TotalPages);
     }
 
     [Fact]
@@ -78,9 +82,10 @@ public class UserQueryServiceTests
         await using var db = await CreateSeededDatabaseAsync();
 
         var result = await new ListUsersService(db).ListAsync(
-            UserRole.Student, null, null, CancellationToken.None);
+            UserRole.Student, null, null, 1, 10, CancellationToken.None);
 
-        Assert.Equal([AaronId, AliceId], result.Select(user => user.Id));
+        Assert.Equal([AaronId, AliceId], result.Items.Select(user => user.Id));
+        Assert.Equal(2, result.TotalCount);
     }
 
     [Fact]
@@ -89,9 +94,10 @@ public class UserQueryServiceTests
         await using var db = await CreateSeededDatabaseAsync();
 
         var result = await new ListUsersService(db).ListAsync(
-            null, false, null, CancellationToken.None);
+            null, false, null, 1, 10, CancellationToken.None);
 
-        Assert.Equal([AaronId, BobId], result.Select(user => user.Id));
+        Assert.Equal([AaronId, BobId], result.Items.Select(user => user.Id));
+        Assert.Equal(2, result.TotalCount);
     }
 
     [Fact]
@@ -100,9 +106,22 @@ public class UserQueryServiceTests
         await using var db = await CreateSeededDatabaseAsync();
 
         var result = await new ListUsersService(db).ListAsync(
-            UserRole.Student, true, null, CancellationToken.None);
+            UserRole.Student, true, null, 1, 10, CancellationToken.None);
 
-        Assert.Equal([AliceId], result.Select(user => user.Id));
+        Assert.Equal([AliceId], result.Items.Select(user => user.Id));
+        Assert.Equal(1, result.TotalCount);
+    }
+
+    [Theory]
+    [InlineData(0, 10)]
+    [InlineData(1, 0)]
+    [InlineData(1, 101)]
+    public async Task List_rejects_invalid_pagination(int page, int pageSize)
+    {
+        await using var db = CreateDatabase();
+
+        await Assert.ThrowsAsync<ValidationException>(() =>
+            new ListUsersService(db).ListAsync(null, null, null, page, pageSize, CancellationToken.None));
     }
 
     private static AccessConfigDbContext CreateDatabase()
