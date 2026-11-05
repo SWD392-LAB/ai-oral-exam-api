@@ -1,5 +1,4 @@
 using AiOralExam.Modules.AccessConfig.Application.ExamSessions;
-using AiOralExam.SharedKernel.Pagination;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -19,14 +18,9 @@ public sealed class ExamSessionsController(IExamSessionQueries queries) : Contro
         queries.GetMyCoursesAsync(ct);
 
     /// <summary>Exam sessions in the lecturer's courses.</summary>
-    /// <summary>Exam sessions in the lecturer's courses.</summary>
     [HttpGet("exam-sessions")]
-    public Task<PagedResult<ExamSessionSummaryDto>> List(
-        [FromQuery] Guid? courseId,
-        [FromQuery] int page = 1,
-        [FromQuery] int pageSize = 10,
-        CancellationToken ct = default)
-        => queries.GetSessionsAsync(courseId, page, pageSize, ct);
+    public Task<IReadOnlyList<ExamSessionSummaryDto>> List([FromQuery] Guid? courseId, CancellationToken ct) =>
+        queries.GetSessionsAsync(courseId, ct);
 
     /// <summary>Exam session details with questions and rubrics.</summary>
     [HttpGet("exam-sessions/{id:guid}")]

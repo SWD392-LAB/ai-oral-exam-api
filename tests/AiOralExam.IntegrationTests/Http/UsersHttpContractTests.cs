@@ -6,7 +6,6 @@ using AiOralExam.Modules.AccessConfig.Application.Users.CreateUser;
 using AiOralExam.Modules.AccessConfig.Domain;
 using AiOralExam.Modules.AccessConfig.Infrastructure;
 using AiOralExam.SharedKernel.Errors;
-using AiOralExam.SharedKernel.Pagination;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -54,26 +53,16 @@ public sealed class UsersHttpContractTests
     [Theory]
     [InlineData("/api/users")]
     [InlineData("/api/admin/users")]
-    public async Task Get_user_list_aliases_return_paged_user_dtos(string route)
+    public async Task Get_user_list_aliases_return_user_dtos(string route)
     {
         using var factory = NewFactory(Roles.Administrator);
         await SeedUsersAsync(factory, StudentSeed());
         using var client = factory.CreateClient();
 
-        var result = await client.GetFromJsonAsync<PagedResult<UserDto>>(
-            route);
+        var users = await client.GetFromJsonAsync<List<UserDto>>(route);
 
-        Assert.NotNull(result);
-        Assert.Equal(1, result.Page);
-        Assert.Equal(10, result.PageSize);
-        Assert.Equal(2, result.TotalCount);
-        Assert.Equal(1, result.TotalPages);
-
-        Assert.Equal(2, result.Items.Count);
-
-        var student = Assert.Single(
-            result.Items, user => user.Id == TargetStudentId);
-
+        Assert.NotNull(users);
+        var student = Assert.Single(users, user => user.Id == TargetStudentId);
         Assert.Equal("Test Student", student.FullName);
         Assert.Equal("student@example.test", student.Email);
         Assert.Equal(Roles.Student, student.Role);
@@ -151,20 +140,6 @@ public sealed class UsersHttpContractTests
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
     }
 
-    [Theory]
-    [InlineData("page=0&pageSize=10")]
-    [InlineData("page=1&pageSize=0")]
-    [InlineData("page=1&pageSize=101")]
-    public async Task Invalid_user_pagination_returns_bad_request(string query)
-    {
-        using var factory = NewFactory(Roles.Administrator);
-        using var client = factory.CreateClient();
-
-        using var response = await client.GetAsync($"/api/users?{query}");
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
-
     private static ApiTestFactory NewFactory(string role, Guid? userId = null) =>
         new ApiTestFactory().AuthenticateAs(userId ?? AdministratorId, role);
 
@@ -196,18 +171,18 @@ public sealed class UsersHttpContractTests
     private static User CreateUser(
         Guid id, Role role, string fullName, string email, string username,
         string? studentCode = null, string? lecturerCode = null) => new()
-        {
-            Id = id,
-            RoleId = role.Id,
-            Role = role,
-            FullName = fullName,
-            Email = email,
-            Username = username,
-            StudentCode = studentCode,
-            LecturerCode = lecturerCode,
-            IsActive = true,
-            CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc),
-        };
+    {
+        Id = id,
+        RoleId = role.Id,
+        Role = role,
+        FullName = fullName,
+        Email = email,
+        Username = username,
+        StudentCode = studentCode,
+        LecturerCode = lecturerCode,
+        IsActive = true,
+        CreatedAt = new DateTime(2025, 1, 1, 0, 0, 0, DateTimeKind.Utc),
+    };
 
     private sealed record UserSeed(
         Guid Id, string Role, string FullName, string Email, string Username,
