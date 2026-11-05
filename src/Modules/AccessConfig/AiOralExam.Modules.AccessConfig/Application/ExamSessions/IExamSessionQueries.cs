@@ -1,3 +1,5 @@
+using AiOralExam.SharedKernel.Pagination;
+
 namespace AiOralExam.Modules.AccessConfig.Application.ExamSessions;
 
 /// <summary>
@@ -7,6 +9,10 @@ namespace AiOralExam.Modules.AccessConfig.Application.ExamSessions;
 public interface IExamSessionQueries
 {
     Task<IReadOnlyList<CourseDto>> GetMyCoursesAsync(CancellationToken ct = default);
-    Task<IReadOnlyList<ExamSessionSummaryDto>> GetSessionsAsync(Guid? courseId, CancellationToken ct = default);
+    Task<PagedResult<ExamSessionSummaryDto>> GetSessionsAsync(
+    Guid? courseId,
+    int page,
+    int pageSize,
+    CancellationToken ct = default);
     Task<ExamSessionDetailDto> GetSessionAsync(Guid id, CancellationToken ct = default);
 }

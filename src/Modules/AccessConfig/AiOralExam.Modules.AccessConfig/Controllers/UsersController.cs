@@ -8,6 +8,7 @@ using AiOralExam.Modules.AccessConfig.Application.Users.GetUser;
 using AiOralExam.Modules.AccessConfig.Application.Users.ListUsers;
 using AiOralExam.Modules.AccessConfig.Application.Users.UpdateUser;
 using AiOralExam.Modules.AccessConfig.Domain;
+using AiOralExam.SharedKernel.Pagination;
 using AiOralExam.SharedKernel.Security;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -28,8 +29,15 @@ public sealed class UsersController(
 {
     [HttpGet]
     [HttpGet("~/api/admin/users")]
-    public Task<IReadOnlyList<UserDto>> List([FromQuery] UserRole? role, [FromQuery] bool? active, [FromQuery] string? search, CancellationToken ct)
-        => listUsers.ListAsync(role, active, search, ct);
+    public Task<PagedResult<UserDto>> List(
+    [FromQuery] UserRole? role,
+    [FromQuery] bool? active,
+    [FromQuery] string? search,
+    [FromQuery] int page = 1,
+    [FromQuery] int pageSize = 10,
+    CancellationToken ct = default)
+    => listUsers.ListAsync(
+        role, active, search, page, pageSize, ct);
 
     [HttpGet("{id:guid}")]
     public Task<UserDto> Get(Guid id, CancellationToken ct)

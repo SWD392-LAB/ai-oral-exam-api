@@ -88,6 +88,20 @@ public sealed class ExamSessionCreationHttpTests
         Assert.Equal(seeded.VersionId, sharedDetail.RubricVersionId);
     }
 
+    [Theory]
+    [InlineData("page=0&pageSize=10")]
+    [InlineData("page=1&pageSize=0")]
+    [InlineData("page=1&pageSize=101")]
+    public async Task Invalid_exam_session_pagination_returns_bad_request(string query)
+    {
+        using var factory = new ApiTestFactory().AuthenticateAs(LecturerId, Roles.Lecturer);
+        using var client = factory.CreateClient();
+
+        using var response = await client.GetAsync($"/api/exam-sessions?{query}");
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+    }
+
     private static async Task<Seed> SeedAsync(ApiTestFactory factory)
     {
         await using var scope = factory.Services.CreateAsyncScope();
