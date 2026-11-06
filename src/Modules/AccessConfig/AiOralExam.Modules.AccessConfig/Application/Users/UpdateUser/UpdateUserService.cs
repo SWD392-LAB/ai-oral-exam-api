@@ -101,15 +101,10 @@ public sealed class UpdateUserService(AccessConfigDbContext db, ICurrentUser me)
                 $"SELECT pg_advisory_xact_lock({AdministratorUpdateAdvisoryLock})", ct);
 
             await db.Entry(u).ReloadAsync(ct);
-
             if (db.Entry(u).State == EntityState.Detached)
                 throw new NotFoundException("user_not_found", "User not found.");
-
-            var refreshedRole = await db.Roles
-                .FirstOrDefaultAsync(x => x.Id == u.RoleId, ct)
-                ?? throw new NotFoundException("role_not_found", "Role not found.");
-
-            u.Role = refreshedRole;
+            db.Entry(u).Reference(x => x.Role).IsLoaded = false;
+            await db.Entry(u).Reference(x => x.Role).LoadAsync(ct);
 
             currentRole = Enum.Parse<UserRole>(u.Role.Name);
             if (IsSelfModification(id, me.Id, currentRole, u.IsActive, r))
