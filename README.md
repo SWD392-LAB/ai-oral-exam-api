@@ -77,6 +77,66 @@ Check that the API can reach the database: open http://localhost:5080/health. It
 `database/02_seed.sql`; it includes the current EF columns, including durable audio
 acceptance, transcription-retry, and manual-recovery metadata.
 
+### Local Ollama LLM (F3)
+
+Ollama is optional and is isolated behind the `local-ai` Compose profile. The default
+development configuration remains deterministic mock mode; enable Ollama explicitly when
+you want to run a real local model.
+
+Prerequisites:
+
+- Docker Desktop with at least 4 GB of free RAM for the default CPU model.
+- The .NET 8 SDK and a running PostgreSQL/Keycloak stack as described above.
+
+Start Ollama without changing or removing the PostgreSQL or Keycloak volumes:
+
+```bash
+docker compose --profile local-ai up -d ollama
+docker compose exec ollama ollama pull qwen2.5:3b
+```
+
+The selected model is `qwen2.5:3b`, a lightweight instruction-following model suitable
+for CPU development. Override it before starting the service with
+`OLLAMA_MODEL=<model-name>`; the same value is used by the Compose readiness check.
+Models are persisted in the named `ollama-models` volume.
+
+Verify both the HTTP API and the configured model:
+
+```bash
+curl http://localhost:11434/api/tags
+docker compose ps ollama              # status should be healthy after the model pull
+docker compose exec ollama ollama show qwen2.5:3b
+```
+
+Enable the real provider explicitly when starting the API. The existing endpoint and
+model settings can also be overridden through environment variables:
+
+```powershell
+$env:AiProviders__LlmProvider = "Ollama"
+$env:AiProviders__OllamaEndpoint = "http://localhost:11434/api/chat"
+$env:AiProviders__OllamaModel = "qwen2.5:3b"
+$env:AiProviders__RequestTimeoutSeconds = "120"
+dotnet run --project src/AiOralExam.Api --launch-profile http
+```
+
+The API validates real-provider configuration at startup. It requests JSON from Ollama,
+retries only transient network/5xx/429 failures a bounded number of times, and reports
+provider failures instead of fabricating scores. Student answers are persisted before AI
+processing, and provisional AI scores remain unavailable to students until lecturer
+confirmation.
+
+For a local F3 smoke test, sign in with the seeded `han.hg@aives.edu.vn` account in
+Swagger, start the open S1 session, submit an answer for the returned `currentTurn`, and
+repeat until the attempt completes. Inspect the lecturer review endpoint to confirm that
+criterion scores and feedback were persisted. This tests the real provider only when the
+API is started with `AiProviders__LlmProvider=Ollama`; automated tests use fake HTTP
+handlers and do not require Ollama.
+
+Switch back to mock mode by omitting the environment overrides or setting
+`AiProviders__LlmProvider=Mock`. Mock mode is the recommended option for deterministic
+unit and integration tests. CPU inference is slower than hosted/GPU inference and model
+quality, response latency, and follow-up quality depend on the selected local model.
+
 For an existing database, apply the forward-only scripts in numeric order from `03` through
 `15`. Do not rerun `database/01_schema.sql` against existing data. Scripts `03` and `04`
 use the session `search_path`, so set it to the application schema before running them.

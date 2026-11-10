@@ -112,12 +112,14 @@ services:
     profiles: ["local-ai"]
     image: ollama/ollama:latest
     restart: unless-stopped
+    environment:
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:3b}
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
       - ollama-models:/root/.ollama
     healthcheck:
-      test: ["CMD", "ollama", "list"]
+      test: ["CMD-SHELL", "ollama show \"$${OLLAMA_MODEL}\" >/dev/null 2>&1"]
       interval: 10s
       timeout: 5s
       retries: 12

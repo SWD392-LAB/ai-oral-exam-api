@@ -28,7 +28,15 @@ public static class InterviewModule
             .UseSnakeCaseNamingConvention());
 
         services.Configure<InterviewOptions>(configuration.GetSection(InterviewOptions.SectionName));
-        services.Configure<AiProviderOptions>(configuration.GetSection(AiProviderOptions.SectionName));
+        services.AddOptions<AiProviderOptions>()
+            .Bind(configuration.GetSection(AiProviderOptions.SectionName))
+            .Validate(settings => !settings.UsesOllama ||
+                Uri.TryCreate(settings.OllamaEndpoint, UriKind.Absolute, out var endpoint)
+                && (endpoint.Scheme == Uri.UriSchemeHttp || endpoint.Scheme == Uri.UriSchemeHttps)
+                && !string.IsNullOrWhiteSpace(settings.OllamaModel)
+                && settings.RequestTimeoutSeconds > 0,
+                "Ollama requires a valid HTTP endpoint, model, and positive timeout.")
+            .ValidateOnStart();
 
         services.AddScoped<IInterviewService, InterviewService>();
         services.AddScoped<IInterviewAudioSubmissionService, InterviewAudioSubmissionService>();
