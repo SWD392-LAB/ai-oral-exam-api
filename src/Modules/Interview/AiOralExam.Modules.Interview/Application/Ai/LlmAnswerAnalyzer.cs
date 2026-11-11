@@ -33,7 +33,7 @@ internal sealed class LlmAnswerAnalyzer(ILlmService llm) : IAnswerAnalyzer
 
         try
         {
-            return JsonSerializer.Deserialize<AnswerAnalysis>(CleanJson(json), JsonOptions)
+            return JsonSerializer.Deserialize<AnswerAnalysis>(LlmJsonEnvelope.RemoveMarkdownCodeFence(json), JsonOptions)
                    ?? throw new AiEvaluationException("LLM provider returned no answer-analysis object.");
         }
         catch (AiEvaluationException)
@@ -46,17 +46,4 @@ internal sealed class LlmAnswerAnalyzer(ILlmService llm) : IAnswerAnalyzer
         }
     }
 
-    private static string CleanJson(string value)
-    {
-        var trimmed = value.Trim();
-        if (trimmed.StartsWith("```") && trimmed.EndsWith("```"))
-        {
-            var firstLineEnd = trimmed.IndexOf('\n');
-            return firstLineEnd < 0
-                ? trimmed[3..^3].Trim()
-                : trimmed[(firstLineEnd + 1)..^3].Trim();
-        }
-
-        return trimmed;
-    }
 }

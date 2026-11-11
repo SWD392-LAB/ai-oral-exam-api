@@ -26,7 +26,7 @@ internal sealed class LlmRubricScorer(ILlmService llm) : IRubricScorer
 
         try
         {
-            return JsonSerializer.Deserialize<RubricScore>(CleanJson(json), JsonOptions)
+            return JsonSerializer.Deserialize<RubricScore>(LlmJsonEnvelope.RemoveMarkdownCodeFence(json), JsonOptions)
                    ?? throw new AiEvaluationException("LLM provider returned no rubric-score object.");
         }
         catch (AiEvaluationException)
@@ -39,17 +39,4 @@ internal sealed class LlmRubricScorer(ILlmService llm) : IRubricScorer
         }
     }
 
-    private static string CleanJson(string value)
-    {
-        var trimmed = value.Trim();
-        if (trimmed.StartsWith("```") && trimmed.EndsWith("```"))
-        {
-            var firstLineEnd = trimmed.IndexOf('\n');
-            return firstLineEnd < 0
-                ? trimmed[3..^3].Trim()
-                : trimmed[(firstLineEnd + 1)..^3].Trim();
-        }
-
-        return trimmed;
-    }
 }
